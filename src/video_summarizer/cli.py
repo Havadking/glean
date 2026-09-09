@@ -216,6 +216,23 @@ def summarize(transcript_path: Path, summary_type, lang, extra, model, base_url,
 
 
 @main.command()
+@click.option("--host", default="127.0.0.1", show_default=True, help="监听地址")
+@click.option("--port", default=7860, show_default=True, type=int, help="监听端口")
+@click.option("--share", is_flag=True, help="生成 Gradio 公网临时链接")
+@click.option("--output-dir", default=None, help="临时覆盖输出目录")
+@_config_option
+@_verbose_option
+def ui(host, port, share, output_dir, config_path, verbose) -> None:
+    """启动 Web 界面。"""
+    _setup_logging(verbose)
+    cfg = _load(config_path, {"output_dir": output_dir})
+    from .webui import launch
+
+    click.echo(f"界面地址 http://{host}:{port}")
+    launch(cfg, host=host, port=port, share=share)
+
+
+@main.command()
 @_config_option
 def config(config_path) -> None:
     """打印当前生效的配置和密钥状态（不显示密钥内容）。"""

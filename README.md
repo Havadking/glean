@@ -2,13 +2,24 @@
 
 给一个视频链接（YouTube / Bilibili / 其他 yt-dlp 支持的站点），自动产出**结构化转写**和**大模型总结**。
 
-设计细节见 [DESIGN.md](DESIGN.md)。当前进度：**v0.1**（字幕/ASR → 转写 → LLM 总结，CLI 全流程跑通）。
+设计细节见 [DESIGN.md](DESIGN.md)。当前进度：**v0.1**（字幕/ASR → 转写 → LLM 总结）+ Web 界面。
 
 ## 快速开始
 
 ```bash
-uv sync --extra cuda        # 只用 CPU 的话去掉 --extra cuda
-cp .env.example .env        # 然后填入 DEEPSEEK_API_KEY
+uv sync --extra cuda --extra ui   # 只用 CPU 去掉 --extra cuda；只用命令行去掉 --extra ui
+cp .env.example .env              # 然后填入 DEEPSEEK_API_KEY
+```
+
+图形界面：
+
+```bash
+uv run vsum ui
+```
+
+命令行：
+
+```bash
 uv run vsum inspect "https://www.bilibili.com/video/BVxxxxxxx"
 uv run vsum run "https://www.bilibili.com/video/BVxxxxxxx"
 ```
@@ -22,10 +33,13 @@ uv run vsum run "https://www.bilibili.com/video/BVxxxxxxx"
 
 | 命令 | 作用 |
 |---|---|
+| `vsum ui` | 启动 Web 界面（默认 http://127.0.0.1:7860） |
 | `vsum inspect <url>` | 只探测：有没有人工字幕、时长多少。不下载任何东西 |
 | `vsum run <url>` | 完整流程：转写 + 总结 |
 | `vsum summarize <transcript.json>` | 拿已有转写换个角度重新总结，不重跑 ASR |
 | `vsum config` | 打印当前生效的配置和密钥状态 |
+
+界面分两步：先「获取转写」出转写和预计消耗，确认后再点「生成总结」才会真正调大模型 —— 和命令行的成本确认是同一个道理。「历史」标签页可以拿已有转写换个总结类型重跑，不用再走一遍 ASR。
 
 `vsum run` 常用参数：
 
@@ -70,6 +84,12 @@ summarizer:
 
 模型权重和 uv 缓存的位置由环境变量控制（`HF_HOME` / `UV_CACHE_DIR` / `UV_PYTHON_INSTALL_DIR`），本机已指向 `E:\personal\.cache`，不占 C 盘。
 
+## 已知局限
+
+- **模型会编**：即使 system prompt 里写死了「只依据转写内容作答」，模型仍可能从标题认出视频，然后掺进转写里没有的背景知识（上传时间、播放量之类），语气还很笃定。约束能压住大部分，但不能根除 —— 拿总结当索引，别当事实来源。
+- **说话人分离还没做**（路线图 v0.3），所以「分说话人摘要」目前只能靠模型从语气和称呼推断。
+- VAD 对纯音乐、强背景音会整段误判成非人声，遇到这种情况会自动关掉 VAD 重跑一次。
+
 ## 路线图
 
-见 [DESIGN.md 第 8 节](DESIGN.md)。下一步 v0.2：接入 FunASR 作为默认 ASR，whisper 降级为兜底。
+见 [DESIGN.md 第 8 节](DESIGN.md)。Gradio 界面原本排在 v0.5，已提前做完。下一步 v0.2：接入 FunASR 作为默认 ASR，whisper 降级为兜底。

@@ -20,6 +20,10 @@ cuda = [
     "nvidia-cublas-cu12>=12.4",
     "nvidia-cudnn-cu12>=9.1",
 ]
+# Web 界面（`vsum ui`）。只用命令行的话不需要装。
+ui = [
+    "gradio>=5.0",
+]
 
 [project.scripts]
 vsum = "video_summarizer.cli:cli_main"
