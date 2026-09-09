@@ -1,0 +1,41 @@
+# 视频转写总结工具配置
+# 密钥不放这里，放 .env（见 .env.example）
+
+subtitle:
+  # 只认人工上传字幕，忽略自动生成/自动翻译字幕（准确率差）
+  accept_auto_captions: false
+  # 按优先级尝试的字幕语言，命中第一个就用
+  preferred_languages: ["zh-Hans", "zh-CN", "zh", "en", "ja"]
+
+download:
+  # 默认不覆盖 UA：yt-dlp 自己按站点设的 header 是经过测试的。
+  # 这里填的 UA 只在前两次下载都失败后，作为最后一次重试的手段使用。
+  # 注意 B 站的 412 是按 IP 的频率风控，换 UA 治不好，只能等或者用登录态。
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+  # 需要登录才能下载的内容，填浏览器名从中读 cookie：chrome | edge | firefox | null
+  cookies_from_browser: null
+
+asr:
+  provider: whisper           # v0.1 只实现 whisper；funasr | parakeet 待 v0.2+
+  model: large-v3             # tiny | base | small | medium | large-v3 | distil-large-v3
+  device: auto                # auto | cuda | cpu
+  compute_type: auto          # auto | float16 | int8_float16 | int8
+  language: null              # null = 自动检测；也可写 "zh" / "en" 强制
+  vad_filter: true            # 用 VAD 去掉静音段，长视频提速明显
+  beam_size: 5
+  fallback: null              # v0.2 起：主 provider 不支持该语言时的兜底
+
+summarizer:
+  provider: openai            # openai（含所有 OpenAI 兼容接口） | claude | ollama
+  model: deepseek-chat
+  base_url: "https://api.deepseek.com/v1"
+  api_key_env: DEEPSEEK_API_KEY   # 从 .env 的这个变量读 key
+  max_context_tokens: 120000      # deepseek-chat 128K，留 8K 余量给 prompt + 输出
+  max_output_tokens: 8000
+  temperature: 0.3
+  chunk_strategy: auto            # auto | always | never
+  chunk_tokens: 20000             # map-reduce 时每块的目标 token 数
+  summary_type: overall           # overall | by_speaker | timeline | key_points
+
+output_dir: ./output
+cache_db: ./cache.sqlite          # v0.5 启用

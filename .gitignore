@@ -1,0 +1,26 @@
+# 密钥
+.env
+
+# 产物与缓存
+output/
+cache.sqlite
+*.sqlite-journal
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# 模型权重缓存（正常在 E:\personal\.cache，这里兜底）
+.cache/
+models/
+
+# 编辑器
+.vscode/
+.idea/
