@@ -24,6 +24,25 @@ cuda = [
 ui = [
     "gradio>=5.0",
 ]
+# FunASR：中文内容的默认 ASR。要拉 torch，装完约 3GB。
+funasr = [
+    "funasr>=1.2.0",
+    "modelscope>=1.20",
+    "soundfile>=0.12.1",   # 直接用它读切片，不只靠 funasr 传递依赖
+    "torch>=2.9",
+    "torchaudio>=2.9",
+]
+
+# PyPI 上的 Windows torch 轮子是纯 CPU 版（118MB），CUDA 版只在 pytorch 官方源上。
+# 这里把 win32 平台的 torch 指到 cu130，其他平台走默认源。
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'win32'" }]
+torchaudio = [{ index = "pytorch-cu130", marker = "sys_platform == 'win32'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
 [project.scripts]
 vsum = "video_summarizer.cli:cli_main"

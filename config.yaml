@@ -16,14 +16,21 @@ download:
   cookies_from_browser: null
 
 asr:
-  provider: whisper           # v0.1 只实现 whisper；funasr | parakeet 待 v0.2+
-  model: large-v3             # tiny | base | small | medium | large-v3 | distil-large-v3
+  provider: funasr            # funasr | whisper
+  model: sensevoice-small     # funasr: sensevoice-small | paraformer-zh
+                              # whisper: tiny | base | small | medium | large-v3
   device: auto                # auto | cuda | cpu
-  compute_type: auto          # auto | float16 | int8_float16 | int8
   language: null              # null = 自动检测；也可写 "zh" / "en" 强制
+
+  # 主 provider 不支持该语言、或跑失败/结果为空时的兜底。
+  # FunASR 只覆盖中英日韩粤，whisper 覆盖近百种语言，所以拿 whisper 兜底。
+  fallback: whisper
+  fallback_model: large-v3
+
+  # 以下只对 whisper 生效，FunASR 用自己内置的 FSMN-VAD
+  compute_type: auto          # auto | float16 | int8_float16 | int8
   vad_filter: true            # 用 VAD 去掉静音段，长视频提速明显
   beam_size: 5
-  fallback: null              # v0.2 起：主 provider 不支持该语言时的兜底
 
 summarizer:
   provider: openai            # openai（含所有 OpenAI 兼容接口） | claude | ollama

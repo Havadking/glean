@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -116,7 +117,7 @@ def main() -> None:
 @click.option("--extra", default=None, help="附加到 prompt 的自定义要求")
 @click.option("--model", default=None, help="临时覆盖总结模型")
 @click.option("--base-url", default=None, help="临时覆盖 OpenAI 兼容接口地址")
-@click.option("--asr-model", default=None, help="临时覆盖 whisper 模型，如 medium / large-v3")
+@click.option("--asr-model", default=None, help="临时覆盖 ASR 模型，如 sensevoice-small / large-v3")
 @click.option("--device", type=click.Choice(["auto", "cuda", "cpu"]), default=None, help="ASR 设备")
 @click.option("--output-dir", default=None, help="临时覆盖输出目录")
 @click.option("--force", is_flag=True, help="忽略已有的转写和音频缓存，全部重跑")
@@ -241,6 +242,8 @@ def config(config_path) -> None:
     click.echo(f"输出目录      {cfg.output_dir}")
     click.echo("")
     click.echo(f"ASR           {cfg.asr.provider} / {cfg.asr.model} (device={cfg.asr.device})")
+    fallback = f"{cfg.asr.fallback} / {cfg.asr.fallback_model}" if cfg.asr.fallback else "（未配置）"
+    click.echo(f"ASR 兜底      {fallback}")
     click.echo(f"总结          {cfg.summarizer.provider} / {cfg.summarizer.model}")
     click.echo(f"接口地址      {cfg.summarizer.base_url or '(SDK 默认)'}")
     click.echo(f"上下文预算    {cfg.summarizer.max_context_tokens:,} tokens"
@@ -248,6 +251,17 @@ def config(config_path) -> None:
     has_key = bool(cfg.summarizer.api_key)
     click.echo(f"密钥          {cfg.summarizer.api_key_env} "
                f"{'已设置' if has_key else '未设置 —— 复制 .env.example 为 .env 并填入'}")
+
+    # 模型权重动辄几 GB，落哪个盘由环境变量决定，而环境变量只有新开的终端才读得到。
+    # 打出来，省得下到一半才发现进了系统盘。
+    click.echo("")
+    click.echo("模型缓存位置（由环境变量决定，改完要重开终端）")
+    for var, what, default in (
+        ("MODELSCOPE_CACHE", "FunASR 权重", "~/.cache/modelscope"),
+        ("HF_HOME", "whisper 权重", "~/.cache/huggingface"),
+    ):
+        value = os.environ.get(var)
+        click.echo(f"  {var:<18}{what:<12}{value or f'未设置 -> {default}'}")
 
 
 def cli_main() -> None:

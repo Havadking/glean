@@ -28,10 +28,18 @@ class BaseASRProvider(ABC):
 
     name: str = "base"
     supports_diarization: bool = False
+    # provider 支持的语言（ISO 639-1）。None 表示不设限，由 provider 自己判断。
+    supported_languages: frozenset[str] | None = None
 
     @abstractmethod
     def transcribe(self, audio_path: Path) -> ASRResult:
         """把音频转成带时间轴的分句。"""
+
+    def supports_language(self, language: str | None) -> bool:
+        """语言是否在能力范围内。language 为 None（自动检测）时一律返回 True。"""
+        if language is None or self.supported_languages is None:
+            return True
+        return language.split("-")[0].lower() in self.supported_languages
 
     def close(self) -> None:
         """释放显存等资源。默认无操作。"""

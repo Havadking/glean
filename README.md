@@ -2,14 +2,16 @@
 
 给一个视频链接（YouTube / Bilibili / 其他 yt-dlp 支持的站点），自动产出**结构化转写**和**大模型总结**。
 
-设计细节见 [DESIGN.md](DESIGN.md)。当前进度：**v0.1**（字幕/ASR → 转写 → LLM 总结）+ Web 界面。
+设计细节见 [DESIGN.md](DESIGN.md)。当前进度：**v0.2**（FunASR 做默认 ASR、whisper 兜底）+ Web 界面。
 
 ## 快速开始
 
 ```bash
-uv sync --extra cuda --extra ui   # 只用 CPU 去掉 --extra cuda；只用命令行去掉 --extra ui
+uv sync --extra cuda --extra ui --extra funasr
 cp .env.example .env              # 然后填入 DEEPSEEK_API_KEY
 ```
+
+各 extra 的作用：`funasr` 是默认 ASR（要拉 torch，约 3GB）、`cuda` 是 whisper 兜底走 GPU 需要的运行库、`ui` 是 Web 界面。只想先跑起来的话 `uv sync --extra funasr` 就够。
 
 图形界面：
 
@@ -55,9 +57,19 @@ uv run vsum run "https://www.bilibili.com/video/BVxxxxxxx"
 ## 工作方式
 
 1. **字幕优先**：`yt-dlp` 探测，只认人工上传字幕；自动生成/自动翻译字幕默认忽略（准确率不够）。B 站只有弹幕的情况会被识别为"无字幕"。
-2. **无字幕才跑 ASR**：下载最佳音轨 → ffmpeg 转 16k 单声道 wav → faster-whisper 转写。GPU 加载失败会自动退回 CPU。
-3. **长文本自动分策略**：转写 token 数在模型上下文预算内就整篇送入，超了自动走 map-reduce（切块局部摘要 → 汇总）。
-4. **花钱前先问**：调用大模型前打印预估 token 量和请求次数，确认后才发。
+2. **无字幕才跑 ASR**：下载最佳音轨 → ffmpeg 转 16k 单声道 wav → FunASR（FSMN-VAD 切段 + SenseVoice-Small 批量识别）。
+3. **兜底**：FunASR 只覆盖中英日韩粤。配置的语言超出范围、或 FunASR 跑失败/结果为空，自动切 faster-whisper（近百种语言）。whisper 这一路 GPU 失败还会再退 CPU。
+4. **长文本自动分策略**：转写 token 数在模型上下文预算内就整篇送入，超了自动走 map-reduce（切块局部摘要 → 汇总）。
+5. **花钱前先问**：调用大模型前打印预估 token 量和请求次数，确认后才发。
+
+### 实测速度（RTX 4070，22 分钟中文视频）
+
+| ASR | 耗时 | 实时率 |
+|---|---|---|
+| FunASR SenseVoice-Small | 11 秒 | ~118x |
+| faster-whisper large-v3 | 约 9 分钟 | ~2.5x |
+
+差距这么大是因为 SenseVoice 只有 234M 参数（large-v3 是 1.55B），而且 VAD 切出的段可以批量推理。中文准确率也是 FunASR 更好。
 
 ## 配置
 
@@ -80,16 +92,27 @@ summarizer:
 
 - Python 3.10+（本仓库用 uv 管理，托管的是 3.12）
 - `ffmpeg` 在 PATH 里
-- GPU 转写需要 CUDA 运行库，由 `--extra cuda` 装进 venv
+- GPU：FunASR 走 torch（`--extra funasr` 会从 PyTorch 官方源装 cu130 版，PyPI 上的 Windows 轮子是纯 CPU 的）；whisper 走 ctranslate2，需要 `--extra cuda` 的运行库
 
-模型权重和 uv 缓存的位置由环境变量控制（`HF_HOME` / `UV_CACHE_DIR` / `UV_PYTHON_INSTALL_DIR`），本机已指向 `E:\personal\.cache`，不占 C 盘。
+模型权重和缓存的位置由环境变量控制，本机已指向 `E:\personal\.cache`，不占 C 盘：
+
+| 变量 | 管什么 |
+|---|---|
+| `HF_HOME` | faster-whisper 的模型权重 |
+| `MODELSCOPE_CACHE` | FunASR 的模型权重 |
+| `UV_CACHE_DIR` | uv 的包缓存 |
+| `UV_PYTHON_INSTALL_DIR` | uv 托管的 Python |
+
+**这些是用户级环境变量，只有新开的终端才会读到。** 如果发现模型往 C 盘下，多半是终端开得比设置早，重开一个即可。`vsum config` 会打印当前生效的路径。
 
 ## 已知局限
 
 - **模型会编**：即使 system prompt 里写死了「只依据转写内容作答」，模型仍可能从标题认出视频，然后掺进转写里没有的背景知识（上传时间、播放量之类），语气还很笃定。约束能压住大部分，但不能根除 —— 拿总结当索引，别当事实来源。
 - **说话人分离还没做**（路线图 v0.3），所以「分说话人摘要」目前只能靠模型从语气和称呼推断。
-- VAD 对纯音乐、强背景音会整段误判成非人声，遇到这种情况会自动关掉 VAD 重跑一次。
+- **时间轴的粒度取决于 VAD**：FunASR 这一路的时间戳来自 FSMN-VAD 切出的语音段边界（单段上限 30 秒），不是逐词对齐，长段落的起止时间会偏粗。
+- B 站对同一 IP 的请求频率敏感，超了返回 412。已经做了复用探测结果少发请求 + 退避重试，还是撞上的话等几分钟，或者在 `config.yaml` 里配 `download.cookies_from_browser` 用登录态。
+- whisper 那一路的 VAD 对纯音乐、强背景音会整段误判成非人声，遇到这种情况会自动关掉 VAD 重跑一次。
 
 ## 路线图
 
-见 [DESIGN.md 第 8 节](DESIGN.md)。Gradio 界面原本排在 v0.5，已提前做完。下一步 v0.2：接入 FunASR 作为默认 ASR，whisper 降级为兜底。
+见 [DESIGN.md 第 8 节](DESIGN.md)。Gradio 界面原本排在 v0.5，已提前做完。下一步 v0.3：接入说话人分离（FunASR 的 CAM++），支持多人对话/播客的分角色总结。

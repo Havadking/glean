@@ -34,14 +34,16 @@ class DownloadConfig:
 
 @dataclass
 class ASRConfig:
-    provider: str = "whisper"
-    model: str = "large-v3"
+    provider: str = "funasr"
+    model: str = "sensevoice-small"
     device: str = "auto"
     compute_type: str = "auto"
     language: str | None = None
     vad_filter: bool = True
     beam_size: int = 5
-    fallback: str | None = None
+    # 主 provider 不支持该语言、或跑失败时的兜底
+    fallback: str | None = "whisper"
+    fallback_model: str | None = None
 
 
 @dataclass

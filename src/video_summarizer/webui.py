@@ -187,7 +187,7 @@ def build_app(cfg: Config):
             with gr.Row():
                 asr_model_box = gr.Textbox(
                     label="ASR 模型", value=cfg.asr.model,
-                    info="tiny / base / small / medium / large-v3",
+                    info="funasr: sensevoice-small / paraformer-zh；whisper: tiny / small / medium / large-v3",
                 )
                 device_box = gr.Radio(
                     ["auto", "cuda", "cpu"], value=cfg.asr.device, label="ASR 设备",
