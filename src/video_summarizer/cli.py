@@ -52,6 +52,8 @@ def _load(config_path: Path | None, overrides: dict) -> Config:
         cfg.asr.model = overrides["asr_model"]
     if overrides.get("device"):
         cfg.asr.device = overrides["device"]
+    if overrides.get("diarize") is not None:
+        cfg.asr.diarize = overrides["diarize"]
     if overrides.get("output_dir"):
         cfg.output_dir = Path(overrides["output_dir"]).expanduser().resolve()
     return cfg
@@ -119,6 +121,8 @@ def main() -> None:
 @click.option("--base-url", default=None, help="临时覆盖 OpenAI 兼容接口地址")
 @click.option("--asr-model", default=None, help="临时覆盖 ASR 模型，如 sensevoice-small / large-v3")
 @click.option("--device", type=click.Choice(["auto", "cuda", "cpu"]), default=None, help="ASR 设备")
+@click.option("--diarize/--no-diarize", default=None,
+              help="是否做说话人分离（默认 auto：只在选分说话人摘要时开）")
 @click.option("--output-dir", default=None, help="临时覆盖输出目录")
 @click.option("--force", is_flag=True, help="忽略已有的转写和音频缓存，全部重跑")
 @click.option("--force-asr", is_flag=True, help="即使有字幕也强制走语音识别")
@@ -126,13 +130,13 @@ def main() -> None:
 @click.option("-y", "--yes", is_flag=True, help="跳过成本确认")
 @_config_option
 @_verbose_option
-def run(url: str, summary_type, lang, extra, model, base_url, asr_model, device,
+def run(url: str, summary_type, lang, extra, model, base_url, asr_model, device, diarize,
         output_dir, force, force_asr, no_summary, yes, config_path, verbose) -> None:
     """处理一个视频链接：URL -> 转写 -> 总结。"""
     _setup_logging(verbose)
     cfg = _load(config_path, {
         "model": model, "base_url": base_url, "asr_model": asr_model,
-        "device": device, "output_dir": output_dir,
+        "device": device, "output_dir": output_dir, "diarize": diarize,
     })
     options = SummaryOptions(
         summary_type=summary_type or cfg.summarizer.summary_type,
@@ -244,6 +248,7 @@ def config(config_path) -> None:
     click.echo(f"ASR           {cfg.asr.provider} / {cfg.asr.model} (device={cfg.asr.device})")
     fallback = f"{cfg.asr.fallback} / {cfg.asr.fallback_model}" if cfg.asr.fallback else "（未配置）"
     click.echo(f"ASR 兜底      {fallback}")
+    click.echo(f"说话人分离    {cfg.asr.diarize}（auto = 只在选分说话人摘要时开）")
     click.echo(f"总结          {cfg.summarizer.provider} / {cfg.summarizer.model}")
     click.echo(f"接口地址      {cfg.summarizer.base_url or '(SDK 默认)'}")
     click.echo(f"上下文预算    {cfg.summarizer.max_context_tokens:,} tokens"

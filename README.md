@@ -2,7 +2,7 @@
 
 给一个视频链接（YouTube / Bilibili / 其他 yt-dlp 支持的站点），自动产出**结构化转写**和**大模型总结**。
 
-设计细节见 [DESIGN.md](DESIGN.md)。当前进度：**v0.2**（FunASR 做默认 ASR、whisper 兜底）+ Web 界面。
+设计细节见 [DESIGN.md](DESIGN.md)。当前进度：**v0.3**（说话人分离，支持多人对话/播客的分角色总结）+ Web 界面。
 
 ## 快速开始
 
@@ -47,12 +47,16 @@ uv run vsum run "https://www.bilibili.com/video/BVxxxxxxx"
 
 ```bash
 --summary-type overall|by_speaker|timeline|key_points   # 总结类型
+--diarize             # 强制开说话人分离（默认 auto，选 by_speaker 时自动开）
+--no-diarize          # 强制关
 --no-summary          # 只转写，不花钱
 --force-asr           # 有字幕也强制走语音识别
 --force               # 忽略缓存全部重跑
 --asr-model medium    # 临时换小模型，快一些
 -y                    # 跳过成本确认
 ```
+
+注意 `--force` 之外的重跑都会复用已有的 `transcript.json`。已经转写过的视频要换成带说话人的版本，得 `--diarize --force` 一起加。
 
 ## 工作方式
 
@@ -62,14 +66,23 @@ uv run vsum run "https://www.bilibili.com/video/BVxxxxxxx"
 4. **长文本自动分策略**：转写 token 数在模型上下文预算内就整篇送入，超了自动走 map-reduce（切块局部摘要 → 汇总）。
 5. **花钱前先问**：调用大模型前打印预估 token 量和请求次数，确认后才发。
 
+### 说话人分离
+
+选「分说话人摘要」时会自动开启（`config.yaml` 里 `asr.diarize: auto`），也可以用 `--diarize` 强制开、`--no-diarize` 强制关。
+
+开启后换成 FunASR 的整合 pipeline：`paraformer-zh + FSMN-VAD + ct-punc + CAM++`，一次输出句级文本 + 起止时间 + 说话人编号。句子很碎（22 分钟能有 600 多句），同一个人连续说的会合并成"一轮发言"再交给大模型。
+
+不默认全开的原因：这条 pipeline 只做中文，而且比 SenseVoice 慢一半。
+
 ### 实测速度（RTX 4070，22 分钟中文视频）
 
-| ASR | 耗时 | 实时率 |
-|---|---|---|
-| FunASR SenseVoice-Small | 11 秒 | ~118x |
-| faster-whisper large-v3 | 约 9 分钟 | ~2.5x |
+| ASR | 耗时 | 实时率 | 说话人 |
+|---|---|---|---|
+| FunASR SenseVoice-Small | 11 秒 | ~118x | 无 |
+| FunASR paraformer-zh + CAM++ | 38 秒 | ~35x | 有 |
+| faster-whisper large-v3 | 约 9 分钟 | ~2.5x | 无 |
 
-差距这么大是因为 SenseVoice 只有 234M 参数（large-v3 是 1.55B），而且 VAD 切出的段可以批量推理。中文准确率也是 FunASR 更好。
+SenseVoice 快是因为只有 234M 参数（large-v3 是 1.55B），而且 VAD 切出的段可以批量推理。中文准确率也是 FunASR 更好。
 
 ## 配置
 
@@ -108,11 +121,14 @@ summarizer:
 ## 已知局限
 
 - **模型会编**：即使 system prompt 里写死了「只依据转写内容作答」，模型仍可能从标题认出视频，然后掺进转写里没有的背景知识（上传时间、播放量之类），语气还很笃定。约束能压住大部分，但不能根除 —— 拿总结当索引，别当事实来源。
-- **说话人分离还没做**（路线图 v0.3），所以「分说话人摘要」目前只能靠模型从语气和称呼推断。
-- **时间轴的粒度取决于 VAD**：FunASR 这一路的时间戳来自 FSMN-VAD 切出的语音段边界（单段上限 30 秒），不是逐词对齐，长段落的起止时间会偏粗。
+- **说话人分离只做中文**：走的是 paraformer-zh 那条 pipeline。如果配置的语言不是中文，会退到 whisper 兜底，而 whisper 不输出说话人标签，这时「分说话人摘要」只能靠模型从语气和称呼推断。
+- **分离的准确率不追求 100%**：背景音乐、多人抢话、音色接近的场景会打折扣。目前在合成的双人音频（一男一女、语言不同）上验证过能正确分开，在真实独白上验证过不会误分成多人；**真实多人对话/播客场景还没实测**，拿你自己的播客试一下更有参考价值。
+- **时间轴的粒度取决于 VAD**：不分离时时间戳来自 FSMN-VAD 的语音段边界（单段上限 30 秒），不是逐词对齐，长段落起止会偏粗；分离时是句级的，细得多。
 - B 站对同一 IP 的请求频率敏感，超了返回 412。已经做了复用探测结果少发请求 + 退避重试，还是撞上的话等几分钟，或者在 `config.yaml` 里配 `download.cookies_from_browser` 用登录态。
 - whisper 那一路的 VAD 对纯音乐、强背景音会整段误判成非人声，遇到这种情况会自动关掉 VAD 重跑一次。
 
 ## 路线图
 
-见 [DESIGN.md 第 8 节](DESIGN.md)。Gradio 界面原本排在 v0.5，已提前做完。下一步 v0.3：接入说话人分离（FunASR 的 CAM++），支持多人对话/播客的分角色总结。
+见 [DESIGN.md 第 8 节](DESIGN.md)。v0.1 - v0.3 已完成，Gradio 界面（原排在 v0.5）也提前做完了。
+
+剩下：**v0.4** 补齐 LLM provider 抽象层（Anthropic 原生接口、Ollama 本地模型），**v0.5** 加 SQLite 缓存。目前复用是靠输出目录里已有的 `transcript.json` 和音频文件，效果类似但没有跨目录的索引能力。

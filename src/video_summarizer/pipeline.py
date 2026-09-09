@@ -59,9 +59,20 @@ def run(
     work_dir.mkdir(parents=True, exist_ok=True)
     transcript_path = work_dir / "transcript.json"
 
+    # 分角色总结要求转写带说话人标签，diarize=auto 时据此决定开不开
+    wants_speakers = options.summary_type == "by_speaker"
+    diarize = cfg.asr.wants_diarization(needed=wants_speakers)
+
     transcript = _get_transcript(
-        info, cfg, work_dir, transcript_path, force=force, force_asr=force_asr
+        info, cfg, work_dir, transcript_path,
+        force=force, force_asr=force_asr, diarize=diarize,
     )
+    if wants_speakers and not transcript.speakers:
+        log.warning(
+            "选的是分说话人摘要，但这份转写没有说话人标签"
+            "（%s），模型只能靠语气和称呼推断角色。加 --diarize --force 可以重跑分离。",
+            "官方字幕不区分说话人" if transcript.source_type == "subtitle" else "复用了旧转写或 ASR 未开分离",
+        )
     transcript.save(transcript_path)
     log.info("转写已保存: %s（%d 条分句）", transcript_path, len(transcript.segments))
 
@@ -105,6 +116,7 @@ def _get_transcript(
     *,
     force: bool,
     force_asr: bool,
+    diarize: bool = False,
 ) -> Transcript:
     if transcript_path.is_file() and not force:
         log.info("复用已有转写: %s（要重跑加 --force）", transcript_path.name)
@@ -119,8 +131,10 @@ def _get_transcript(
     log.info("提取音频 ...")
     audio_path = extractor.extract(info, cfg, work_dir / "audio", force=force)
 
-    provider = asr_registry.get_provider(cfg.asr)
-    log.info("开始语音识别（provider=%s）...", provider.name)
+    provider = asr_registry.get_provider(cfg.asr, diarize=diarize)
+    log.info(
+        "开始语音识别（provider=%s%s）...", provider.name, "，带说话人分离" if diarize else "",
+    )
     try:
         asr_result = provider.transcribe(audio_path)
     finally:

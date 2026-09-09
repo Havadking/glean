@@ -27,6 +27,12 @@ asr:
   fallback: whisper
   fallback_model: large-v3
 
+  # 说话人分离。auto = 只在总结类型选了 by_speaker 时才开。
+  # 不默认全开是因为它换用 paraformer-zh 这条 pipeline：只做中文，
+  # 而且比 sensevoice 慢一半（22 分钟视频约 31 秒 vs 11 秒）。
+  diarize: auto               # auto | true | false
+  diarize_model: paraformer-zh
+
   # 以下只对 whisper 生效，FunASR 用自己内置的 FSMN-VAD
   compute_type: auto          # auto | float16 | int8_float16 | int8
   vad_filter: true            # 用 VAD 去掉静音段，长视频提速明显

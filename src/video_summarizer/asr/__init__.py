@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 
 from ..config import ASRConfig
@@ -17,6 +18,8 @@ __all__ = [
     "AVAILABLE_PROVIDERS",
 ]
 
+log = logging.getLogger(__name__)
+
 AVAILABLE_PROVIDERS = ("funasr", "whisper")
 
 # 各 provider 被当作兜底时用的默认模型（config 里没写 fallback_model 时用这个）
@@ -26,14 +29,14 @@ DEFAULT_MODELS = {
 }
 
 
-def _build(name: str, cfg: ASRConfig, model: str) -> BaseASRProvider:
+def _build(name: str, cfg: ASRConfig, model: str, diarize: bool = False) -> BaseASRProvider:
     name = (name or "").strip().lower()
     provider_cfg = replace(cfg, model=model)
 
     if name == "funasr":
         from .funasr_provider import FunASRProvider
 
-        return FunASRProvider(provider_cfg)
+        return FunASRProvider(provider_cfg, diarize=diarize)
     if name == "whisper":
         from .whisper_provider import WhisperProvider
 
@@ -48,9 +51,18 @@ def _build(name: str, cfg: ASRConfig, model: str) -> BaseASRProvider:
     )
 
 
-def get_provider(cfg: ASRConfig) -> BaseASRProvider:
-    """按配置构造 provider；配了 fallback 就套一层兜底包装。"""
-    primary = _build(cfg.provider, cfg, cfg.model)
+def get_provider(cfg: ASRConfig, diarize: bool = False) -> BaseASRProvider:
+    """按配置构造 provider；配了 fallback 就套一层兜底包装。
+
+    diarize=True 时要求 provider 输出说话人标签。目前只有 FunASR 支持，
+    whisper 没有这个能力，所以兜底那一路仍然是无标签的转写 —— 总比没有强。
+    """
+    primary = _build(cfg.provider, cfg, cfg.model, diarize=diarize)
+    if diarize and not primary.supports_diarization:
+        raise ConfigError(
+            f"ASR provider `{cfg.provider}` 不支持说话人分离，"
+            "把 config.yaml 里 asr.provider 改成 funasr，或者关掉 asr.diarize"
+        )
 
     fallback_name = (cfg.fallback or "").strip().lower()
     if not fallback_name or fallback_name == (cfg.provider or "").strip().lower():
@@ -62,4 +74,7 @@ def get_provider(cfg: ASRConfig) -> BaseASRProvider:
             f"兜底 provider `{fallback_name}` 没有默认模型，"
             "请在 config.yaml 里补上 asr.fallback_model"
         )
-    return FallbackASRProvider(primary, _build(fallback_name, cfg, fallback_model), cfg.language)
+    fallback = _build(fallback_name, cfg, fallback_model)
+    if diarize and not fallback.supports_diarization:
+        log.info("兜底 provider %s 不支持说话人分离，真走到兜底时转写不会带说话人标签", fallback_name)
+    return FallbackASRProvider(primary, fallback, cfg.language)

@@ -195,6 +195,12 @@ def build_app(cfg: Config):
             with gr.Row():
                 force_asr_box = gr.Checkbox(label="有字幕也强制走语音识别", value=False)
                 force_box = gr.Checkbox(label="忽略缓存全部重跑", value=False)
+            diarize_box = gr.Radio(
+                ["auto", "true", "false"],
+                value=str(cfg.asr.diarize).lower(),
+                label="说话人分离",
+                info="auto = 只在总结类型选了「分说话人摘要」时才开。开了会换成中文专用模型，慢一半。",
+            )
 
         log_box = gr.Textbox(
             label="运行日志", lines=8, max_lines=8, interactive=False, autoscroll=True,
@@ -242,7 +248,7 @@ def build_app(cfg: Config):
 
         # ---------- 回调 ----------
 
-        def on_fetch(url, asr_model, device, force_asr, force, summary_type, progress=gr.Progress()):
+        def on_fetch(url, asr_model, device, diarize, force_asr, force, summary_type, progress=gr.Progress()):
             url = (url or "").strip()
             if not url:
                 yield ("", "请先填一个视频链接。", [], gr.update(visible=False),
@@ -253,6 +259,7 @@ def build_app(cfg: Config):
             run_cfg.output_dir = cfg.output_dir
             run_cfg.asr.model = (asr_model or "").strip() or run_cfg.asr.model
             run_cfg.asr.device = device
+            run_cfg.asr.diarize = diarize
 
             options = SummaryOptions(summary_type=summary_type)
             work = lambda: run_pipeline(  # noqa: E731 - 只是给线程包一层
@@ -360,13 +367,15 @@ def build_app(cfg: Config):
 
         fetch_btn.click(
             on_fetch,
-            inputs=[url_box, asr_model_box, device_box, force_asr_box, force_box, summary_type_box],
+            inputs=[url_box, asr_model_box, device_box, diarize_box, force_asr_box, force_box,
+                    summary_type_box],
             outputs=[log_box, transcript_info, transcript_table, transcript_file,
                      estimate_md, summarize_btn, transcript_state, path_state],
         )
         url_box.submit(
             on_fetch,
-            inputs=[url_box, asr_model_box, device_box, force_asr_box, force_box, summary_type_box],
+            inputs=[url_box, asr_model_box, device_box, diarize_box, force_asr_box, force_box,
+                    summary_type_box],
             outputs=[log_box, transcript_info, transcript_table, transcript_file,
                      estimate_md, summarize_btn, transcript_state, path_state],
         )

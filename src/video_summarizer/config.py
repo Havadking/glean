@@ -44,6 +44,20 @@ class ASRConfig:
     # 主 provider 不支持该语言、或跑失败时的兜底
     fallback: str | None = "whisper"
     fallback_model: str | None = None
+    # 说话人分离：auto = 只在需要分角色总结时开（它比不分离慢一半，且只有中文模型）
+    diarize: str | bool = "auto"
+    diarize_model: str = "paraformer-zh"
+
+    def wants_diarization(self, needed: bool = False) -> bool:
+        """diarize 在 yaml 里可能写成布尔量，也可能是字符串 auto。"""
+        if isinstance(self.diarize, bool):
+            return self.diarize
+        value = (self.diarize or "").strip().lower()
+        if value in {"true", "yes", "on", "always"}:
+            return True
+        if value in {"false", "no", "off", "never"}:
+            return False
+        return needed  # auto
 
 
 @dataclass
