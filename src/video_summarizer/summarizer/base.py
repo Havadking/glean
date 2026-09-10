@@ -55,6 +55,9 @@ class BaseSummarizer(ABC):
     def describe(self) -> str:
         return f"{self.name}/{self.cfg.model}"
 
+    def close(self) -> None:
+        """释放连接等资源。默认无操作。"""
+
     def _body_budget(self) -> int:
         """单次请求里留给转写正文的 token 预算。"""
         budget = (

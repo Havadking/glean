@@ -68,7 +68,11 @@ class SummarizerConfig:
     api_key_env: str = "DEEPSEEK_API_KEY"
     max_context_tokens: int = 120000
     max_output_tokens: int = 8000
+    # 只对 openai / ollama 生效。Claude 当前一代移除了采样参数，传了会 400，
+    # claude provider 刻意不发这个字段。
     temperature: float = 0.3
+    # 只对 claude 生效：控制思考深度和整体花费。low | medium | high | xhigh | max
+    effort: str | None = None
     chunk_strategy: str = "auto"
     chunk_tokens: int = 20000
     summary_type: str = "overall"

@@ -8,22 +8,38 @@ from .base import BaseSummarizer, CostEstimate
 
 __all__ = ["BaseSummarizer", "CostEstimate", "get_provider", "AVAILABLE_PROVIDERS"]
 
-# v0.4 会补 "claude"（Anthropic 原生接口）和 "ollama"（本地模型）
-AVAILABLE_PROVIDERS = ("openai",)
+AVAILABLE_PROVIDERS = ("openai", "claude", "ollama")
+
+# 别名：文档和习惯上的叫法都认
+_ALIASES = {
+    "anthropic": "claude",
+    "deepseek": "openai",   # 以及其他一切 OpenAI 兼容接口
+    "qwen": "openai",
+    "dashscope": "openai",
+    "moonshot": "openai",
+    "kimi": "openai",
+    "zhipu": "openai",
+}
 
 
 def get_provider(cfg: SummarizerConfig) -> BaseSummarizer:
     name = (cfg.provider or "").strip().lower()
+    name = _ALIASES.get(name, name)
+
     if name == "openai":
         from .openai_provider import OpenAICompatibleSummarizer
 
         return OpenAICompatibleSummarizer(cfg)
-    if name in {"claude", "anthropic", "ollama"}:
-        raise ConfigError(
-            f"总结 provider `{name}` 还没实现（路线图 v0.4）。"
-            "Ollama 本身提供 OpenAI 兼容接口，可以先用 provider: openai + "
-            "base_url: http://localhost:11434/v1 顶上。"
-        )
+    if name == "claude":
+        from .claude_provider import ClaudeSummarizer
+
+        return ClaudeSummarizer(cfg)
+    if name == "ollama":
+        from .ollama_provider import OllamaSummarizer
+
+        return OllamaSummarizer(cfg)
+
     raise ConfigError(
         f"未知的总结 provider: {cfg.provider!r}，可选：{', '.join(AVAILABLE_PROVIDERS)}"
+        f"（国内厂商的 OpenAI 兼容接口都走 openai，改 base_url 即可）"
     )

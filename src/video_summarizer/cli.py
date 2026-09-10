@@ -13,7 +13,7 @@ from .config import Config, load_config
 from .errors import VideoSummarizerError
 from .models import SummaryOptions, Transcript
 from .pipeline import PipelineResult, render_summary_markdown, run as run_pipeline
-from .summarizer import get_provider as get_summarizer
+from .summarizer import AVAILABLE_PROVIDERS as SUMMARIZER_PROVIDERS, get_provider as get_summarizer
 from .summarizer.base import CostEstimate
 from .summarizer.prompts import TEMPLATES
 from .summarizer.tokens import format_timestamp
@@ -42,8 +42,24 @@ def _setup_logging(verbose: bool) -> None:
             logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
+# `--provider` 切换时同时带上的默认值。只改 provider 不改这些的话，
+# 会拿着 DeepSeek 的 key 和 base_url 去调 Claude，报错还很莫名其妙。
+_PROVIDER_DEFAULTS = {
+    "claude": {"api_key_env": "ANTHROPIC_API_KEY", "base_url": None, "model": "claude-opus-5"},
+    "ollama": {"api_key_env": "", "base_url": "http://localhost:11434", "model": None},
+}
+
+
 def _load(config_path: Path | None, overrides: dict) -> Config:
     cfg = load_config(config_path)
+
+    provider = overrides.get("provider")
+    if provider and provider.strip().lower() != cfg.summarizer.provider.strip().lower():
+        cfg.summarizer.provider = provider
+        for field, value in _PROVIDER_DEFAULTS.get(provider.strip().lower(), {}).items():
+            if value is not None or field == "base_url":
+                setattr(cfg.summarizer, field, value)
+
     if overrides.get("model"):
         cfg.summarizer.model = overrides["model"]
     if overrides.get("base_url"):
@@ -117,6 +133,8 @@ def main() -> None:
 )
 @click.option("--lang", default="zh", show_default=True, help="总结输出语言")
 @click.option("--extra", default=None, help="附加到 prompt 的自定义要求")
+@click.option("--provider", type=click.Choice(SUMMARIZER_PROVIDERS + ("anthropic",)), default=None,
+              help="临时切换总结 provider（会一并套用该 provider 的默认 key 变量和接口地址）")
 @click.option("--model", default=None, help="临时覆盖总结模型")
 @click.option("--base-url", default=None, help="临时覆盖 OpenAI 兼容接口地址")
 @click.option("--asr-model", default=None, help="临时覆盖 ASR 模型，如 sensevoice-small / large-v3")
@@ -130,12 +148,12 @@ def main() -> None:
 @click.option("-y", "--yes", is_flag=True, help="跳过成本确认")
 @_config_option
 @_verbose_option
-def run(url: str, summary_type, lang, extra, model, base_url, asr_model, device, diarize,
+def run(url: str, summary_type, lang, extra, provider, model, base_url, asr_model, device, diarize,
         output_dir, force, force_asr, no_summary, yes, config_path, verbose) -> None:
     """处理一个视频链接：URL -> 转写 -> 总结。"""
     _setup_logging(verbose)
     cfg = _load(config_path, {
-        "model": model, "base_url": base_url, "asr_model": asr_model,
+        "provider": provider, "model": model, "base_url": base_url, "asr_model": asr_model,
         "device": device, "output_dir": output_dir, "diarize": diarize,
     })
     options = SummaryOptions(
@@ -185,6 +203,8 @@ def inspect(url: str, config_path, verbose) -> None:
 )
 @click.option("--lang", default="zh", show_default=True, help="总结输出语言")
 @click.option("--extra", default=None, help="附加到 prompt 的自定义要求")
+@click.option("--provider", type=click.Choice(SUMMARIZER_PROVIDERS + ("anthropic",)), default=None,
+              help="临时切换总结 provider（会一并套用该 provider 的默认 key 变量和接口地址）")
 @click.option("--model", default=None, help="临时覆盖总结模型")
 @click.option("--base-url", default=None, help="临时覆盖 OpenAI 兼容接口地址")
 @click.option("-o", "--out", type=click.Path(dir_okay=False, path_type=Path), default=None,
@@ -192,11 +212,11 @@ def inspect(url: str, config_path, verbose) -> None:
 @click.option("-y", "--yes", is_flag=True, help="跳过成本确认")
 @_config_option
 @_verbose_option
-def summarize(transcript_path: Path, summary_type, lang, extra, model, base_url,
+def summarize(transcript_path: Path, summary_type, lang, extra, provider, model, base_url,
               out, yes, config_path, verbose) -> None:
     """对已有的 transcript.json 重新总结，不重跑转写。"""
     _setup_logging(verbose)
-    cfg = _load(config_path, {"model": model, "base_url": base_url})
+    cfg = _load(config_path, {"provider": provider, "model": model, "base_url": base_url})
     transcript = Transcript.load(transcript_path)
     options = SummaryOptions(
         summary_type=summary_type or cfg.summarizer.summary_type,
@@ -253,9 +273,12 @@ def config(config_path) -> None:
     click.echo(f"接口地址      {cfg.summarizer.base_url or '(SDK 默认)'}")
     click.echo(f"上下文预算    {cfg.summarizer.max_context_tokens:,} tokens"
                f"（切块策略 {cfg.summarizer.chunk_strategy}）")
-    has_key = bool(cfg.summarizer.api_key)
-    click.echo(f"密钥          {cfg.summarizer.api_key_env} "
-               f"{'已设置' if has_key else '未设置 —— 复制 .env.example 为 .env 并填入'}")
+    if cfg.summarizer.provider.strip().lower() == "ollama":
+        click.echo("密钥          本地模型，不需要")
+    else:
+        has_key = bool(cfg.summarizer.api_key)
+        click.echo(f"密钥          {cfg.summarizer.api_key_env} "
+                   f"{'已设置' if has_key else '未设置 —— 复制 .env.example 为 .env 并填入'}")
 
     # 模型权重动辄几 GB，落哪个盘由环境变量决定，而环境变量只有新开的终端才读得到。
     # 打出来，省得下到一半才发现进了系统盘。

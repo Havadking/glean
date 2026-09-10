@@ -7,7 +7,9 @@ requires-python = ">=3.10"
 dependencies = [
     "yt-dlp>=2025.1.1",
     "faster-whisper>=1.1.0",
-    "openai>=1.60.0",
+    "openai>=1.60.0",       # OpenAI 兼容接口（DeepSeek / 通义 / Kimi ...）
+    "anthropic>=1.0.0",     # Claude 原生接口
+    "httpx>=0.27",          # Ollama 原生接口
     "click>=8.1.0",
     "pyyaml>=6.0",
     "python-dotenv>=1.0.0",

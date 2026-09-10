@@ -2,7 +2,7 @@
 
 给一个视频链接（YouTube / Bilibili / 其他 yt-dlp 支持的站点），自动产出**结构化转写**和**大模型总结**。
 
-设计细节见 [DESIGN.md](DESIGN.md)。当前进度：**v0.3**（说话人分离，支持多人对话/播客的分角色总结）+ Web 界面。
+设计细节见 [DESIGN.md](DESIGN.md)。当前进度：**v0.4**（LLM provider 抽象层完整：OpenAI 兼容 / Claude 原生 / Ollama 本地）+ Web 界面。
 
 ## 快速开始
 
@@ -28,7 +28,7 @@ uv run vsum run "https://www.bilibili.com/video/BVxxxxxxx"
 
 产物落在 `output/<标题>-<视频ID>/` 下：
 
-- `transcript.json` — 结构化转写（时间轴 + 文本，ASR 路径下未来会带 speaker）
+- `transcript.json` — 结构化转写（时间轴 + 文本，开了说话人分离还带 speaker）
 - `summary.md` — 总结，开头附来源、模型、生成时间，便于追溯
 
 ## 命令
@@ -47,6 +47,7 @@ uv run vsum run "https://www.bilibili.com/video/BVxxxxxxx"
 
 ```bash
 --summary-type overall|by_speaker|timeline|key_points   # 总结类型
+--provider claude     # 临时换总结 provider：openai | claude | ollama
 --diarize             # 强制开说话人分离（默认 auto，选 by_speaker 时自动开）
 --no-diarize          # 强制关
 --no-summary          # 只转写，不花钱
@@ -89,17 +90,28 @@ SenseVoice 快是因为只有 234M 参数（large-v3 是 1.55B），而且 VAD �
 - `config.yaml` — provider 选择、模型、prompt 类型、上下文预算。可提交。
 - `.env` — 密钥。已在 `.gitignore` 里，不提交。
 
-默认总结走 DeepSeek（OpenAI 兼容接口）。换厂商只改 `config.yaml`：
+### 换总结模型
 
-```yaml
-summarizer:
-  provider: openai
-  model: qwen-plus
-  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-  api_key_env: DASHSCOPE_API_KEY
+默认走 DeepSeek。三种 provider，改 `config.yaml` 的 `summarizer` 段即可，主流程不动：
+
+| provider | 用途 | 要点 |
+|---|---|---|
+| `openai` | 所有 OpenAI 兼容接口（DeepSeek / 通义 / Kimi / 智谱…） | 只换 `base_url` + `model` + `api_key_env` |
+| `claude` | Anthropic 原生接口 | 上下文 1M，长转写基本不用切块 |
+| `ollama` | 本地模型，零成本不出网 | 上下文小，长转写一定走 map-reduce |
+
+`config.yaml` 里有三种写法的完整示例。临时试一下不用改文件：
+
+```bash
+uv run vsum summarize output/xxx/transcript.json --provider claude
 ```
 
-本地 Ollama 同理，`base_url: http://localhost:11434/v1`。
+`--provider` 会一并套用该 provider 的默认 key 变量和接口地址，不会拿着 DeepSeek 的 key 去调 Claude。
+
+**两个各自的坑**（代码里都处理了，但值得知道）：
+
+- **Claude 不接受 `temperature`**：当前一代已移除采样参数，传了直接 400。配置里的 `temperature` 只对 `openai` 和 `ollama` 生效；Claude 那边用 `effort` 控制成本。另外 Claude 默认开着思考，**思考的 token 也算进 `max_output_tokens`**，设小了正文会被截断，建议 16000 以上。
+- **Ollama 默认上下文只有 4096，超出部分被静默丢弃** —— 不报错不警告，只是总结莫名其妙漏掉后半段。所以走的是原生 `/api/chat` 而不是它的 OpenAI 兼容端点：只有原生接口能传 `num_ctx`。程序会按 `max_context_tokens` 显式传下去，并在输入吃满时警告。注意 `num_ctx` 很吃显存，12GB 上跑 8B 模型 32K 差不多是上限。
 
 ## 环境依赖
 
@@ -126,9 +138,10 @@ summarizer:
 - **时间轴的粒度取决于 VAD**：不分离时时间戳来自 FSMN-VAD 的语音段边界（单段上限 30 秒），不是逐词对齐，长段落起止会偏粗；分离时是句级的，细得多。
 - B 站对同一 IP 的请求频率敏感，超了返回 412。已经做了复用探测结果少发请求 + 退避重试，还是撞上的话等几分钟，或者在 `config.yaml` 里配 `download.cookies_from_browser` 用登录态。
 - whisper 那一路的 VAD 对纯音乐、强背景音会整段误判成非人声，遇到这种情况会自动关掉 VAD 重跑一次。
+- **`claude` 和 `ollama` 两个 provider 没做过真实调用验证**：开发机上没有 Anthropic key，也没装 Ollama。协议层（参数构造、错误分支、响应解析）用假服务器和假响应对象全测过了，但第一次真连的时候还是留个心。`openai` 那条是真实跑通的。
 
 ## 路线图
 
-见 [DESIGN.md 第 8 节](DESIGN.md)。v0.1 - v0.3 已完成，Gradio 界面（原排在 v0.5）也提前做完了。
+见 [DESIGN.md 第 8 节](DESIGN.md)。v0.1 - v0.4 已完成，Gradio 界面（原排在 v0.5）也提前做完了。
 
-剩下：**v0.4** 补齐 LLM provider 抽象层（Anthropic 原生接口、Ollama 本地模型），**v0.5** 加 SQLite 缓存。目前复用是靠输出目录里已有的 `transcript.json` 和音频文件，效果类似但没有跨目录的索引能力。
+剩下 **v0.5**：SQLite 缓存。目前复用是靠输出目录里已有的 `transcript.json` 和音频文件，效果类似但没有跨目录的索引能力。
