@@ -17,6 +17,7 @@ from .base import BaseSummarizer
 log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-opus-5"
+ANTHROPIC_KEY_PREFIX = "sk-ant-"
 
 # 带思考的模型里，思考消耗的 token 也算进 max_tokens。留太小的话
 # 思考还没结束预算就用光了，正文会被截断。
@@ -48,6 +49,23 @@ class ClaudeSummarizer(BaseSummarizer):
                 f"环境变量 {self.cfg.api_key_env} 是空的。"
                 f"把 .env.example 复制成 .env 并填入 key（config.yaml 里 "
                 f"summarizer.api_key_env 决定读哪个变量）。"
+            )
+
+        # 把 provider 改成 claude、却忘了改 api_key_env 或 base_url，是很容易犯的错，
+        # 后果是把一家厂商的密钥发给另一家。在发出去之前拦住。
+        if not api_key.startswith(ANTHROPIC_KEY_PREFIX) and not self.cfg.base_url:
+            raise ConfigError(
+                f"{self.cfg.api_key_env} 里的值不像 Anthropic 的密钥"
+                f"（应该以 {ANTHROPIC_KEY_PREFIX} 开头），已阻止发送 —— "
+                f"否则就是把别家的密钥送去了 api.anthropic.com。\n"
+                f"config.yaml 里 provider 改成 claude 时，"
+                f"summarizer.api_key_env 要一起改成 ANTHROPIC_API_KEY。"
+            )
+        if self.cfg.base_url and "anthropic.com" not in self.cfg.base_url:
+            log.warning(
+                "provider 是 claude，但 base_url 指向 %s。请求和密钥都会发到那里。"
+                "如果这不是你自建的中转，检查一下 config.yaml。",
+                self.cfg.base_url,
             )
 
         kwargs = {"api_key": api_key, "timeout": 900.0, "max_retries": 3}

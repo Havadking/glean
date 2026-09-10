@@ -63,10 +63,14 @@ class Transcript:
         return path
 
     @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "Transcript":
+        data = dict(raw)  # 别改调用方传进来的字典
+        segments = [Segment(**s) for s in data.pop("segments", [])]
+        return cls(segments=segments, **data)
+
+    @classmethod
     def load(cls, path: Path) -> "Transcript":
-        raw = json.loads(Path(path).read_text(encoding="utf-8"))
-        segments = [Segment(**s) for s in raw.pop("segments", [])]
-        return cls(segments=segments, **raw)
+        return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
 @dataclass

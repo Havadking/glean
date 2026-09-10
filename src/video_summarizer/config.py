@@ -64,7 +64,9 @@ class ASRConfig:
 class SummarizerConfig:
     provider: str = "openai"
     model: str = "deepseek-chat"
-    base_url: str | None = "https://api.deepseek.com/v1"
+    # 默认留空，具体地址由 config.yaml 给。这里要是写死某一家的地址，
+    # 换 provider 时忘了改就会把请求（连同密钥）发到错误的厂商去。
+    base_url: str | None = None
     api_key_env: str = "DEEPSEEK_API_KEY"
     max_context_tokens: int = 120000
     max_output_tokens: int = 8000

@@ -2,7 +2,7 @@
 
 给一个视频链接（YouTube / Bilibili / 其他 yt-dlp 支持的站点），自动产出**结构化转写**和**大模型总结**。
 
-设计细节见 [DESIGN.md](DESIGN.md)。当前进度：**v0.4**（LLM provider 抽象层完整：OpenAI 兼容 / Claude 原生 / Ollama 本地）+ Web 界面。
+设计细节见 [DESIGN.md](DESIGN.md)。**设计文档路线图 v0.1 - v0.5 已全部完成。**
 
 ## 快速开始
 
@@ -39,6 +39,7 @@ uv run vsum run "https://www.bilibili.com/video/BVxxxxxxx"
 | `vsum inspect <url>` | 只探测：有没有人工字幕、时长多少。不下载任何东西 |
 | `vsum run <url>` | 完整流程：转写 + 总结 |
 | `vsum summarize <transcript.json>` | 拿已有转写换个角度重新总结，不重跑 ASR |
+| `vsum cache` | 查看缓存概况；`cache list` 看明细，`cache clear` 清理 |
 | `vsum config` | 打印当前生效的配置和密钥状态 |
 
 界面分两步：先「获取转写」出转写和预计消耗，确认后再点「生成总结」才会真正调大模型 —— 和命令行的成本确认是同一个道理。「历史」标签页可以拿已有转写换个总结类型重跑，不用再走一遍 ASR。
@@ -51,13 +52,14 @@ uv run vsum run "https://www.bilibili.com/video/BVxxxxxxx"
 --diarize             # 强制开说话人分离（默认 auto，选 by_speaker 时自动开）
 --no-diarize          # 强制关
 --no-summary          # 只转写，不花钱
+--no-cache            # 这次不读也不写缓存
 --force-asr           # 有字幕也强制走语音识别
 --force               # 忽略缓存全部重跑
 --asr-model medium    # 临时换小模型，快一些
 -y                    # 跳过成本确认
 ```
 
-注意 `--force` 之外的重跑都会复用已有的 `transcript.json`。已经转写过的视频要换成带说话人的版本，得 `--diarize --force` 一起加。
+换 ASR 模型、开说话人分离都会改变缓存指纹，不用再加 `--force` —— 会自动重跑。
 
 ## 工作方式
 
@@ -66,6 +68,27 @@ uv run vsum run "https://www.bilibili.com/video/BVxxxxxxx"
 3. **兜底**：FunASR 只覆盖中英日韩粤。配置的语言超出范围、或 FunASR 跑失败/结果为空，自动切 faster-whisper（近百种语言）。whisper 这一路 GPU 失败还会再退 CPU。
 4. **长文本自动分策略**：转写 token 数在模型上下文预算内就整篇送入，超了自动走 map-reduce（切块局部摘要 → 汇总）。
 5. **花钱前先问**：调用大模型前打印预估 token 量和请求次数，确认后才发。
+6. **按指纹缓存**：转写和总结都进 SQLite，同样的输入不重算也不重付。
+
+### 缓存
+
+指纹包含视频 id、走字幕还是 ASR、ASR 的 provider / 模型 / 语言 / 是否分离。**换了其中任何一项就是另一个指纹**，不会拿到设置不符的旧结果；反过来视频改了标题、输出目录换了名字，指纹不变，照样命中。总结的指纹再叠上模型、总结类型、输出语言和附加要求。
+
+```bash
+uv run vsum cache          # 概况
+uv run vsum cache list     # 明细
+uv run vsum cache clear    # 清理（产物文件不受影响，只是下次要重算）
+```
+
+三个开关的区别：
+
+| | 读缓存 | 重下音频 | 重跑 ASR |
+|---|---|---|---|
+| 默认 | 是 | 否 | 否（命中时） |
+| `--no-cache` | 否 | 否 | 是 |
+| `--force` | 否 | 是 | 是 |
+
+缓存是索引层，不是产物本身 —— `transcript.json` 和 `summary.md` 照旧写到输出目录。删掉 `cache.sqlite` 只会让下次重算；如果输出目录里的产物指纹对得上，还会被直接认领，不用重跑。
 
 ### 说话人分离
 
@@ -142,6 +165,16 @@ uv run vsum summarize output/xxx/transcript.json --provider claude
 
 ## 路线图
 
-见 [DESIGN.md 第 8 节](DESIGN.md)。v0.1 - v0.4 已完成，Gradio 界面（原排在 v0.5）也提前做完了。
+见 [DESIGN.md 第 8 节](DESIGN.md)。**v0.1 - v0.5 全部完成**，Gradio 界面（原排在 v0.5）也提前做了。
 
-剩下 **v0.5**：SQLite 缓存。目前复用是靠输出目录里已有的 `transcript.json` 和音频文件，效果类似但没有跨目录的索引能力。
+## 测试
+
+```bash
+uv run pytest
+```
+
+不碰网络、不加载模型，二十秒跑完。Ollama 那部分对着进程内起的假服务器发真实 HTTP，Claude 的响应解析用假 message 对象覆盖；需要真实模型的验证标了 `slow`，默认不跑。
+
+```bash
+uv run pytest -m slow      # 需要 GPU 和已下载的模型
+```

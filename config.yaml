@@ -74,4 +74,9 @@ summarizer:
 #   chunk_tokens: 8000
 
 output_dir: ./output
-cache_db: ./cache.sqlite          # v0.5 启用
+
+# 缓存：按输入指纹存转写和总结，避免重复跑 ASR（最耗时）和重复调大模型（花钱）。
+# 指纹包含视频 id、走字幕还是 ASR、ASR 的 provider/模型/语言/是否分离；
+# 换了其中任何一项都算不同的东西，不会拿到设置不符的旧结果。
+# 设成 null 可以关掉。`vsum cache` 查看，`vsum cache clear` 清理。
+cache_db: ./cache.sqlite

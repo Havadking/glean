@@ -34,6 +34,10 @@ funasr = [
     "torch>=2.9",
     "torchaudio>=2.9",
 ]
+# 测试。跑 `uv run pytest`。
+dev = [
+    "pytest>=8.0",
+]
 
 # PyPI 上的 Windows torch 轮子是纯 CPU 版（118MB），CUDA 版只在 pytorch 官方源上。
 # 这里把 win32 平台的 torch 指到 cu130，其他平台走默认源。
@@ -48,6 +52,12 @@ explicit = true
 
 [project.scripts]
 vsum = "video_summarizer.cli:cli_main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# 默认只跑不碰网络、不加载模型的那些，几秒就完
+addopts = "-q -m 'not slow'"
+markers = ["slow: 需要真实模型或网络，默认不跑（用 -m slow 单独跑）"]
 
 [build-system]
 requires = ["hatchling"]

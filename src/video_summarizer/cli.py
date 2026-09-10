@@ -9,6 +9,7 @@ from pathlib import Path
 
 import click
 
+from . import cache as cache_mod
 from .config import Config, load_config
 from .errors import VideoSummarizerError
 from .models import SummaryOptions, Transcript
@@ -145,11 +146,12 @@ def main() -> None:
 @click.option("--force", is_flag=True, help="忽略已有的转写和音频缓存，全部重跑")
 @click.option("--force-asr", is_flag=True, help="即使有字幕也强制走语音识别")
 @click.option("--no-summary", is_flag=True, help="只转写，不调用大模型")
+@click.option("--no-cache", is_flag=True, help="这次不读也不写缓存")
 @click.option("-y", "--yes", is_flag=True, help="跳过成本确认")
 @_config_option
 @_verbose_option
 def run(url: str, summary_type, lang, extra, provider, model, base_url, asr_model, device, diarize,
-        output_dir, force, force_asr, no_summary, yes, config_path, verbose) -> None:
+        output_dir, force, force_asr, no_summary, no_cache, yes, config_path, verbose) -> None:
     """处理一个视频链接：URL -> 转写 -> 总结。"""
     _setup_logging(verbose)
     cfg = _load(config_path, {
@@ -167,6 +169,7 @@ def run(url: str, summary_type, lang, extra, provider, model, base_url, asr_mode
         force=force,
         force_asr=force_asr,
         skip_summary=no_summary,
+        use_cache=not no_cache,
         confirm=_make_confirm(yes),
     )
     _report(result)
@@ -257,6 +260,77 @@ def ui(host, port, share, output_dir, config_path, verbose) -> None:
     launch(cfg, host=host, port=port, share=share)
 
 
+@main.group(invoke_without_command=True)
+@_config_option
+@click.pass_context
+def cache(ctx, config_path) -> None:
+    """查看和清理缓存。不带子命令时打印概况。"""
+    cfg = _load(config_path, {})
+    ctx.obj = cfg
+    if ctx.invoked_subcommand is not None:
+        return
+
+    store = cache_mod.Cache(cfg.cache_db)
+    info = store.stats()
+    if not info.get("enabled"):
+        click.echo("缓存未启用（config.yaml 里 cache_db 为空，或者库打不开）")
+        return
+    click.echo(f"缓存文件    {info['path']}")
+    click.echo(f"占用        {info['size_bytes'] / 1024:,.0f} KB")
+    click.echo(f"转写        {info['transcripts']} 条"
+               f"（覆盖 {format_timestamp(info['cached_audio_sec'])} 音频）")
+    click.echo(f"总结        {info['summaries']} 条")
+    click.echo("")
+    click.echo("`vsum cache list` 看明细，`vsum cache clear` 清理。")
+
+
+@cache.command("list")
+@click.option("-n", "--limit", default=20, show_default=True, help="最多列几条")
+@click.pass_obj
+def cache_list(cfg: Config, limit: int) -> None:
+    """列出缓存里的转写和总结。"""
+    store = cache_mod.Cache(cfg.cache_db)
+
+    transcripts = store.list_transcripts(limit)
+    click.echo(f"转写（{len(transcripts)} 条）")
+    if not transcripts:
+        click.echo("  （空）")
+    for e in transcripts:
+        marks = [e.source_type]
+        if e.has_speakers:
+            marks.append("带说话人")
+        click.echo(
+            f"  {e.key[:12]}  {format_timestamp(e.duration_sec):>8}  "
+            f"{e.segment_count:>4} 句  [{'/'.join(marks)}]  {(e.title or e.video_id)[:40]}"
+        )
+
+    summaries = store.list_summaries(limit)
+    click.echo("")
+    click.echo(f"总结（{len(summaries)} 条）")
+    if not summaries:
+        click.echo("  （空）")
+    for s in summaries:
+        click.echo(
+            f"  {s.key[:12]}  {s.summary_type:<11} {s.provider:<34} "
+            f"{(s.title or s.video_id)[:30]}"
+        )
+
+
+@cache.command("clear")
+@click.option("--video-id", default=None, help="只清这个视频的（默认清全部）")
+@click.option("-y", "--yes", is_flag=True, help="不用确认")
+@click.pass_obj
+def cache_clear(cfg: Config, video_id: str | None, yes: bool) -> None:
+    """清空缓存。产物文件不受影响，只是下次要重算。"""
+    store = cache_mod.Cache(cfg.cache_db)
+    scope = f"视频 {video_id} 的缓存" if video_id else "全部缓存"
+    if not yes and not click.confirm(f"确定清掉{scope}？下次要重跑 ASR。", default=False):
+        click.echo("已取消。")
+        return
+    transcripts, summaries = store.clear(video_id)
+    click.echo(f"已清除 {transcripts} 条转写、{summaries} 条总结。")
+
+
 @main.command()
 @_config_option
 def config(config_path) -> None:
@@ -282,6 +356,10 @@ def config(config_path) -> None:
 
     # 模型权重动辄几 GB，落哪个盘由环境变量决定，而环境变量只有新开的终端才读得到。
     # 打出来，省得下到一半才发现进了系统盘。
+    store = cache_mod.Cache(cfg.cache_db)
+    s = store.stats()
+    click.echo(f"缓存          " + (f"{s['transcripts']} 条转写 / {s['summaries']} 条总结  {cfg.cache_db}" if s.get("enabled") else "未启用"))
+
     click.echo("")
     click.echo("模型缓存位置（由环境变量决定，改完要重开终端）")
     for var, what, default in (
