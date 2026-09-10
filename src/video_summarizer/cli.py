@@ -254,7 +254,7 @@ def ui(host, port, share, output_dir, config_path, verbose) -> None:
     """启动 Web 界面。"""
     _setup_logging(verbose)
     cfg = _load(config_path, {"output_dir": output_dir})
-    from .webui import launch
+    from .web.app import launch
 
     click.echo(f"界面地址 http://{host}:{port}")
     launch(cfg, host=host, port=port, share=share)
