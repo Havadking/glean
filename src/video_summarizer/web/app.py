@@ -26,11 +26,11 @@ from ..cache import Cache, summary_key
 from ..config import Config, load_config
 from ..errors import VideoSummarizerError
 from ..models import SummaryOptions, Transcript
-from ..pipeline import plan_transcript_key, render_summary_markdown, run as run_pipeline
+from ..pipeline import plan_transcript_key, run as run_pipeline, write_summary_files
 from ..summarizer import get_provider as get_summarizer
 from ..summarizer.prompts import TEMPLATES
 from ..summarizer.tokens import format_timestamp
-from . import library, reading, render
+from . import library, mindmap, reading, render
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +41,16 @@ TYPE_HINTS = {
     "timeline": "按话题分章节，方便跳着看",
     "key_points": "数字、结论、可执行的步骤",
     "by_speaker": "多人对话，谁说了什么",
+    "mindmap": "一张图看结构，可折叠缩放",
 }
+
+# 思维导图组件：Gradio 更新组件时只替换 innerHTML，不会重新执行脚本，
+# 所以挂一个 MutationObserver，内容一变就重新渲染。
+_MINDMAP_JS_ON_LOAD = """
+var render = function () { if (window.__vsRenderMindmaps) window.__vsRenderMindmaps(element); };
+new MutationObserver(render).observe(element, { childList: true, subtree: true });
+render();
+"""
 TYPE_CHOICES = [
     (f"{t.label} · {TYPE_HINTS.get(key, '')}".rstrip(" ·"), key)
     for key, t in TEMPLATES.items()
@@ -217,9 +226,15 @@ def _build_workspace(gr, cfg: Config, loaded_state):
                 status = gr.Markdown("先获取转写。")
                 generate_btn = gr.Button("生成总结", variant="primary", scale=0,
                                          interactive=False)
+            mindmap_html = gr.HTML(
+                mindmap.widget_html(None), head=mindmap.head_html(),
+                js_on_load=_MINDMAP_JS_ON_LOAD, visible=False, padding=False,
+            )
             summary_md = gr.Markdown()
             provenance = gr.Markdown()
-            summary_file = gr.File(label="summary.md", visible=False)
+            with gr.Row():
+                summary_file = gr.File(label="summary.md", visible=False)
+                mindmap_file = gr.File(label="mindmap.html（双击可开）", visible=False)
 
     # ---------- 视图切换与搜索 ----------
 
@@ -239,10 +254,42 @@ def _build_workspace(gr, cfg: Config, loaded_state):
 
     # ---------- 选了总结类型：先查缓存 ----------
 
+    def show_summary(text: str, chosen: str, loaded: _Loaded, provider_desc: str):
+        """把一份总结正文摆到界面上。思维导图类型渲染成图，其余渲染 Markdown。
+
+        返回 (summary_md, provenance, summary_file, mindmap_html, mindmap_file)。
+        """
+        work_dir = loaded.path.parent if loaded.path else None
+        summary_path = work_dir / "summary.md" if work_dir else None
+        summary_file = gr.update(value=str(summary_path),
+                                 visible=bool(summary_path and summary_path.is_file()))
+        provenance = _summary_provenance(provider_desc, chosen)
+
+        if chosen != "mindmap":
+            return (text, provenance, summary_file,
+                    gr.update(visible=False), gr.update(visible=False))
+
+        title = loaded.transcript.title if loaded.transcript else ""
+        tree = mindmap.parse_outline(text, fallback_title=title or "思维导图")
+        html_path = work_dir / "mindmap.html" if work_dir else None
+        return (
+            # 导图下面附上大纲源文件，折叠着，想改的人能看到原文
+            f"<details><summary>大纲源文件（{tree.size} 个节点）</summary>\n\n"
+            f"```markdown\n{mindmap.strip_fence(text)}\n```\n\n</details>",
+            provenance,
+            summary_file,
+            gr.update(value=mindmap.widget_html(tree, title), visible=True),
+            gr.update(value=str(html_path),
+                      visible=bool(html_path and html_path.is_file())),
+        )
+
+    def _hidden_summary():
+        return ("", "", gr.update(visible=False), gr.update(visible=False),
+                gr.update(visible=False))
+
     def on_type_change(chosen, language, extra_text, loaded: _Loaded):
         if loaded.transcript is None:
-            return ("先获取转写。", gr.update(interactive=False), "", "",
-                    gr.update(visible=False))
+            return ("先获取转写。", gr.update(interactive=False), *_hidden_summary())
 
         run_cfg = load_config(cfg.source_path)
         options = SummaryOptions(summary_type=chosen, language=(language or "zh").strip(),
@@ -250,8 +297,8 @@ def _build_workspace(gr, cfg: Config, loaded_state):
         try:
             provider = get_summarizer(run_cfg.summarizer)
         except VideoSummarizerError as exc:
-            return (f"无法使用总结模型：{exc}", gr.update(interactive=False), "", "",
-                    gr.update(visible=False))
+            return (f"无法使用总结模型：{exc}", gr.update(interactive=False),
+                    *_hidden_summary())
 
         cached = None
         if loaded.cache_key:
@@ -266,16 +313,13 @@ def _build_workspace(gr, cfg: Config, loaded_state):
             return (
                 "**已有缓存，不花钱** — 换个类型或改附加要求会重新生成。",
                 gr.update(interactive=True, value="重新生成"),
-                cached,
-                _summary_provenance(provider.describe(), chosen),
-                gr.update(visible=False),
+                *show_summary(cached, chosen, loaded, provider.describe()),
             )
 
         try:
             estimate = provider.plan(loaded.transcript, options)
         except VideoSummarizerError as exc:
-            return (f"无法估算：{exc}", gr.update(interactive=False), "", "",
-                    gr.update(visible=False))
+            return (f"无法估算：{exc}", gr.update(interactive=False), *_hidden_summary())
 
         strategy = (f"切成 {estimate.chunks} 块 + 1 次汇总，共 {estimate.chunks + 1} 次请求"
                     if estimate.is_chunked else "1 次请求")
@@ -283,11 +327,12 @@ def _build_workspace(gr, cfg: Config, loaded_state):
             f"约 {estimate.estimated_input_tokens:,} tokens · {strategy} · "
             f"`{provider.describe()}`",
             gr.update(interactive=True, value="生成总结"),
-            "", "", gr.update(visible=False),
+            *_hidden_summary(),
         )
 
     type_inputs = [summary_type, lang, extra, loaded_state]
-    type_outputs = [status, generate_btn, summary_md, provenance, summary_file]
+    type_outputs = [status, generate_btn, summary_md, provenance, summary_file,
+                    mindmap_html, mindmap_file]
     summary_type.change(on_type_change, type_inputs, type_outputs)
     lang.change(on_type_change, type_inputs, type_outputs)
     extra.change(on_type_change, type_inputs, type_outputs)
@@ -299,8 +344,14 @@ def _build_workspace(gr, cfg: Config, loaded_state):
         "lang": lang, "extra": extra, "status": status,
         "generate_btn": generate_btn, "summary_md": summary_md,
         "provenance": provenance, "summary_file": summary_file,
+        "mindmap_html": mindmap_html, "mindmap_file": mindmap_file,
     }
     handles["on_type_change"] = on_type_change
+    handles["show_summary"] = show_summary
+    handles["hidden_summary"] = _hidden_summary
+    # 总结相关的输出组件，按 on_type_change / on_generate 的返回顺序
+    handles["summary_outputs"] = [status, generate_btn, summary_md, provenance,
+                                  summary_file, mindmap_html, mindmap_file]
     return handles
 
 
@@ -321,9 +372,12 @@ def _load_updates(gr, transcript: Transcript, path: Path | None, cache_key: str 
 def _wire_generate(gr, cfg: Config, h: dict, loaded_state, log_box):
     """接上"生成总结"按钮。命中缓存的情况在 on_type_change 里已经处理掉了。"""
 
+    hidden = h["hidden_summary"]
+    n_hidden = len(hidden())
+
     def on_generate(loaded: _Loaded, chosen, language, extra_text):
         if loaded.transcript is None:
-            yield "", "先获取转写。", "", "", gr.update(visible=False)
+            yield ("", "先获取转写。", gr.update(), *hidden())
             return
 
         run_cfg = load_config(cfg.source_path)
@@ -345,39 +399,33 @@ def _wire_generate(gr, cfg: Config, h: dict, loaded_state, log_box):
                                   provider_desc=provider.describe(),
                                   summary_type=chosen, language=options.language,
                                   content=text)
-            target = None
             if loaded.path is not None:
-                target = loaded.path.parent / "summary.md"
-                target.write_text(
-                    render_summary_markdown(text, loaded.transcript,
-                                            provider.describe(), options),
-                    encoding="utf-8",
-                )
-            return text, target
+                write_summary_files(text, loaded.transcript, provider.describe(),
+                                    options, loaded.path.parent)
+            return text
 
         done = None
         for logs, value, error in _run_streaming(work):
             if error is not None:
-                yield logs, _error_md(error), "", "", gr.update(visible=False)
+                yield (logs, _error_md(error), gr.update(), *hidden())
                 return
             if value is None:
-                yield logs, gr.update(), gr.update(), gr.update(), gr.update()
+                yield (logs, gr.update(), gr.update(), *([gr.update()] * n_hidden))
                 continue
             done = (logs, value)
 
-        logs, (text, target) = done
+        logs, text = done
         yield (
             logs,
             "**已生成** — 结果已存进缓存，下次同样的设置不再花钱。",
-            text,
-            _summary_provenance(provider.describe(), chosen),
-            gr.update(value=str(target), visible=target is not None),
+            gr.update(value="重新生成"),
+            *h["show_summary"](text, chosen, loaded, provider.describe()),
         )
 
     h["generate_btn"].click(
         on_generate,
         [loaded_state, h["summary_type"], h["lang"], h["extra"]],
-        [log_box, h["status"], h["summary_md"], h["provenance"], h["summary_file"]],
+        [log_box, *h["summary_outputs"]],
     )
 
 
@@ -538,8 +586,7 @@ def _build_library_page(gr, cfg: Config, page) -> None:
             ).then(
                 h["on_type_change"],
                 [h["summary_type"], h["lang"], h["extra"], loaded_state],
-                [h["status"], h["generate_btn"], h["summary_md"], h["provenance"],
-                 h["summary_file"]],
+                h["summary_outputs"],
             )
 
     log_box = gr.Textbox(label="运行日志", lines=4, max_lines=4,

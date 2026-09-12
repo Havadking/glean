@@ -129,15 +129,37 @@ def run(
             content=summary,
         )
 
-    summary_path = work_dir / "summary.md"
-    summary_path.write_text(
-        render_summary_markdown(summary, transcript, provider.describe(), options),
-        encoding="utf-8",
-    )
+    summary_path = write_summary_files(summary, transcript, provider.describe(), options, work_dir)
     result.summary = summary
     result.summary_path = summary_path
-    log.info("总结已保存: %s", summary_path)
     return result
+
+
+def write_summary_files(
+    summary: str, transcript: Transcript, provider_desc: str,
+    options: SummaryOptions, work_dir: Path,
+) -> Path:
+    """把总结落盘。思维导图类型额外产出一个自包含的 mindmap.html。返回 summary.md 的路径。"""
+    work_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = work_dir / "summary.md"
+    summary_path.write_text(
+        render_summary_markdown(summary, transcript, provider_desc, options),
+        encoding="utf-8",
+    )
+    log.info("总结已保存: %s", summary_path)
+
+    if options.summary_type == "mindmap":
+        from .web import mindmap
+
+        tree = mindmap.parse_outline(summary, fallback_title=transcript.title or "思维导图")
+        html_path = work_dir / "mindmap.html"
+        html_path.write_text(
+            mindmap.standalone_html(tree, transcript.title or "思维导图", summary),
+            encoding="utf-8",
+        )
+        log.info("思维导图已保存: %s（%d 个节点，%d 层，双击可在浏览器打开）",
+                 html_path, tree.size, tree.depth)
+    return summary_path
 
 
 def plan_transcript_key(

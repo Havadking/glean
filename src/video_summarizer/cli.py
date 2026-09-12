@@ -13,7 +13,9 @@ from . import cache as cache_mod
 from .config import Config, load_config
 from .errors import VideoSummarizerError
 from .models import SummaryOptions, Transcript
-from .pipeline import PipelineResult, render_summary_markdown, run as run_pipeline
+from .pipeline import (
+    PipelineResult, render_summary_markdown, run as run_pipeline, write_summary_files,
+)
 from .summarizer import AVAILABLE_PROVIDERS as SUMMARIZER_PROVIDERS, get_provider as get_summarizer
 from .summarizer.base import CostEstimate
 from .summarizer.prompts import TEMPLATES
@@ -234,13 +236,21 @@ def summarize(transcript_path: Path, summary_type, lang, extra, provider, model,
         return
 
     summary = provider.summarize(transcript, options)
-    target = out or transcript_path.parent / "summary.md"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        render_summary_markdown(summary, transcript, provider.describe(), options), encoding="utf-8"
-    )
+    if out is not None:
+        # 指定了输出路径就只写这一个文件
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(
+            render_summary_markdown(summary, transcript, provider.describe(), options),
+            encoding="utf-8",
+        )
+        target = out
+    else:
+        target = write_summary_files(summary, transcript, provider.describe(), options,
+                                     transcript_path.parent)
     click.echo("")
     click.echo(f"总结  {target}")
+    if options.summary_type == "mindmap" and out is None:
+        click.echo(f"导图  {target.parent / 'mindmap.html'}")
 
 
 @main.command()

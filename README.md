@@ -30,6 +30,7 @@ uv run vsum run "https://www.bilibili.com/video/BVxxxxxxx"
 
 - `transcript.json` — 结构化转写（时间轴 + 文本，开了说话人分离还带 speaker）
 - `summary.md` — 总结，开头附来源、模型、生成时间，便于追溯
+- `mindmap.html` — 思维导图类型才有，自包含单文件，双击可开
 
 ## 命令
 
@@ -53,10 +54,22 @@ uv run vsum run "https://www.bilibili.com/video/BVxxxxxxx"
 
 选过的总结类型如果缓存里已经有，切过去是秒出的，不会再花钱。
 
+### 思维导图
+
+第 5 种总结类型。思维导图不是图片，是树 —— 让模型输出嵌套的 Markdown 大纲（`#` 根、`##` 主分支、缩进 `-` 列表），程序解析成树，用 [Markmap](https://markmap.js.org/) 渲染成可折叠、可缩放的图。**只用 DeepSeek 就够，不需要生图模型。**
+
+```bash
+uv run vsum run "视频链接" --summary-type mindmap
+```
+
+产出 `mindmap.html`：**自包含单文件，双击就能在浏览器里打开**，不需要联网。渲染库（d3 + markmap-view，共 322KB）打包在仓库里，国内访问 CDN 时好时坏的问题不存在。界面里也能直接看，带「居中」和「下载 SVG」。
+
+实测 22 分钟的护肤视频出 100 多个节点、7 个主分支、4 层，模型对格式守得很好。第四层默认折叠，点节点展开。
+
 `vsum run` 常用参数：
 
 ```bash
---summary-type overall|by_speaker|timeline|key_points   # 总结类型
+--summary-type overall|by_speaker|timeline|key_points|mindmap   # 总结类型
 --provider claude     # 临时换总结 provider：openai | claude | ollama
 --diarize             # 强制开说话人分离（默认 auto，选 by_speaker 时自动开）
 --no-diarize          # 强制关
