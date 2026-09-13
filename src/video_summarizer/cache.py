@@ -27,7 +27,7 @@ from .models import Transcript
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS transcripts (
@@ -62,6 +62,17 @@ CREATE TABLE IF NOT EXISTS summaries (
 );
 CREATE INDEX IF NOT EXISTS idx_summaries_transcript ON summaries(transcript_key);
 CREATE INDEX IF NOT EXISTS idx_summaries_video ON summaries(video_id);
+
+CREATE TABLE IF NOT EXISTS questions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id    TEXT NOT NULL,
+    question    TEXT NOT NULL,
+    answer      TEXT NOT NULL,
+    provider    TEXT NOT NULL,
+    citations   TEXT NOT NULL DEFAULT '[]',
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_questions_video ON questions(video_id);
 """
 
 
@@ -156,6 +167,17 @@ class TranscriptEntry:
     uploader: str | None = None
     upload_date: str | None = None
     thumbnail: str | None = None
+
+
+@dataclass
+class QuestionEntry:
+    id: int
+    video_id: str
+    question: str
+    answer: str
+    provider: str
+    citations: list[float]
+    created_at: str
 
 
 @dataclass
@@ -376,6 +398,61 @@ class Cache:
             for r in rows
         ]
 
+    # ---------- 问答 ----------
+
+    def add_question(
+        self, video_id: str, question: str, answer: str, provider: str, citations: list[float],
+    ) -> int | None:
+        conn = self._connect()
+        if conn is None:
+            return None
+        try:
+            with closing(conn):
+                cur = conn.execute(
+                    "INSERT INTO questions (video_id, question, answer, provider, citations, created_at)"
+                    " VALUES (?,?,?,?,?,?)",
+                    (video_id, question, answer, provider, json.dumps(citations), _now()),
+                )
+                conn.commit()
+                return cur.lastrowid
+        except sqlite3.Error as exc:
+            log.warning("写问答记录失败：%s", exc)
+            return None
+
+    def questions_for_video(self, video_id: str, limit: int = 100) -> list[QuestionEntry]:
+        conn = self._connect()
+        if conn is None:
+            return []
+        try:
+            with closing(conn):
+                rows = conn.execute(
+                    "SELECT id, video_id, question, answer, provider, citations, created_at"
+                    " FROM questions WHERE video_id = ? ORDER BY id LIMIT ?", (video_id, limit),
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        out = []
+        for r in rows:
+            try:
+                cites = json.loads(r["citations"])
+            except ValueError:
+                cites = []
+            out.append(QuestionEntry(r["id"], r["video_id"], r["question"], r["answer"],
+                                     r["provider"], cites, r["created_at"]))
+        return out
+
+    def delete_question(self, question_id: int) -> bool:
+        conn = self._connect()
+        if conn is None:
+            return False
+        try:
+            with closing(conn):
+                cur = conn.execute("DELETE FROM questions WHERE id = ?", (question_id,))
+                conn.commit()
+                return cur.rowcount > 0
+        except sqlite3.Error:
+            return False
+
     def update_source_meta(self, video_id: str, meta: dict[str, Any]) -> int:
         """给老记录补 UP 主等来源信息（v2 之前的行没有这几列）。返回更新行数。"""
         conn = self._connect()
@@ -434,9 +511,11 @@ class Cache:
                 if video_id:
                     t = conn.execute("DELETE FROM transcripts WHERE video_id = ?", (video_id,))
                     s = conn.execute("DELETE FROM summaries WHERE video_id = ?", (video_id,))
+                    conn.execute("DELETE FROM questions WHERE video_id = ?", (video_id,))
                 else:
                     t = conn.execute("DELETE FROM transcripts")
                     s = conn.execute("DELETE FROM summaries")
+                    conn.execute("DELETE FROM questions")
                 conn.commit()
                 counts = (t.rowcount, s.rowcount)
                 conn.execute("VACUUM")

@@ -25,6 +25,7 @@ from ..config import Config, load_config
 from ..errors import VideoSummarizerError
 from ..models import SummaryOptions
 from ..pipeline import plan_transcript_key, run as run_pipeline, write_summary_files
+from .. import qa as qa_mod
 from .. import search as search_mod
 from ..subtitle.fetcher import select_subtitle_language
 from ..summarizer import get_provider as get_summarizer
@@ -513,6 +514,61 @@ def create_app(cfg: Config):
 
         return StreamingResponse(gen(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # ----- 问视频 -----
+
+    @app.get("/api/videos/{video_id}/questions")
+    def list_questions(video_id: str):
+        c = state.fresh_config()
+        entry = library_mod.find_entry(c, video_id)
+        transcript = library_mod.load_transcript(c, entry) if entry else None
+        if entry is None or transcript is None:
+            raise HTTPException(404, "没有这个视频的转写")
+        try:
+            provider = get_summarizer(c.summarizer)
+            p = qa_mod.plan(provider, transcript)
+            estimate = {**p, "cost": _money(c, p["input_tokens"], 600), "currency": c.summarizer.currency,
+                        "provider": provider.describe()}
+        except VideoSummarizerError as exc:
+            estimate = {"error": str(exc)}
+        return {
+            "estimate": estimate,
+            "questions": [
+                {"id": q.id, "question": q.question, "answer": q.answer, "provider": q.provider,
+                 "citations": q.citations, "created_at": q.created_at}
+                for q in Cache(c.cache_db).questions_for_video(video_id)
+            ],
+        }
+
+    class AskBody(BaseModel):
+        question: str
+        # 前端把最近几轮传回来，服务端不维护会话
+        history: list[dict[str, str]] = []
+
+    @app.post("/api/videos/{video_id}/ask")
+    def ask_video(video_id: str, body: AskBody):
+        """同步调用，几秒到十几秒。不进任务队列：不该排在一个 20 分钟的 ASR 后面。"""
+        question = body.question.strip()
+        if not question:
+            raise HTTPException(400, "先写个问题")
+        c = state.fresh_config()
+        entry = library_mod.find_entry(c, video_id)
+        transcript = library_mod.load_transcript(c, entry) if entry else None
+        if entry is None or transcript is None:
+            raise HTTPException(404, "没有这个视频的转写")
+        provider = get_summarizer(c.summarizer)
+        history = [qa_mod.Turn(h.get("question", ""), h.get("answer", "")) for h in body.history
+                   if h.get("question") and h.get("answer")]
+        answer = qa_mod.ask(provider, transcript, question, history)
+        qid = Cache(c.cache_db).add_question(video_id, answer.question, answer.answer,
+                                             answer.provider, answer.citations)
+        return {"id": qid, **answer.to_dict(),
+                "cost": _money(c, answer.input_tokens, 600), "currency": c.summarizer.currency}
+
+    @app.delete("/api/questions/{question_id}")
+    def delete_question(question_id: int):
+        c = state.fresh_config()
+        return {"deleted": Cache(c.cache_db).delete_question(question_id)}
 
     # ----- 搜索 -----
 

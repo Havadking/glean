@@ -164,6 +164,7 @@ output/<标题-视频id>/
 
 `transcripts(key, video_id, source_url, title, source_type, language, duration_sec, segment_count, has_speakers, payload, created_at, uploader, upload_date, thumbnail)`（后三列 v2 加，老库 ALTER TABLE 迁移）
 `summaries(key, transcript_key, video_id, title, provider, summary_type, language, content, created_at)`
+`questions(id, video_id, question, answer, provider, citations, created_at)`（v0.7 问视频）
 
 `search_fts(tok, video_id, kind, ref, start, text)`：FTS5 虚表（v0.7）。`tok` 是按字切开的索引列，`kind` 是 transcript / summary，`ref` 是段落序号 / 总结类型，`start` 是段落起始秒 / 行号。任务完成时增量更新，启动时补缺。
 
@@ -252,7 +253,7 @@ cache_db: ./cache.sqlite
 按优先级：
 
 1. **全库搜索**：SQLite FTS5，中文按字切分，搜转写正文与总结；结果带原文片段 + 时间戳，点开定位到段落。零 LLM 成本
-2. **问视频**：对一条转写提问，模型只依据转写回答，**每条结论附时间戳**，点了跳段落。既是最高频用法，也是结构性防编造
+2. ✅ **问视频**（`qa.py`）：对一条转写提问，模型只依据转写回答，**每条结论附时间戳**，点了左栏跳到那一段。转写带 `[mm:ss]` 分句整篇进上下文，超预算截断并提示；不做 map-reduce（切块汇总丢时间戳）。同步调用不进队列（不该排在 ASR 后面）。问答记录存 `questions` 表；详情页两栏改成各自滚动，跳转写时回答不跟着滚走
 3. **批量**：合集 / UP 主空间链接 → 列出条目 → 勾选入队。必须做节流（B 站 412）和 cookie 登录态；支持中断续跑
 
 ### v0.8 — 打磨

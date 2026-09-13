@@ -2,6 +2,7 @@ import { Copy, ExternalLink, FolderOpen, Search, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, type Estimate, type Video as VideoT } from '../api'
+import { AskPanel, useCitationJump } from '../components/AskPanel'
 import { Markdown } from '../components/Markdown'
 import { Mindmap } from '../components/Mindmap'
 import { ErrorBox, Highlight, Pill, Seg, countHits } from '../components/ui'
@@ -54,6 +55,8 @@ export function Video() {
   }, [video, focusStart])
 
   const hits = useMemo(() => video ? video.paragraphs.reduce((n, p) => n + countHits(p.text, query), 0) : 0, [video, query])
+  const starts = useMemo(() => video ? video.paragraphs.map((p) => p.start) : [], [video])
+  const jump = useCitationJump(starts)
 
   if (error) return <div className="page"><ErrorBox error={error} /><p><Link to="/library">回到库</Link></p></div>
   if (!video) return <div className="page" style={{ color: 'var(--mute)' }}><span className="spin" /> 读取中…</div>
@@ -75,7 +78,7 @@ export function Video() {
   }
 
   return (
-    <>
+    <div className="detail">
       <div className="dhead">
         <div className="in">
           <div className="crumb">
@@ -128,14 +131,19 @@ export function Video() {
           <div className="colhead">
             <h2>总结</h2>
             <Seg value={type} onChange={setType}
-              items={types.map((t) => ({ key: t.key, label: t.label, showDot: true, done: !!video.summaries[t.key] }))} />
+              items={[
+                ...types.map((t) => ({ key: t.key, label: t.label, showDot: true, done: !!video.summaries[t.key] })),
+                { key: 'ask', label: '问视频' },
+              ]} />
           </div>
-          {summary
-            ? <SummaryView video={video} type={type} onRegenerated={load} />
-            : <GeneratePanel video={video} type={type} hint={types.find((t) => t.key === type)?.hint ?? ''} onDone={load} />}
+          {type === 'ask'
+            ? <AskPanel videoId={video.video_id} onJump={jump} />
+            : summary
+              ? <SummaryView video={video} type={type} onRegenerated={load} />
+              : <GeneratePanel video={video} type={type} hint={types.find((t) => t.key === type)?.hint ?? ''} onDone={load} />}
         </div>
       </div>
-    </>
+    </div>
   )
 }
 

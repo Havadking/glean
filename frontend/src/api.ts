@@ -93,6 +93,21 @@ export interface SearchHit { video_id: string; kind: 'transcript' | 'summary'; r
 export interface SearchVideo { video_id: string; title: string; uploader: string | null; thumbnail: string | null; duration_sec: number; hits: SearchHit[] }
 export interface SearchResult { query: string; videos: SearchVideo[]; transcript_hits: number; summary_hits: number }
 
+export interface Question {
+  id: number
+  question: string
+  answer: string
+  provider: string
+  citations: number[]
+  created_at: string
+  cost?: number | null
+  truncated?: boolean
+}
+export interface QuestionsResponse {
+  estimate: { transcript_tokens: number; input_tokens: number; truncated: boolean; cost: number | null; currency: string; provider: string } | { error: string }
+  questions: Question[]
+}
+
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
 export interface Job {
   id: string
@@ -167,6 +182,10 @@ export const api = {
   summarize: (id: string, body: { type: string; language?: string; extra?: string | null; force?: boolean }) =>
     post<{ job: Job | null; duplicate: boolean; cached: boolean; summary?: { type: string; content: string; provider: string } }>(
       `/videos/${encodeURIComponent(id)}/summaries`, body),
+  questions: (id: string) => call<QuestionsResponse>(`/videos/${encodeURIComponent(id)}/questions`),
+  ask: (id: string, question: string, history: { question: string; answer: string }[]) =>
+    post<Question & { created_at: string }>(`/videos/${encodeURIComponent(id)}/ask`, { question, history }),
+  deleteQuestion: (id: number) => call<{ deleted: boolean }>(`/questions/${id}`, { method: 'DELETE' }),
   search: (q: string, signal?: AbortSignal) => call<SearchResult>(`/search?q=${encodeURIComponent(q)}`, { signal }),
   jobs: () => call<{ jobs: Job[] }>('/jobs'),
   job: (id: string) => call<Job>(`/jobs/${id}`),

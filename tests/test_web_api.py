@@ -25,12 +25,15 @@ class FakeSummarizer(BaseSummarizer):
 
     def _complete(self, system: str, user: str) -> str:
         FakeSummarizer.calls.append(user)
-        if "思维导图" in system + user or "# " in user and "##" in user:
-            pass
+        if "视频内容问答助手" in system:
+            return self._complete_for_qa(user)
         return "# 根\n## 分支\n- 点一\n- 点二\n" if "大纲" in system + user else "## 一句话总结\n假的总结。"
 
     def describe(self) -> str:
         return "fake/model"
+
+    def _complete_for_qa(self, user: str) -> str:
+        return "第一句在开头 [00:00]，第二句紧接着 [00:04]。"
 
 
 @pytest.fixture
@@ -314,6 +317,40 @@ def test_delete_refuses_directories_outside_output_dir(client, tmp_path, monkeyp
     r = client.delete("/api/videos/zzz").json()
     assert r["removed_dir"] is False
     assert (outside / "transcript.json").is_file()
+
+
+# ---------- 问视频 ----------
+
+
+def test_ask_answers_with_citations_and_persists(client):
+    r0 = client.get("/api/videos/BVAAA/questions").json()
+    assert r0["questions"] == [] and r0["estimate"]["truncated"] is False
+    assert r0["estimate"]["cost"] is not None
+
+    r = client.post("/api/videos/BVAAA/ask", json={"question": "讲了什么？"}).json()
+    assert r["citations"] == [0, 4] and r["truncated"] is False
+    assert r["provider"] == "fake/model" and r["cost"] is not None
+    assert "[00:00]" in FakeSummarizer.calls[-1] and "问题：讲了什么？" in FakeSummarizer.calls[-1]
+
+    # 第二问带历史
+    client.post("/api/videos/BVAAA/ask", json={"question": "再详细点", "history": [{"question": "讲了什么？", "answer": r["answer"]}]})
+    assert "之前的问答" in FakeSummarizer.calls[-1]
+
+    qs = client.get("/api/videos/BVAAA/questions").json()["questions"]
+    assert [q["question"] for q in qs] == ["讲了什么？", "再详细点"]
+    assert qs[0]["citations"] == [0, 4]
+
+    assert client.delete(f"/api/questions/{qs[0]['id']}").json()["deleted"] is True
+    assert len(client.get("/api/videos/BVAAA/questions").json()["questions"]) == 1
+    assert client.post("/api/videos/BVAAA/ask", json={"question": "  "}).status_code == 400
+    assert client.post("/api/videos/nope/ask", json={"question": "x"}).status_code == 404
+
+
+def test_deleting_video_removes_its_questions(client):
+    client.post("/api/videos/BVAAA/ask", json={"question": "q"})
+    client.delete("/api/videos/BVAAA")
+    # 视频没了，问答记录也不该留着
+    assert client.get("/api/videos/BVAAA/questions").status_code == 404
 
 
 # ---------- 搜索 ----------

@@ -55,6 +55,10 @@ class BaseSummarizer(ABC):
     def describe(self) -> str:
         return f"{self.name}/{self.cfg.model}"
 
+    def complete(self, system: str, user: str) -> str:
+        """一次裸调用。问答这类不走总结模板的功能用它。"""
+        return self._complete(system, user)
+
     def close(self) -> None:
         """释放连接等资源。默认无操作。"""
 
