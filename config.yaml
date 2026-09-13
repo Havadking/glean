@@ -60,6 +60,8 @@ summarizer:
   price_input_per_m: 2.0
   price_output_per_m: 3.0
   currency: "¥"
+  # 送给模型前去口水话（"呃""嗯""就是就是"）。省一点 token，但会改原文；阅读视图另有独立开关
+  clean_transcript: false
 
 # 换 provider 只改上面这一段，主流程不动。三种写法：
 #

@@ -27,6 +27,7 @@ from ..config import Config, load_config
 from ..errors import VideoSummarizerError
 from ..models import SummaryOptions
 from ..pipeline import plan_transcript_key, run as run_pipeline, write_summary_files
+from .. import cleaning
 from .. import listing as listing_mod
 from .. import qa as qa_mod
 from .. import search as search_mod
@@ -310,15 +311,18 @@ def create_app(cfg: Config):
         }
 
     @app.get("/api/videos/{video_id}")
-    def video(video_id: str):
+    def video(video_id: str, clean: bool = False):
         c = state.fresh_config()
         entry = library_mod.find_entry(c, video_id)
         if entry is None:
             raise HTTPException(404, "没有这个视频")
         transcript = library_mod.load_transcript(c, entry)
-        paragraphs = to_paragraphs(transcript.segments) if transcript else []
+        segments = transcript.segments if transcript else []
+        paragraphs = to_paragraphs(cleaning.clean_segments(segments) if clean else segments)
         return {
             **_entry_dict(entry),
+            "cleaned": clean,
+            "clean_ratio": round(cleaning.removed_ratio(segments), 4) if segments else 0.0,
             "usage": Cache(c.cache_db).usage_totals(video_id),
             "meta": transcript.meta if transcript else entry.meta,
             "paragraphs": [
@@ -338,6 +342,8 @@ def create_app(cfg: Config):
         if transcript is None:
             raise HTTPException(404, "没有这个视频的转写")
         provider = get_summarizer(c.summarizer)
+        if c.summarizer.clean_transcript:
+            transcript = cleaning.clean_transcript(transcript)
         est = provider.plan(transcript, SummaryOptions(summary_type=type, language=language))
         return {"provider": provider.describe(), **_estimate_dict(c, est)}
 
@@ -623,11 +629,12 @@ def create_app(cfg: Config):
                                     "provider": provider.describe()}}
 
         work_dir = entry.work_dir or (c.output_dir / f"{entry.title[:60]}-{entry.video_id}")
+        model_input = cleaning.clean_transcript(transcript) if c.summarizer.clean_transcript else transcript
 
         def work(rep: Reporter) -> dict[str, Any]:
             rep.stage("summarize", f"调用 {provider.describe()}")
-            est = provider.plan(transcript, options)
-            text = provider.summarize(transcript, options)
+            est = provider.plan(model_input, options)
+            text = provider.summarize(model_input, options)
             if key:
                 cache.put_summary(key, transcript_key=entry.cache_key, transcript=transcript,
                                   provider_desc=provider.describe(), summary_type=body.type,
@@ -741,6 +748,8 @@ def create_app(cfg: Config):
         provider = get_summarizer(c.summarizer)
         history = [qa_mod.Turn(h.get("question", ""), h.get("answer", "")) for h in body.history
                    if h.get("question") and h.get("answer")]
+        if c.summarizer.clean_transcript:
+            transcript = cleaning.clean_transcript(transcript)
         answer = qa_mod.ask(provider, transcript, question, history)
         qid = Cache(c.cache_db).add_question(video_id, answer.question, answer.answer,
                                              answer.provider, answer.citations)

@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from . import asr as asr_registry
 from . import cache as cache_mod
+from . import cleaning
 from . import summarizer as summarizer_registry
 from .audio import extractor
 from .config import Config
@@ -124,21 +125,23 @@ def run(
 
     # 同样的转写 + 同样的模型 + 同样的总结类型，没必要再花一次钱
     cached_summary = None if force else cache.get_summary(summary_cache_key)
+    # 给模型看的可以是清洗过的；落盘和缓存里的转写永远是原文
+    model_input = cleaning.clean_transcript(transcript) if cfg.summarizer.clean_transcript else transcript
     if cached_summary is not None:
         log.info("命中总结缓存（%s），跳过大模型调用", summary_cache_key[:12])
         stage("summarize", "命中总结缓存")
         summary = cached_summary
     else:
-        estimate = provider.plan(transcript, options)
+        estimate = provider.plan(model_input, options)
         result.estimate = estimate
-        if confirm is not None and not confirm(estimate, transcript):
+        if confirm is not None and not confirm(estimate, model_input):
             result.summary_skipped_reason = "用户取消"
             stage("done", "用户取消了总结")
             return result
 
         stage("summarize", f"调用 {provider.describe()}")
         log.info("调用 %s 生成总结 ...", provider.describe())
-        summary = provider.summarize(transcript, options)
+        summary = provider.summarize(model_input, options)
         cache.put_summary(
             summary_cache_key,
             transcript_key=cache_key,

@@ -21,15 +21,21 @@ export function Video() {
   const [type, setType] = useState<string>(() => params.get('type') ?? '')
   const [copied, setCopied] = useState(false)
   const [focusStart, setFocusStart] = useState<number | null>(null)
+  const [clean, setClean] = useState<boolean>(() => { try { return localStorage.getItem('clean') === '1' } catch { return false } })
 
   const load = useCallback(async () => {
     try {
-      const v = await api.video(id)
+      const v = await api.video(id, clean)
       setVideo(v)
       setError(null)
       setType((t) => t || Object.keys(v.summaries)[0] || meta?.default_summary_type || 'overall')
     } catch (e) { setError(e) }
-  }, [id, meta?.default_summary_type])
+  }, [id, clean, meta?.default_summary_type])
+  const toggleClean = () => {
+    const next = !clean
+    setClean(next)
+    try { localStorage.setItem('clean', next ? '1' : '0') } catch { /* ignore */ }
+  }
 
   // 换视频或从搜索结果跳进来（t / q / type 变化）时重新读
   const paramKey = params.toString()
@@ -113,6 +119,10 @@ export function Video() {
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <label className="search"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="在这条转写里找…" /></label>
               {query.trim() && <Pill tone={hits ? 'neutral' : 'warn'}>{hits} 处</Pill>}
+              <button className={`btn sm${clean ? ' primary' : ' ghost'}`} onClick={toggleClean}
+                title={clean ? '正在显示去掉口水话的版本，点击看原文' : `去掉"呃""嗯""就是就是"这类口水话（约 ${Math.round(video.clean_ratio * 100)}%），时间轴不变`}>
+                {clean ? '已去口水话' : '去口水话'}
+              </button>
               <button className="btn ghost sm" title="复制全文" onClick={() => copyText(video.paragraphs.map((p) => `[${fmtDuration(p.start)}] ${p.text}`).join('\n\n'))}><Copy /> {copied ? '已复制' : '复制'}</button>
             </div>
           </div>

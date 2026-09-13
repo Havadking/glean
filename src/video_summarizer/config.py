@@ -87,6 +87,8 @@ class SummarizerConfig:
     price_input_per_m: float | None = None
     price_output_per_m: float | None = None
     currency: str = "¥"
+    # 送给模型之前先去口水话（呃、嗯、就是就是）。省 token，但改变原文，默认关
+    clean_transcript: bool = False
 
     @property
     def api_key(self) -> str | None:

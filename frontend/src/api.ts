@@ -62,6 +62,8 @@ export interface Summary {
 export interface Video extends Omit<Entry, 'summaries'> {
   meta: Record<string, unknown>
   usage: UsageTotals
+  cleaned: boolean
+  clean_ratio: number
   paragraphs: Paragraph[]
   summaries: Record<string, Summary>
 }
@@ -203,7 +205,7 @@ export const api = {
   meta: () => call<Meta>('/meta'),
   usage: (limit = 50) => call<Usage>(`/usage?limit=${limit}`),
   library: () => call<Library>('/library'),
-  video: (id: string) => call<Video>(`/videos/${encodeURIComponent(id)}`),
+  video: (id: string, clean = false) => call<Video>(`/videos/${encodeURIComponent(id)}${clean ? '?clean=1' : ''}`),
   estimate: (id: string, type: string) =>
     call<Estimate>(`/videos/${encodeURIComponent(id)}/estimate?type=${encodeURIComponent(type)}`),
   deleteVideo: (id: string) => call<{ removed_dir: boolean }>(`/videos/${encodeURIComponent(id)}`, { method: 'DELETE' }),
