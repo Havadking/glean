@@ -263,7 +263,7 @@ cache_db: ./cache.sqlite
 - ✅ 成本记账（`usage` 表）：provider 从响应读真实用量，接口层每件事记一笔并按单价换算；库页、详情页、设置页展示
 - ✅ 转写清洗（`cleaning.py`）**可选**：阅读视图开关 + `summarizer.clean_transcript`。规则保守：只删边界上的"呃""嗯"、只折叠多字重复；原文永远落盘
 - ✅ 库管理：删除、打开产物目录（v0.6 已有）；设置页「存储」显示音频缓存占用，一键清理 `audio/`（转写总结不受影响）
-- 跨视频总结（"这位 UP 主关于 X 的全部观点"），依赖搜索 + 问视频，成本明显上升，做之前先估
+- ✅ 问 UP 主（跨视频，`qa.ask_uploader` + `/uploader/:name` 页）：材料是每条视频的总结（overall > key_points > timeline > by_speaker > mindmap > 转写开头 1500 token），按发布日期排序，模型按【n】引用、指出前后变化。四条视频一问约 ¥0.01，比整篇转写便宜一个量级。记录存 `questions` 表（video_id = `uploader:<名>`）
 
 ### 明确降级
 
