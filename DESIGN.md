@@ -165,7 +165,7 @@ output/<标题-视频id>/
 `transcripts(key, video_id, source_url, title, source_type, language, duration_sec, segment_count, has_speakers, payload, created_at, uploader, upload_date, thumbnail)`（后三列 v2 加，老库 ALTER TABLE 迁移）
 `summaries(key, transcript_key, video_id, title, provider, summary_type, language, content, created_at)`
 
-v0.7 加 FTS5 虚表做全文搜索（第 8 节）。
+`search_fts(tok, video_id, kind, ref, start, text)`：FTS5 虚表（v0.7）。`tok` 是按字切开的索引列，`kind` 是 transcript / summary，`ref` 是段落序号 / 总结类型，`start` 是段落起始秒 / 行号。任务完成时增量更新，启动时补缺。
 
 ---
 

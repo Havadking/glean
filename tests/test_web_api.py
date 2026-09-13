@@ -316,6 +316,33 @@ def test_delete_refuses_directories_outside_output_dir(client, tmp_path, monkeyp
     assert (outside / "transcript.json").is_file()
 
 
+# ---------- 搜索 ----------
+
+
+def test_search_indexes_library_on_startup_and_groups_by_video(client):
+    r = client.get("/api/search?q=第二句").json()
+    assert r["transcript_hits"] == 1 and r["summary_hits"] == 0
+    assert [v["video_id"] for v in r["videos"]] == ["BVAAA"]
+    hit = r["videos"][0]["hits"][0]
+    assert hit["kind"] == "transcript" and hit["start"] == 0.0 and "第二句" in hit["snippet"]
+    assert r["videos"][0]["uploader"] == "某 UP"
+
+    r = client.get("/api/search?q=缓存里").json()
+    assert r["summary_hits"] == 1 and r["videos"][0]["hits"][0]["ref"] == "overall"
+    assert client.get("/api/search?q=").json()["videos"] == []
+
+
+def test_search_index_follows_summary_jobs_and_deletes(client):
+    assert client.get("/api/search?q=假的总结").json()["videos"] == []
+    r = client.post("/api/videos/BVAAA/summaries", json={"type": "key_points"}).json()
+    _wait_job(client, r["job"]["id"])
+    hits = client.get("/api/search?q=假的总结").json()
+    assert hits["summary_hits"] == 1 and hits["videos"][0]["hits"][0]["ref"] == "key_points"
+    client.delete("/api/videos/BVAAA")
+    assert client.get("/api/search?q=第二句").json()["videos"] == []
+    assert client.post("/api/search/reindex").json()["videos"] == 1
+
+
 # ---------- 静态前端 ----------
 
 

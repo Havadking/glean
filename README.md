@@ -40,7 +40,8 @@ uv run vsum run "https://www.bilibili.com/video/BVxxxxxxx"
 | `vsum inspect <url>` | 只探测：有没有人工字幕、时长多少。不下载任何东西 |
 | `vsum run <url>` | 完整流程：转写 + 总结 |
 | `vsum summarize <transcript.json>` | 拿已有转写换个角度重新总结，不重跑 ASR |
-| `vsum cache` | 查看缓存概况；`cache list` 看明细，`cache clear` 清理，`cache refresh-meta` 给老记录补 UP 主信息 |
+| `vsum search <词>` | 全库搜转写和总结正文，不调模型 |
+| `vsum cache` | 查看缓存概况；`cache list` 看明细，`cache clear` 清理，`cache refresh-meta` 给老记录补 UP 主信息，`cache reindex` 重建搜索索引 |
 | `vsum config` | 打印当前生效的配置和密钥状态 |
 
 ### 界面
@@ -52,6 +53,12 @@ FastAPI 后端 + React 前端，构建产物随包分发，**用户不需要装 
 - **库** — 处理过的视频按 UP 主分组，一行一条：封面、标题、识别方式、已有哪些总结、日期；悬停出「打开目录 / 删除」。顶上四个数：视频数、转写总时长、总结数、UP 主数。
 
 深色模式跟随系统，也可手动切。快捷键 `N` 新任务、`L` 库。
+
+### 全文搜索
+
+库页面的搜索框搜的是**转写和总结的正文**，不只是标题。结果按视频分组，每条命中带原文摘录和时间码，点了直接打开视频、滚到那一段并高亮；命中在总结里的跳到对应类型。零 LLM 成本。
+
+索引是 SQLite FTS5，放在 `cache.sqlite` 里，任务跑完自动更新，老库第一次启动自动补建。中文按字切分后建索引、查询时拼成短语，所以「甘油」「蜂花」这种两字词也能搜（FTS5 自带的 trigram 对少于三个字的词无能为力）；拉丁词做前缀匹配，搜 `elephant` 能命中 `elephants`。
 
 `config.yaml` 里的 `price_input_per_m` / `price_output_per_m` 是每百万 token 的单价，填了界面才会把 token 换算成钱。
 

@@ -270,6 +270,38 @@ def ui(host, port, no_browser, output_dir, config_path, verbose) -> None:
     launch(cfg, host=host, port=port, inbrowser=not no_browser)
 
 
+@main.command()
+@click.argument("query")
+@click.option("-n", "--limit", default=30, show_default=True, help="最多列几条")
+@_config_option
+def search(query, limit, config_path) -> None:
+    """全库搜转写和总结正文。不调模型，不花钱。"""
+    from . import search as search_mod
+    from .web.library import load_library
+
+    cfg = _load(config_path, {})
+    index = search_mod.SearchIndex(cfg.cache_db)
+    if index.count() == 0:
+        videos, rows = search_mod.sync_index(cfg)
+        if videos:
+            click.echo(f"（第一次搜索，建了索引：{videos} 个视频，{rows} 行）")
+    hits = index.search(query, limit=limit)
+    if not hits:
+        click.echo("没搜到。")
+        return
+    titles = {e.video_id: e.title for e in load_library(cfg)}
+    last = None
+    for h in hits:
+        if h.video_id != last:
+            click.echo(f"\n{titles.get(h.video_id, h.video_id)}")
+            last = h.video_id
+        if h.kind == "transcript":
+            where = format_timestamp(h.start)
+        else:
+            where = "总结·" + (TEMPLATES[h.ref].label if h.ref in TEMPLATES else h.ref)
+        click.echo(f"  [{where}] {h.snippet}")
+
+
 @main.group(invoke_without_command=True)
 @_config_option
 @click.pass_context
@@ -356,6 +388,16 @@ def cache_refresh_meta(cfg: Config, everything: bool) -> None:
         click.echo(f"{meta.get('uploader') or '（站点没给 UP 主）'}（缓存 {n} 条）")
         if i < len(todo):
             time.sleep(2)  # 别连着打站点
+
+
+@cache.command("reindex")
+@click.pass_obj
+def cache_reindex(cfg: Config) -> None:
+    """重建全文搜索索引。"""
+    from .search import sync_index
+
+    videos, rows = sync_index(cfg, force=True)
+    click.echo(f"已重建：{videos} 个视频，{rows} 行。")
 
 
 @cache.command("clear")

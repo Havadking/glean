@@ -1,6 +1,6 @@
 import { Copy, ExternalLink, FolderOpen, Search, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, type Estimate, type Video as VideoT } from '../api'
 import { Markdown } from '../components/Markdown'
 import { Mindmap } from '../components/Mindmap'
@@ -12,12 +12,14 @@ import { useStore } from '../store'
 export function Video() {
   const { id = '' } = useParams()
   const nav = useNavigate()
+  const [params] = useSearchParams()
   const { meta, refreshLibrary } = useStore()
   const [video, setVideo] = useState<VideoT | null>(null)
   const [error, setError] = useState<unknown>(null)
-  const [query, setQuery] = useState('')
-  const [type, setType] = useState<string>('')
+  const [query, setQuery] = useState(() => params.get('q') ?? '')
+  const [type, setType] = useState<string>(() => params.get('type') ?? '')
   const [copied, setCopied] = useState(false)
+  const [focusStart, setFocusStart] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -28,7 +30,28 @@ export function Video() {
     } catch (e) { setError(e) }
   }, [id, meta?.default_summary_type])
 
-  useEffect(() => { setVideo(null); setType(''); setQuery(''); void load() }, [load])
+  // 换视频或从搜索结果跳进来（t / q / type 变化）时重新读
+  const paramKey = params.toString()
+  useEffect(() => {
+    setVideo(null)
+    setType(params.get('type') ?? '')
+    setQuery(params.get('q') ?? '')
+    const t = params.get('t')
+    setFocusStart(t != null && t !== '' ? Number(t) : null)
+    void load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load, paramKey])
+
+  // 从搜索结果跳进来：滚到那一段并高亮一下
+  useEffect(() => {
+    if (!video || focusStart == null) return
+    const el = document.getElementById(`p-${Math.floor(focusStart)}`)
+    if (!el) return
+    el.scrollIntoView({ block: 'center' })
+    el.classList.add('focus')
+    const t = setTimeout(() => el.classList.remove('focus'), 2700)
+    return () => clearTimeout(t)
+  }, [video, focusStart])
 
   const hits = useMemo(() => video ? video.paragraphs.reduce((n, p) => n + countHits(p.text, query), 0) : 0, [video, query])
 

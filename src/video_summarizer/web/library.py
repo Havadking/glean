@@ -15,6 +15,7 @@ from typing import Any
 
 from ..cache import Cache
 from ..config import Config
+from ..models import Transcript
 from ..summarizer.prompts import TEMPLATES
 
 log = logging.getLogger(__name__)
@@ -93,6 +94,60 @@ def load_library(cfg: Config) -> list[LibraryEntry]:
     result = list(entries.values())
     result.sort(key=lambda e: e.created_at, reverse=True)
     return result
+
+
+def load_transcript(cfg: Config, entry: LibraryEntry) -> Transcript | None:
+    """读一个视频的转写：缓存优先，其次目录里的 transcript.json。"""
+    if entry.cache_key:
+        t = Cache(cfg.cache_db).get_transcript(entry.cache_key)
+        if t is not None:
+            return t
+    if entry.transcript_path and entry.transcript_path.is_file():
+        try:
+            return Transcript.load(entry.transcript_path)
+        except (OSError, ValueError, TypeError) as exc:
+            log.warning("读不了 %s：%s", entry.transcript_path, exc)
+    return None
+
+
+@dataclass
+class SummaryText:
+    summary_type: str
+    provider: str
+    created_at: str
+    content: str
+    source: str          # cache | file
+
+    @property
+    def label(self) -> str:
+        template = TEMPLATES.get(self.summary_type)
+        return template.label if template else self.summary_type
+
+
+def load_summaries(cfg: Config, entry: LibraryEntry) -> dict[str, SummaryText]:
+    """一个视频每种类型最新的总结正文：缓存优先，其次目录里的 summary.md。"""
+    out: dict[str, SummaryText] = {}
+    for s in Cache(cfg.cache_db).summaries_for_video(entry.video_id):
+        if s.summary_type in out or not s.content:
+            continue
+        out[s.summary_type] = SummaryText(s.summary_type, s.provider, s.created_at, s.content, "cache")
+    for ref in entry.summaries:
+        if ref.path is None or ref.summary_type in out or ref.summary_type == "unknown":
+            continue
+        try:
+            text = ref.path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        body = text.split("\n---\n", 1)[1] if "\n---\n" in text else text
+        out[ref.summary_type] = SummaryText(ref.summary_type, ref.provider, ref.created_at, body.strip(), "file")
+    return out
+
+
+def find_entry(cfg: Config, video_id: str) -> LibraryEntry | None:
+    for e in load_library(cfg):
+        if e.video_id == video_id:
+            return e
+    return None
 
 
 def _from_cache(cfg: Config) -> list[LibraryEntry]:

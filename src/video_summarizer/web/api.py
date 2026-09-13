@@ -23,8 +23,9 @@ from .. import __version__
 from ..cache import Cache, summary_key
 from ..config import Config, load_config
 from ..errors import VideoSummarizerError
-from ..models import SummaryOptions, Transcript
+from ..models import SummaryOptions
 from ..pipeline import plan_transcript_key, run as run_pipeline, write_summary_files
+from .. import search as search_mod
 from ..subtitle.fetcher import select_subtitle_language
 from ..summarizer import get_provider as get_summarizer
 from ..summarizer.base import CostEstimate
@@ -81,6 +82,13 @@ class State:
         self.jobs = JobManager()
         # url -> VideoInfo。探测过的直接复用给任务，少发一次请求（B 站 412 的主要来源）
         self._probed: dict[str, VideoInfo] = {}
+        # 搜索索引是 v0.7 加的，老库第一次启动补建；平时靠任务完成时增量更新
+        try:
+            videos, rows = search_mod.sync_index(self.fresh_config())
+            if videos:
+                log.info("搜索索引补建：%d 个视频，%d 行", videos, rows)
+        except Exception as exc:  # noqa: BLE001 —— 索引坏了不能拦住界面启动
+            log.warning("搜索索引补建失败：%s", exc)
 
     def fresh_config(self) -> Config:
         """每次任务重新读 config.yaml，改了配置不用重启。output_dir 跟命令行给的。"""
@@ -154,52 +162,12 @@ def _estimate_dict(cfg: Config, est: CostEstimate) -> dict[str, Any]:
     }
 
 
-def _load_transcript(cfg: Config, entry: library_mod.LibraryEntry) -> Transcript | None:
-    cache = Cache(cfg.cache_db)
-    if entry.cache_key:
-        t = cache.get_transcript(entry.cache_key)
-        if t is not None:
-            return t
-    if entry.transcript_path and entry.transcript_path.is_file():
-        try:
-            return Transcript.load(entry.transcript_path)
-        except (OSError, ValueError, TypeError) as exc:
-            log.warning("读不了 %s：%s", entry.transcript_path, exc)
-    return None
-
-
-def _find_entry(cfg: Config, video_id: str) -> library_mod.LibraryEntry | None:
-    for e in library_mod.load_library(cfg):
-        if e.video_id == video_id:
-            return e
-    return None
-
-
 def _summaries_dict(cfg: Config, entry: library_mod.LibraryEntry) -> dict[str, dict[str, Any]]:
-    """每种类型最新的一份总结，带正文。缓存优先，其次目录里的 summary.md。"""
+    """每种类型最新的一份总结，带正文；思维导图附带解析好的树。"""
     out: dict[str, dict[str, Any]] = {}
-    cache = Cache(cfg.cache_db)
-    for s in cache.summaries_for_video(entry.video_id):
-        if s.summary_type in out or not s.content:
-            continue
-        out[s.summary_type] = {
-            "type": s.summary_type, "label": TEMPLATES[s.summary_type].label
-            if s.summary_type in TEMPLATES else s.summary_type,
-            "provider": s.provider, "created_at": s.created_at, "content": s.content,
-            "source": "cache",
-        }
-    for ref in entry.summaries:
-        if ref.path is None or ref.summary_type in out or ref.summary_type == "unknown":
-            continue
-        try:
-            text = ref.path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        body = text.split("\n---\n", 1)[1] if "\n---\n" in text else text
-        out[ref.summary_type] = {
-            "type": ref.summary_type, "label": ref.label, "provider": ref.provider,
-            "created_at": ref.created_at, "content": body.strip(), "source": "file",
-        }
+    for key, s in library_mod.load_summaries(cfg, entry).items():
+        out[key] = {"type": key, "label": s.label, "provider": s.provider,
+                    "created_at": s.created_at, "content": s.content, "source": s.source}
     if "mindmap" in out:
         tree = mindmap_mod.parse_outline(out["mindmap"]["content"], fallback_title=entry.title)
         out["mindmap"]["tree"] = tree.to_markmap()
@@ -275,10 +243,10 @@ def create_app(cfg: Config):
     @app.get("/api/videos/{video_id}")
     def video(video_id: str):
         c = state.fresh_config()
-        entry = _find_entry(c, video_id)
+        entry = library_mod.find_entry(c, video_id)
         if entry is None:
             raise HTTPException(404, "没有这个视频")
-        transcript = _load_transcript(c, entry)
+        transcript = library_mod.load_transcript(c, entry)
         paragraphs = to_paragraphs(transcript.segments) if transcript else []
         return {
             **_entry_dict(entry),
@@ -295,8 +263,8 @@ def create_app(cfg: Config):
         c = state.fresh_config()
         if type not in TEMPLATES:
             raise HTTPException(400, f"不认识的总结类型 {type}")
-        entry = _find_entry(c, video_id)
-        transcript = _load_transcript(c, entry) if entry else None
+        entry = library_mod.find_entry(c, video_id)
+        transcript = library_mod.load_transcript(c, entry) if entry else None
         if transcript is None:
             raise HTTPException(404, "没有这个视频的转写")
         provider = get_summarizer(c.summarizer)
@@ -306,10 +274,11 @@ def create_app(cfg: Config):
     @app.delete("/api/videos/{video_id}")
     def delete_video(video_id: str):
         c = state.fresh_config()
-        entry = _find_entry(c, video_id)
+        entry = library_mod.find_entry(c, video_id)
         if entry is None:
             raise HTTPException(404, "没有这个视频")
         t, s = Cache(c.cache_db).clear(video_id)
+        search_mod.SearchIndex(c.cache_db).remove_video(video_id)
         removed_dir = False
         if entry.work_dir and entry.work_dir.is_dir():
             # 只删我们自己产出的目录：里面必须有 transcript.json，且在 output_dir 之下
@@ -324,7 +293,7 @@ def create_app(cfg: Config):
     @app.post("/api/videos/{video_id}/open")
     def open_folder(video_id: str):
         c = state.fresh_config()
-        entry = _find_entry(c, video_id)
+        entry = library_mod.find_entry(c, video_id)
         if entry is None or not entry.work_dir or not entry.work_dir.is_dir():
             raise HTTPException(404, "没有产物目录")
         path = str(entry.work_dir)
@@ -355,7 +324,7 @@ def create_app(cfg: Config):
         key = plan_transcript_key(info, c, force_asr=False, diarize=diarize)
         cache = Cache(c.cache_db)
         cached = cache.get_transcript(key) is not None
-        existing = _find_entry(c, info.video_id)
+        existing = library_mod.find_entry(c, info.video_id)
 
         est_tokens = int(info.duration_sec * TOKENS_PER_SEC)
         return {
@@ -421,6 +390,7 @@ def create_app(cfg: Config):
                 url, c, options=options, force=body.force, force_asr=body.force_asr,
                 skip_summary=summary_type is None, on_stage=rep.stage, info=info,
             )
+            search_mod.index_one(c, result.info.video_id)
             return {
                 "video_id": result.info.video_id,
                 "title": result.info.title,
@@ -445,8 +415,8 @@ def create_app(cfg: Config):
         if body.type not in TEMPLATES:
             raise HTTPException(400, f"不认识的总结类型 {body.type}")
         c = state.fresh_config()
-        entry = _find_entry(c, video_id)
-        transcript = _load_transcript(c, entry) if entry else None
+        entry = library_mod.find_entry(c, video_id)
+        transcript = library_mod.load_transcript(c, entry) if entry else None
         if entry is None or transcript is None:
             raise HTTPException(404, "没有这个视频的转写")
 
@@ -484,6 +454,7 @@ def create_app(cfg: Config):
                                   provider_desc=provider.describe(), summary_type=body.type,
                                   language=options.language, content=text)
             write_summary_files(text, transcript, provider.describe(), options, work_dir)
+            search_mod.index_one(c, video_id)
             return {"video_id": video_id, "type": body.type, "content": text,
                     "provider": provider.describe(), **_estimate_dict(c, est)}
 
@@ -542,6 +513,43 @@ def create_app(cfg: Config):
 
         return StreamingResponse(gen(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # ----- 搜索 -----
+
+    @app.get("/api/search")
+    def search(q: str = "", limit: int = 200):
+        """全库搜转写和总结。零 LLM 成本。结果按视频分组，每组带命中的段落和总结行。"""
+        c = state.fresh_config()
+        q = q.strip()
+        if not q:
+            return {"query": q, "videos": [], "transcript_hits": 0, "summary_hits": 0}
+        hits = search_mod.SearchIndex(c.cache_db).search(q, limit=max(1, min(limit, 1000)))
+        by_video: dict[str, list[search_mod.Hit]] = {}
+        for h in hits:
+            by_video.setdefault(h.video_id, []).append(h)
+        entries = {e.video_id: e for e in library_mod.load_library(c)}
+        videos = []
+        for vid, group in by_video.items():
+            entry = entries.get(vid)
+            if entry is None:
+                continue
+            videos.append({
+                "video_id": vid, "title": entry.title, "uploader": entry.uploader,
+                "thumbnail": entry.thumbnail, "duration_sec": entry.duration_sec,
+                "hits": [h.to_dict() for h in group],
+            })
+        # 命中多的视频排前面
+        videos.sort(key=lambda v: len(v["hits"]), reverse=True)
+        return {
+            "query": q, "videos": videos,
+            "transcript_hits": sum(1 for h in hits if h.kind == "transcript"),
+            "summary_hits": sum(1 for h in hits if h.kind == "summary"),
+        }
+
+    @app.post("/api/search/reindex")
+    def reindex():
+        videos, rows = search_mod.sync_index(state.fresh_config(), force=True)
+        return {"videos": videos, "rows": rows}
 
     # ----- 静态前端 -----
 

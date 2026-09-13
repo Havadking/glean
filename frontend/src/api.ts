@@ -89,6 +89,10 @@ export interface Probe {
   estimate: Estimate
 }
 
+export interface SearchHit { video_id: string; kind: 'transcript' | 'summary'; ref: string; start: number; snippet: string }
+export interface SearchVideo { video_id: string; title: string; uploader: string | null; thumbnail: string | null; duration_sec: number; hits: SearchHit[] }
+export interface SearchResult { query: string; videos: SearchVideo[]; transcript_hits: number; summary_hits: number }
+
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
 export interface Job {
   id: string
@@ -163,6 +167,7 @@ export const api = {
   summarize: (id: string, body: { type: string; language?: string; extra?: string | null; force?: boolean }) =>
     post<{ job: Job | null; duplicate: boolean; cached: boolean; summary?: { type: string; content: string; provider: string } }>(
       `/videos/${encodeURIComponent(id)}/summaries`, body),
+  search: (q: string, signal?: AbortSignal) => call<SearchResult>(`/search?q=${encodeURIComponent(q)}`, { signal }),
   jobs: () => call<{ jobs: Job[] }>('/jobs'),
   job: (id: string) => call<Job>(`/jobs/${id}`),
   cancelJob: (id: string) => call<{ cancelled: boolean }>(`/jobs/${id}`, { method: 'DELETE' }),

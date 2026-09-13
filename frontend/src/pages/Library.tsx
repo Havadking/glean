@@ -1,21 +1,41 @@
 import { FolderOpen, Plus, Search, Trash2 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { api, type Entry } from '../api'
-import { Avatar, ErrorBox, Pill, Seg, Stats } from '../components/ui'
+import { api, type Entry, type SearchResult } from '../api'
+import { Avatar, ErrorBox, Highlight, Pill, Seg, Stats } from '../components/ui'
 import { fmtDuration, fmtMinutes, fmtWhen } from '../lib/format'
 import { useStore } from '../store'
 
 type Filter = 'all' | 'mindmap' | 'nosummary'
 
 export function Library() {
-  const { library, libraryError, refreshLibrary } = useStore()
+  const { library, libraryError, refreshLibrary, meta } = useStore()
   const [params, setParams] = useSearchParams()
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(() => params.get('q') ?? '')
   const [filter, setFilter] = useState<Filter>('all')
   const [err, setErr] = useState<unknown>(null)
+  const [result, setResult] = useState<SearchResult | null>(null)
+  const [searching, setSearching] = useState(false)
   const nav = useNavigate()
   const up = params.get('up')
+
+  // 全文搜索：停 250ms 再发，上一次没回来的作废
+  useEffect(() => {
+    const q = query.trim()
+    if (!q) { setResult(null); setSearching(false); return }
+    const ctrl = new AbortController()
+    setSearching(true)
+    const t = setTimeout(() => {
+      api.search(q, ctrl.signal)
+        .then((r) => { setResult(r); setSearching(false) })
+        .catch((e: unknown) => {
+          if ((e as { name?: string })?.name !== 'AbortError') { setErr(e); setSearching(false) }
+        })
+    }, 250)
+    return () => { clearTimeout(t); ctrl.abort() }
+  }, [query])
+
+  const typeLabel = (key: string) => meta?.summary_types.find((t) => t.key === key)?.label ?? key
 
   const groups = useMemo(() => {
     if (!library) return []
@@ -61,7 +81,7 @@ export function Library() {
       )}
 
       <div className="libbar">
-        <label className="search"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜标题、UP 主…" /></label>
+        <label className="search"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜标题、转写、总结…" /></label>
         <Seg value={filter} onChange={setFilter} items={[{ key: 'all', label: '全部' }, { key: 'mindmap', label: '有导图' }, { key: 'nosummary', label: '还没总结' }]} />
         {up && <button className="btn sm" onClick={() => setParams({})}>只看 {up} ✕</button>}
         <span className="sp" />
@@ -69,10 +89,42 @@ export function Library() {
 
       <ErrorBox error={libraryError ?? err} />
 
+      {query.trim() && (
+        <div className="card hit">
+          <div className="h">
+            {searching && !result ? <span className="spin" /> : null}
+            {result && (result.transcript_hits + result.summary_hits > 0
+              ? <Pill tone="accent">转写 {result.transcript_hits} 处 · 总结 {result.summary_hits} 处 · {result.videos.length} 条视频</Pill>
+              : <Pill tone="neutral">正文里没有「{result.query}」</Pill>)}
+            <span>搜的是转写和总结正文，不花钱</span>
+          </div>
+          {result?.videos.map((v) => (
+            <div className="hv" key={v.video_id}>
+              <div className="hvt">
+                <Link to={`/video/${encodeURIComponent(v.video_id)}?q=${encodeURIComponent(query.trim())}`}>{v.title}</Link>
+                {v.uploader && <span className="c">{v.uploader}</span>}
+                <span className="c mono">{fmtDuration(v.duration_sec)}</span>
+                <span className="c">{v.hits.length} 处</span>
+              </div>
+              {v.hits.slice(0, 6).map((h, i) => (
+                <Link className="r" key={i}
+                  to={h.kind === 'transcript'
+                    ? `/video/${encodeURIComponent(v.video_id)}?t=${h.start}&q=${encodeURIComponent(query.trim())}`
+                    : `/video/${encodeURIComponent(v.video_id)}?type=${encodeURIComponent(h.ref)}&q=${encodeURIComponent(query.trim())}`}>
+                  <span className="q"><Highlight text={h.snippet} query={query} /></span>
+                  <span className="w">{h.kind === 'transcript' ? <span className="mono">{fmtDuration(h.start)}</span> : `总结 · ${typeLabel(h.ref)}`}</span>
+                </Link>
+              ))}
+              {v.hits.length > 6 && <div className="more">还有 {v.hits.length - 6} 处，打开视频看全部</div>}
+            </div>
+          ))}
+        </div>
+      )}
+
       {library && library.groups.length === 0 && (
         <div className="empty"><b>还没有处理过的视频</b>去「新任务」贴一个链接。<div><Link className="btn primary" to="/">新任务</Link></div></div>
       )}
-      {library && library.groups.length > 0 && groups.length === 0 && (
+      {library && library.groups.length > 0 && groups.length === 0 && !(result && result.videos.length > 0) && (
         <div className="empty"><b>没有匹配的</b>换个词，或者清掉筛选。</div>
       )}
 
