@@ -98,10 +98,12 @@ URL
 - `cache_key` 同时写进 `transcript.meta`，缓存丢了还能靠它认领输出目录里的产物
 - 任何 SQLite 错误降级为未命中，不阻塞主流程
 
-### 3.6 界面 `web/`
+### 3.6 界面 `web/` + `frontend/`
 
-- 当前是 Gradio 6 多页（处理 / 历史），阅读视图按停顿和时长把分句聚成段落，Markmap 本地渲染思维导图
-- **已决定用 FastAPI + React 重写**，见第 9 节；`reading.py` / `library.py` / `mindmap.py` 是框架无关的，保留
+- `api.py`：FastAPI，REST + SSE；`jobs.py`：单 worker 后台队列，事件带自增序号，断线续传
+- `reading.py`（分句聚段）、`library.py`（缓存 + 产物目录合并、按 UP 主分组）、`mindmap.py`（大纲解析、CLI 导出）是框架无关的纯逻辑
+- 前端 React + TypeScript + Vite，构建产物提交在 `web/dist/`，用户不需要 Node；设计见第 9 节
+- 曾经的 Gradio 版已删除（原因见第 7 节第 8 条）
 
 ---
 
@@ -115,7 +117,7 @@ URL
 | 缓存 | SQLite | 指纹索引 |
 | 思维导图 | Markmap（markmap-view + d3，打包进 `web/static/` 离线可用） | 不用 markmap-lib，解析器自己写 |
 | CLI | click | `vsum run / inspect / summarize / ui / cache / config` |
-| 界面 | Gradio 6 → **FastAPI + React（v0.6）** | 见第 9 节 |
+| 界面 | FastAPI + SSE 后端，React + Vite + TypeScript 前端 | 构建产物随包分发；见第 9 节 |
 | 包管理 | uv，hatchling | extras：`cuda` `ui` `funasr` `dev` |
 | 配置 | `config.yaml` + `.env` | `load_config` 拒绝未知字段 |
 | 测试 | pytest | 160+ 快测试，`slow` 标记的要真模型/网络 |
@@ -139,6 +141,7 @@ URL
     "extractor": "BiliBili",
     "asr_provider": "funasr", "asr_model": "sensevoice-small", "device": "cuda:0",
     "diarization": false, "elapsed_sec": 3.8,
+    "uploader": "…", "upload_date": "20241024", "thumbnail": "http://…",
     "cache_key": "0452b0959f87…"
   }
 }
@@ -159,7 +162,7 @@ output/<标题-视频id>/
 
 ### 5.3 SQLite
 
-`transcripts(key, video_id, source_url, title, source_type, language, duration_sec, segment_count, has_speakers, payload, created_at)`
+`transcripts(key, video_id, source_url, title, source_type, language, duration_sec, segment_count, has_speakers, payload, created_at, uploader, upload_date, thumbnail)`（后三列 v2 加，老库 ALTER TABLE 迁移）
 `summaries(key, transcript_key, video_id, title, provider, summary_type, language, content, created_at)`
 
 v0.7 加 FTS5 虚表做全文搜索（第 8 节）。
@@ -190,6 +193,8 @@ summarizer:
   chunk_strategy: auto
   chunk_tokens: 20000
   summary_type: overall
+  price_input_per_m: 2.0   # 每百万 token 单价，界面换算金额用；留空只显示 token
+  price_output_per_m: 3.0
 output_dir: ./output
 cache_db: ./cache.sqlite
 ```
@@ -227,7 +232,7 @@ cache_db: ./cache.sqlite
 | v0.5 | Gradio 界面 + SQLite 缓存 | ✅ |
 | — | 阅读视图、历史页、思维导图、成本确认（原计划外） | ✅ |
 
-### v0.6 — 界面重构（进行中）
+### v0.6 — 界面重构（已落地，收尾中）
 
 目标：从「模型 demo」变成「产品」。**FastAPI + React**，视觉稿见 `docs/mockup/v0.6-ui.html`，设计决策见第 9 节。
 
@@ -239,7 +244,8 @@ cache_db: ./cache.sqlite
 - **任务队列**：后台线程单 worker，任务表落 SQLite，界面关了任务继续跑、重开能续看。这是 v0.7 批量的底座
 - 前端 `frontend/`：Vite + React + TypeScript + Tailwind；构建产物提交到 `web/dist/` 随包分发，`vsum ui` 直接服务，用户不需要 Node
 - 数据层补 **UP 主字段**：`VideoInfo` / `Transcript.meta` 记 `uploader`（yt-dlp 的 `uploader` / `channel`），库按它分组
-- 保留：`reading.py` `library.py` `mindmap.py`；Gradio 版在 React 版跑通后删除，`ui` extra 改为 `fastapi + uvicorn + sse-starlette`
+- 保留：`reading.py` `library.py` `mindmap.py`；Gradio 版已删除，`ui` extra 只剩 `fastapi + uvicorn`（SSE 用 StreamingResponse 手写，不引第三方）
+- 老记录没有 UP 主信息：`vsum cache refresh-meta` 逐条重新探测补齐
 
 ### v0.7 — 从「处理一个视频」到「管理一个库」
 
@@ -295,9 +301,8 @@ video-summarizer/
 │   └── web/
 │       ├── api.py  jobs.py         FastAPI 路由与任务队列（v0.6）
 │       ├── reading.py  library.py  mindmap.py   框架无关的逻辑
-│       ├── static/                 d3 + markmap-view
-│       ├── dist/                   前端构建产物（提交进仓库）
-│       └── app.py                  Gradio 版（v0.6 完成后删除）
+│       ├── static/                 d3 + markmap-view（CLI 导出 mindmap.html 用）
+│       └── dist/                   前端构建产物（提交进仓库）
 ├── tests/
 ├── output/         产物（gitignore）
 └── cache.sqlite    缓存（gitignore）

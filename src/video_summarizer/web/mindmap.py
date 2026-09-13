@@ -7,6 +7,9 @@
 markdown-it、KaTeX、Prism 一堆我们用不上的东西。我们自己控制大纲格式，
 解析十几行 Python 就够，还能测。只带 markmap-view（49KB）+ d3（273KB），
 都打包在 static/ 里离线可用 —— 国内访问 CDN 时好时坏。
+
+界面里的渲染在前端（frontend/src/components/Mindmap.tsx）；这里只负责解析和
+CLI 导出的自包含 mindmap.html。
 """
 
 from __future__ import annotations
@@ -127,70 +130,6 @@ def _vendor_js() -> str:
     return f"{d3}\n{view}"
 
 
-# 在页面里把 data-tree 渲染成图。做成一个可重复调用的函数，
-# 因为 Gradio 更新组件内容时只替换 innerHTML，不会重新跑脚本。
-RENDER_JS = """
-(function () {
-  function renderAll(scope) {
-    var hosts = (scope || document).querySelectorAll('.vs-mm[data-tree]');
-    for (var i = 0; i < hosts.length; i++) {
-      var host = hosts[i];
-      if (host.getAttribute('data-rendered') === '1') continue;
-      var svg = host.querySelector('svg');
-      if (!svg || !window.markmap || !window.d3) continue;
-      var tree;
-      try { tree = JSON.parse(host.getAttribute('data-tree')); } catch (e) { continue; }
-      host.setAttribute('data-rendered', '1');
-      var mm = window.markmap.Markmap.create(svg, {
-        autoFit: true, duration: 300, maxWidth: 320, spacingVertical: 8,
-        paddingX: 12, initialExpandLevel: 3,
-      }, tree);
-      var fit = host.querySelector('[data-act=fit]');
-      if (fit) fit.onclick = function () { mm.fit(); };
-      var dl = host.querySelector('[data-act=svg]');
-      if (dl) dl.onclick = function () {
-        var s = new XMLSerializer().serializeToString(svg);
-        var blob = new Blob([s], { type: 'image/svg+xml' });
-        var a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = (host.getAttribute('data-title') || 'mindmap') + '.svg';
-        a.click();
-      };
-    }
-  }
-  window.__vsRenderMindmaps = renderAll;
-  renderAll(document);
-})();
-"""
-
-MINDMAP_CSS = """
-<style>
-.vs-mm{position:relative;border:1px solid var(--border-color-primary);border-radius:10px;
-       background:var(--background-fill-primary);overflow:hidden}
-.vs-mm svg{width:100%;height:560px;display:block}
-.vs-mm .vs-mm-bar{position:absolute;top:8px;right:8px;display:flex;gap:6px}
-.vs-mm .vs-mm-bar button{font-size:12px;padding:3px 9px;border:1px solid var(--border-color-primary);
-       border-radius:6px;background:var(--background-fill-primary);color:var(--body-text-color);cursor:pointer}
-.vs-mm .vs-mm-bar button:hover{background:var(--background-fill-secondary)}
-.vs-mm-empty{color:var(--block-title-text-color);font-size:14px;padding:24px 0}
-</style>
-"""
-
-
-def widget_html(tree: Node | None, title: str = "") -> str:
-    """给 gr.HTML 用的片段。树放在 data 属性里，页面里的脚本负责渲染。"""
-    if tree is None:
-        return MINDMAP_CSS + '<div class="vs-mm-empty">还没有思维导图。</div>'
-    payload = escape(json.dumps(tree.to_markmap(), ensure_ascii=False), quote=True)
-    return (
-        MINDMAP_CSS
-        + f'<div class="vs-mm" data-tree="{payload}" data-title="{escape(title, quote=True)}">'
-        + '<div class="vs-mm-bar"><button data-act="fit">居中</button>'
-        + '<button data-act="svg">下载 SVG</button></div>'
-        + "<svg></svg></div>"
-    )
-
-
 def standalone_html(tree: Node, title: str, source_markdown: str = "") -> str:
     """自包含的 HTML 文件：JS 全部内联，双击就能在浏览器里打开，不需要联网。"""
     payload = json.dumps(tree.to_markmap(), ensure_ascii=False)
@@ -240,8 +179,3 @@ function dl(){{
 }}
 </script>
 </body></html>"""
-
-
-def head_html() -> str:
-    """gr.HTML 的 head：内联两个库 + 渲染脚本。"""
-    return f"<script>{_vendor_js()}</script><script>{RENDER_JS}</script>"

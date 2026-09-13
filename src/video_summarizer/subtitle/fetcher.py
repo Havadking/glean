@@ -73,7 +73,7 @@ def fetch(info: VideoInfo, cfg: Config, workdir: Path | None = None) -> Transcri
         meta={
             "subtitle_language": lang,
             "automatic_captions": is_auto,
-            "extractor": info.extractor,
+            **info.source_meta,
         },
     )
 

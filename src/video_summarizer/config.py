@@ -78,6 +78,10 @@ class SummarizerConfig:
     chunk_strategy: str = "auto"
     chunk_tokens: int = 20000
     summary_type: str = "overall"
+    # 每百万 token 的价格，用来在界面上把 token 数换算成钱。留空就只显示 token 数。
+    price_input_per_m: float | None = None
+    price_output_per_m: float | None = None
+    currency: str = "¥"
 
     @property
     def api_key(self) -> str | None:

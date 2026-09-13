@@ -256,18 +256,18 @@ def summarize(transcript_path: Path, summary_type, lang, extra, provider, model,
 @main.command()
 @click.option("--host", default="127.0.0.1", show_default=True, help="监听地址")
 @click.option("--port", default=7860, show_default=True, type=int, help="监听端口")
-@click.option("--share", is_flag=True, help="生成 Gradio 公网临时链接")
+@click.option("--no-browser", is_flag=True, help="不自动打开浏览器")
 @click.option("--output-dir", default=None, help="临时覆盖输出目录")
 @_config_option
 @_verbose_option
-def ui(host, port, share, output_dir, config_path, verbose) -> None:
+def ui(host, port, no_browser, output_dir, config_path, verbose) -> None:
     """启动 Web 界面。"""
     _setup_logging(verbose)
     cfg = _load(config_path, {"output_dir": output_dir})
-    from .web.app import launch
+    from .web.api import launch
 
     click.echo(f"界面地址 http://{host}:{port}")
-    launch(cfg, host=host, port=port, share=share)
+    launch(cfg, host=host, port=port, inbrowser=not no_browser)
 
 
 @main.group(invoke_without_command=True)
@@ -324,6 +324,38 @@ def cache_list(cfg: Config, limit: int) -> None:
             f"  {s.key[:12]}  {s.summary_type:<11} {s.provider:<34} "
             f"{(s.title or s.video_id)[:30]}"
         )
+
+
+@cache.command("refresh-meta")
+@click.option("--all", "everything", is_flag=True, help="已经有 UP 主信息的也重新探测")
+@click.pass_obj
+def cache_refresh_meta(cfg: Config, everything: bool) -> None:
+    """给老记录补上 UP 主、发布日期、封面（库按 UP 主分组要用）。每条要探测一次链接。"""
+    import time
+
+    from .web.library import load_library
+
+    store = cache_mod.Cache(cfg.cache_db)
+    todo = [e for e in load_library(cfg) if (everything or not e.uploader) and e.source_url]
+    if not todo:
+        click.echo("都有了，不用补。")
+        return
+    for i, entry in enumerate(todo, 1):
+        click.echo(f"[{i}/{len(todo)}] {entry.title[:40]} ... ", nl=False)
+        try:
+            info = probe(entry.source_url, cfg.download)
+        except VideoSummarizerError as exc:
+            click.echo(f"失败：{exc}")
+            continue
+        meta = info.source_meta
+        n = store.update_source_meta(entry.video_id, meta)
+        if entry.transcript_path and entry.transcript_path.is_file():
+            t = Transcript.load(entry.transcript_path)
+            t.meta.update(meta)
+            t.save(entry.transcript_path)
+        click.echo(f"{meta.get('uploader') or '（站点没给 UP 主）'}（缓存 {n} 条）")
+        if i < len(todo):
+            time.sleep(2)  # 别连着打站点
 
 
 @cache.command("clear")

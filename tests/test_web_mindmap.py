@@ -89,18 +89,6 @@ def test_markmap_json_shape():
 # ---------- 渲染 ----------
 
 
-def test_widget_embeds_tree_and_escapes_it():
-    html = mindmap.widget_html(mindmap.parse_outline('# 根<script>\n- "引号"'))
-    assert 'class="vs-mm"' in html and "<svg" in html
-    # 树在 data 属性里，标签和引号都得转义，否则会破坏属性或注入
-    assert "<script>" not in html.split("data-tree")[1].split("</div>")[0]
-    assert "&quot;" in html
-
-
-def test_widget_placeholder_when_empty():
-    assert "还没有思维导图" in mindmap.widget_html(None)
-
-
 def test_standalone_html_is_self_contained():
     tree = mindmap.parse_outline(OUTLINE)
     html = mindmap.standalone_html(tree, "护肤", OUTLINE)

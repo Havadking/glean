@@ -34,7 +34,7 @@ class PromptTemplate:
 
 OVERALL = PromptTemplate(
     key="overall",
-    label="整体摘要",
+    label="总体",
     instruction="""请输出一份整体摘要，使用 Markdown 格式：
 
 ## 一句话总结
@@ -54,7 +54,7 @@ OVERALL = PromptTemplate(
 
 BY_SPEAKER = PromptTemplate(
     key="by_speaker",
-    label="分说话人摘要",
+    label="分角色",
     instruction="""这是一段多人对话/播客。请输出分角色摘要，使用 Markdown 格式：
 
 ## 对话概览
@@ -76,7 +76,7 @@ BY_SPEAKER = PromptTemplate(
 
 TIMELINE = PromptTemplate(
     key="timeline",
-    label="时间轴大纲",
+    label="时间线",
     instruction="""请按话题切分成章节，输出时间轴大纲（类似 YouTube chapters），使用 Markdown 格式：
 
 ## 章节
@@ -93,7 +93,7 @@ TIMELINE = PromptTemplate(
 
 KEY_POINTS = PromptTemplate(
     key="key_points",
-    label="关键信息提取",
+    label="要点",
     instruction="""请提取关键信息，使用 Markdown 格式：
 
 ## 结论与主张

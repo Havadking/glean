@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from video_summarizer.models import Segment
-from video_summarizer.web import reading, render
+from video_summarizer.web import reading
 
 
 def _segs(*specs) -> list[Segment]:
@@ -96,38 +96,3 @@ def test_plain_text_export_has_timestamps_and_blank_lines():
     text = reading.to_plain_text(reading.to_paragraphs(segs))
     assert "[00:00] Speaker_1" in text
     assert "\n\n" in text
-
-
-# ---------- 渲染 ----------
-
-
-def test_html_escapes_user_content():
-    """转写来自 ASR 和字幕，什么都可能有。"""
-    paras = reading.to_paragraphs(_segs((0, 1, "<script>alert(1)</script>")))
-    html = render.paragraphs_html(paras)
-    assert "<script>alert" not in html
-    assert "&lt;script&gt;" in html
-
-
-def test_search_highlights_matches():
-    paras = reading.to_paragraphs(_segs((0, 1, "喷雾补水很重要")))
-    html = render.paragraphs_html(paras, query="喷雾")
-    assert 'class="vs-hit"' in html
-
-
-def test_search_highlight_cannot_inject_html():
-    paras = reading.to_paragraphs(_segs((0, 1, "正常内容")))
-    html = render.paragraphs_html(paras, query="<img src=x onerror=1>")
-    assert "<img" not in html
-
-
-def test_empty_transcript_renders_placeholder():
-    assert "还没有转写" in render.paragraphs_html([])
-
-
-def test_precise_view_keeps_raw_segments():
-    """精确视图不聚合 —— 那是它存在的意义。"""
-    segs = _segs((0.0, 2.4, "第一句"), (2.4, 5.0, "第二句"))
-    rows = render.transcript_rows(segs)
-    assert len(rows) == 2
-    assert rows[0][0] == "00:00" and rows[0][1] == "00:02"

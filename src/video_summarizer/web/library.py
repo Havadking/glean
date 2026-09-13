@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,14 @@ class LibraryEntry:
     transcript_path: Path | None = None
     summaries: list[SummaryRef] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
+    uploader: str | None = None
+    upload_date: str | None = None   # YYYYMMDD
+    thumbnail: str | None = None
+    cache_key: str | None = None
+
+    @property
+    def work_dir(self) -> Path | None:
+        return self.transcript_path.parent if self.transcript_path else None
 
     @property
     def source_label(self) -> str:
@@ -113,6 +122,8 @@ def _from_cache(cfg: Config) -> list[LibraryEntry]:
             created_at=t.created_at,
             summaries=sorted(summaries_by_transcript.get(t.key, []),
                              key=lambda s: s.created_at, reverse=True),
+            uploader=t.uploader, upload_date=t.upload_date, thumbnail=t.thumbnail,
+            cache_key=t.key,
         ))
     # 同一个视频有多份转写时保留最新的
     newest: dict[str, LibraryEntry] = {}
@@ -153,15 +164,32 @@ def _from_output_dir(cfg: Config) -> list[LibraryEntry]:
             asr_model=meta.get("asr_model"),
             transcript_path=path,
             meta=meta,
-            summaries=(
-                # 目录里的 summary.md 不知道是哪种类型，标成 unknown 但仍然可读
-                [SummaryRef(summary_type=meta.get("summary_type", "unknown"),
-                            provider=meta.get("summary_provider", "—"),
-                            created_at=_mtime_iso(summary_path), path=summary_path)]
-                if summary_path.is_file() else []
-            ),
+            uploader=meta.get("uploader"),
+            upload_date=meta.get("upload_date"),
+            thumbnail=meta.get("thumbnail"),
+            cache_key=meta.get("cache_key"),
+            summaries=[_summary_from_file(summary_path)] if summary_path.is_file() else [],
         ))
     return entries
+
+
+_FRONT_RE = re.compile(r"^- (总结类型|总结模型|生成时间)：(.+)$", re.M)
+
+
+def _summary_from_file(path: Path) -> SummaryRef:
+    """summary.md 开头有一段来源信息，能读出类型和模型；读不出就标 unknown。"""
+    fields: dict[str, str] = {}
+    try:
+        head = path.read_text(encoding="utf-8")[:2000]
+        fields = {k: v.strip() for k, v in _FRONT_RE.findall(head)}
+    except OSError:
+        pass
+    return SummaryRef(
+        summary_type=fields.get("总结类型", "unknown"),
+        provider=fields.get("总结模型", "—"),
+        created_at=fields.get("生成时间") or _mtime_iso(path),
+        path=path,
+    )
 
 
 def _merge(base: LibraryEntry, extra: LibraryEntry) -> None:
@@ -169,6 +197,10 @@ def _merge(base: LibraryEntry, extra: LibraryEntry) -> None:
     base.transcript_path = base.transcript_path or extra.transcript_path
     base.asr_model = base.asr_model or extra.asr_model
     base.meta = base.meta or extra.meta
+    base.uploader = base.uploader or extra.uploader
+    base.upload_date = base.upload_date or extra.upload_date
+    base.thumbnail = base.thumbnail or extra.thumbnail
+    base.cache_key = base.cache_key or extra.cache_key
     if not base.speaker_count and extra.speaker_count:
         base.speaker_count = extra.speaker_count
     if not base.source_url:
@@ -186,3 +218,18 @@ def _mtime_iso(path: Path) -> str:
     except OSError:
         return ""
     return datetime.fromtimestamp(ts, timezone.utc).isoformat(timespec="seconds")
+
+
+def group_by_uploader(entries: list[LibraryEntry]) -> list[tuple[str | None, list[LibraryEntry]]]:
+    """按 UP 主分组，组内保持传入顺序；没有 UP 主信息的归到最后一组（None）。
+
+    组的顺序按"该 UP 主最近一次处理"倒序，追得勤的排前面。
+    """
+    groups: dict[str | None, list[LibraryEntry]] = {}
+    for e in entries:
+        groups.setdefault(e.uploader or None, []).append(e)
+    named = [(k, v) for k, v in groups.items() if k is not None]
+    named.sort(key=lambda kv: max(e.created_at for e in kv[1]), reverse=True)
+    if None in groups:
+        named.append((None, groups[None]))
+    return named

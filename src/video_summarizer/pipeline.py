@@ -26,6 +26,14 @@ log = logging.getLogger(__name__)
 # 返回 False 表示用户不同意继续调用 LLM
 ConfirmFn = Callable[[CostEstimate, "Transcript"], bool]
 
+# 阶段回调：(阶段名, 一句说明)。界面用它画进度，CLI 不用。
+# 阶段名固定为 probe / subtitle / download / transcribe / summarize / done
+StageFn = Callable[[str, str], None]
+
+
+def _noop_stage(_stage: str, _detail: str) -> None:
+    pass
+
 
 @dataclass
 class PipelineResult:
@@ -49,9 +57,14 @@ def run(
     skip_summary: bool = False,
     use_cache: bool = True,
     confirm: ConfirmFn | None = None,
+    on_stage: StageFn | None = None,
+    info: VideoInfo | None = None,
 ) -> PipelineResult:
-    log.info("探测视频信息 ...")
-    info = probe(url, cfg.download)
+    stage = on_stage or _noop_stage
+    if info is None:
+        stage("probe", "探测视频信息")
+        log.info("探测视频信息 ...")
+        info = probe(url, cfg.download)
     log.info(
         "《%s》 时长 %s 来源 %s",
         info.title, format_timestamp(info.duration_sec), info.extractor,
@@ -71,7 +84,7 @@ def run(
     transcript = _get_transcript(
         info, cfg, work_dir, transcript_path,
         force=force, force_asr=force_asr, diarize=diarize,
-        cache=cache, cache_key=cache_key,
+        cache=cache, cache_key=cache_key, stage=stage,
     )
     if wants_speakers and not transcript.speakers:
         log.warning(
@@ -94,6 +107,7 @@ def run(
 
     if skip_summary:
         result.summary_skipped_reason = "按 --no-summary 跳过"
+        stage("done", "转写完成")
         return result
 
     provider = summarizer_registry.get_provider(cfg.summarizer)
@@ -109,14 +123,17 @@ def run(
     cached_summary = None if force else cache.get_summary(summary_cache_key)
     if cached_summary is not None:
         log.info("命中总结缓存（%s），跳过大模型调用", summary_cache_key[:12])
+        stage("summarize", "命中总结缓存")
         summary = cached_summary
     else:
         estimate = provider.plan(transcript, options)
         result.estimate = estimate
         if confirm is not None and not confirm(estimate, transcript):
             result.summary_skipped_reason = "用户取消"
+            stage("done", "用户取消了总结")
             return result
 
+        stage("summarize", f"调用 {provider.describe()}")
         log.info("调用 %s 生成总结 ...", provider.describe())
         summary = provider.summarize(transcript, options)
         cache.put_summary(
@@ -132,6 +149,7 @@ def run(
     summary_path = write_summary_files(summary, transcript, provider.describe(), options, work_dir)
     result.summary = summary
     result.summary_path = summary_path
+    stage("done", "完成")
     return result
 
 
@@ -195,6 +213,7 @@ def _get_transcript(
     diarize: bool = False,
     cache: cache_mod.Cache | None = None,
     cache_key: str | None = None,
+    stage: StageFn = _noop_stage,
 ) -> Transcript:
     # 缓存按输入指纹索引：换了 ASR 模型、开了说话人分离，指纹就变了，
     # 不会拿到设置不符的旧结果。这是相比"看 transcript.json 在不在"的关键改进。
@@ -208,23 +227,28 @@ def _get_transcript(
                 cache_key[:12], len(cached.segments),
                 "字幕下载" if cached.source_type == "subtitle" else "语音识别",
             )
+            stage("transcribe", "命中转写缓存")
             return cached
 
         # 缓存里没有，但输出目录里躺着一份指纹相符的产物（缓存删了、或者从旧版本升上来）
         adopted = _adopt_existing(transcript_path, cache_key)
         if adopted is not None:
+            stage("transcribe", "认领已有转写")
             return adopted
 
     if not force_asr:
         try:
+            stage("subtitle", "下载字幕")
             return fetcher.fetch(info, cfg, workdir=work_dir / "subs")
         except SubtitleNotFoundError as exc:
             log.info("%s，转走语音识别", exc)
 
+    stage("download", "提取音频")
     log.info("提取音频 ...")
     audio_path = extractor.extract(info, cfg, work_dir / "audio", force=force)
 
     provider = asr_registry.get_provider(cfg.asr, diarize=diarize)
+    stage("transcribe", f"{provider.name}{'，带说话人分离' if diarize else ''}")
     log.info(
         "开始语音识别（provider=%s%s）...", provider.name, "，带说话人分离" if diarize else "",
     )
@@ -241,7 +265,7 @@ def _get_transcript(
         segments=asr_result.segments,
         title=info.title,
         video_id=info.video_id,
-        meta={"extractor": info.extractor, **asr_result.meta},
+        meta={**info.source_meta, **asr_result.meta},
     )
 
 

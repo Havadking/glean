@@ -43,12 +43,28 @@ class VideoInfo:
     extractor: str
     manual_subs: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     auto_subs: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    # 库按这个分组。yt-dlp 各站点字段不一致：B 站是 uploader，YouTube 有时只有 channel
+    uploader: str | None = None
+    upload_date: str | None = None   # YYYYMMDD
+    thumbnail: str | None = None
     # 探测阶段 yt-dlp 返回的完整信息，后续下载直接复用，少发一轮请求
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @property
     def has_manual_subs(self) -> bool:
         return bool(self.manual_subs)
+
+    @property
+    def source_meta(self) -> dict[str, Any]:
+        """写进 Transcript.meta 的来源信息。"""
+        meta: dict[str, Any] = {"extractor": self.extractor}
+        if self.uploader:
+            meta["uploader"] = self.uploader
+        if self.upload_date:
+            meta["upload_date"] = self.upload_date
+        if self.thumbnail:
+            meta["thumbnail"] = self.thumbnail
+        return meta
 
 
 def build_ydl_opts(
@@ -129,6 +145,9 @@ def probe(url: str, cfg: DownloadConfig) -> VideoInfo:
         extractor=info.get("extractor_key") or info.get("extractor") or "unknown",
         manual_subs=_clean_subs(info.get("subtitles")),
         auto_subs=_clean_subs(info.get("automatic_captions")),
+        uploader=info.get("uploader") or info.get("channel") or info.get("uploader_id"),
+        upload_date=info.get("upload_date"),
+        thumbnail=info.get("thumbnail"),
         raw=info,
     )
 

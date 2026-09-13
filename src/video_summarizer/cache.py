@@ -27,7 +27,7 @@ from .models import Transcript
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS transcripts (
@@ -41,7 +41,10 @@ CREATE TABLE IF NOT EXISTS transcripts (
     segment_count INTEGER NOT NULL,
     has_speakers  INTEGER NOT NULL DEFAULT 0,
     payload       TEXT NOT NULL,
-    created_at    TEXT NOT NULL
+    created_at    TEXT NOT NULL,
+    uploader      TEXT,
+    upload_date   TEXT,
+    thumbnail     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_transcripts_video ON transcripts(video_id);
 CREATE INDEX IF NOT EXISTS idx_transcripts_created ON transcripts(created_at);
@@ -60,6 +63,20 @@ CREATE TABLE IF NOT EXISTS summaries (
 CREATE INDEX IF NOT EXISTS idx_summaries_transcript ON summaries(transcript_key);
 CREATE INDEX IF NOT EXISTS idx_summaries_video ON summaries(video_id);
 """
+
+
+# v2 加的列。老库用 ALTER TABLE 补上，列名 -> 类型
+_MIGRATE_COLUMNS = {
+    "transcripts": {"uploader": "TEXT", "upload_date": "TEXT", "thumbnail": "TEXT"},
+}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, columns in _MIGRATE_COLUMNS.items():
+        have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for name, ctype in columns.items():
+            if name not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ctype}")
 
 
 def _now() -> str:
@@ -136,6 +153,9 @@ class TranscriptEntry:
     segment_count: int
     has_speakers: bool
     created_at: str
+    uploader: str | None = None
+    upload_date: str | None = None
+    thumbnail: str | None = None
 
 
 @dataclass
@@ -148,6 +168,7 @@ class SummaryEntry:
     summary_type: str
     language: str
     created_at: str
+    content: str | None = None
 
 
 class Cache:
@@ -172,6 +193,7 @@ class Cache:
             conn.row_factory = sqlite3.Row
             if not self._ready:
                 conn.executescript(_SCHEMA)
+                _migrate(conn)
                 conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 conn.commit()
                 self._ready = True
@@ -212,8 +234,9 @@ class Cache:
                 conn.execute(
                     "INSERT OR REPLACE INTO transcripts "
                     "(key, video_id, source_url, title, source_type, language, "
-                    " duration_sec, segment_count, has_speakers, payload, created_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    " duration_sec, segment_count, has_speakers, payload, created_at, "
+                    " uploader, upload_date, thumbnail) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         key,
                         transcript.video_id or "unknown",
@@ -226,6 +249,9 @@ class Cache:
                         int(bool(transcript.speakers)),
                         json.dumps(transcript.to_dict(), ensure_ascii=False),
                         _now(),
+                        transcript.meta.get("uploader"),
+                        transcript.meta.get("upload_date"),
+                        transcript.meta.get("thumbnail"),
                     ),
                 )
                 conn.commit()
@@ -288,7 +314,8 @@ class Cache:
             with closing(conn):
                 rows = conn.execute(
                     "SELECT key, video_id, source_url, title, source_type, language,"
-                    " duration_sec, segment_count, has_speakers, created_at"
+                    " duration_sec, segment_count, has_speakers, created_at,"
+                    " uploader, upload_date, thumbnail"
                     " FROM transcripts ORDER BY created_at DESC LIMIT ?", (limit,),
                 ).fetchall()
         except sqlite3.Error:
@@ -299,6 +326,7 @@ class Cache:
                 title=r["title"], source_type=r["source_type"], language=r["language"],
                 duration_sec=r["duration_sec"] or 0.0, segment_count=r["segment_count"],
                 has_speakers=bool(r["has_speakers"]), created_at=r["created_at"],
+                uploader=r["uploader"], upload_date=r["upload_date"], thumbnail=r["thumbnail"],
             )
             for r in rows
         ]
@@ -324,6 +352,56 @@ class Cache:
             )
             for r in rows
         ]
+
+    def summaries_for_video(self, video_id: str) -> list[SummaryEntry]:
+        """某个视频的全部总结，带正文。详情页用。"""
+        conn = self._connect()
+        if conn is None:
+            return []
+        try:
+            with closing(conn):
+                rows = conn.execute(
+                    "SELECT key, transcript_key, video_id, title, provider,"
+                    " summary_type, language, content, created_at"
+                    " FROM summaries WHERE video_id = ? ORDER BY created_at DESC", (video_id,),
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        return [
+            SummaryEntry(
+                key=r["key"], transcript_key=r["transcript_key"], video_id=r["video_id"],
+                title=r["title"], provider=r["provider"], summary_type=r["summary_type"],
+                language=r["language"], created_at=r["created_at"], content=r["content"],
+            )
+            for r in rows
+        ]
+
+    def update_source_meta(self, video_id: str, meta: dict[str, Any]) -> int:
+        """给老记录补 UP 主等来源信息（v2 之前的行没有这几列）。返回更新行数。"""
+        conn = self._connect()
+        if conn is None:
+            return 0
+        try:
+            with closing(conn):
+                rows = conn.execute(
+                    "SELECT key, payload FROM transcripts WHERE video_id = ?", (video_id,)
+                ).fetchall()
+                n = 0
+                for r in rows:
+                    payload = json.loads(r["payload"])
+                    payload.setdefault("meta", {}).update(meta)
+                    conn.execute(
+                        "UPDATE transcripts SET uploader = ?, upload_date = ?, thumbnail = ?,"
+                        " payload = ? WHERE key = ?",
+                        (meta.get("uploader"), meta.get("upload_date"), meta.get("thumbnail"),
+                         json.dumps(payload, ensure_ascii=False), r["key"]),
+                    )
+                    n += 1
+                conn.commit()
+                return n
+        except (sqlite3.Error, ValueError) as exc:
+            log.warning("更新缓存来源信息失败：%s", exc)
+            return 0
 
     def stats(self) -> dict[str, Any]:
         conn = self._connect()

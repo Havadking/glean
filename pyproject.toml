@@ -24,7 +24,8 @@ cuda = [
 ]
 # Web 界面（`vsum ui`）。只用命令行的话不需要装。
 ui = [
-    "gradio>=5.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
 ]
 # FunASR：中文内容的默认 ASR。要拉 torch，装完约 3GB。
 funasr = [
