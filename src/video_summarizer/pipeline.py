@@ -248,7 +248,8 @@ def _get_transcript(
     audio_path = extractor.extract(info, cfg, work_dir / "audio", force=force)
 
     provider = asr_registry.get_provider(cfg.asr, diarize=diarize)
-    stage("transcribe", f"{provider.name}{'，带说话人分离' if diarize else ''}")
+    stage("transcribe", f"{cfg.asr.diarize_model if diarize else cfg.asr.model}"
+                        f"{'，带说话人分离' if diarize else ''}")
     log.info(
         "开始语音识别（provider=%s%s）...", provider.name, "，带说话人分离" if diarize else "",
     )
