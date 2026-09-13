@@ -1,0 +1,584 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>vsum 界面稿</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#F3F4F6; --surface:#FFFFFF; --surface-2:#F8F9FB; --line:#E4E6EB; --line-2:#EEF0F3;
+  --ink:#16181D; --ink-2:#4B5060; --mute:#6E7382; --faint:#A0A5B3;
+  --accent:#CF3F6B; --accent-ink:#B8315B; --accent-bg:#FCEEF3; --accent-line:#F4C9D7;
+  --ok:#1E9A63; --ok-bg:#E6F6EE; --warn:#D8890E; --warn-bg:#FDF3E1; --info:#3B6FD8; --info-bg:#EAF0FC;
+  --shadow:0 1px 2px rgba(20,22,30,.06),0 4px 16px rgba(20,22,30,.05);
+  --sel:#FFF1F5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0E1014; --surface:#161920; --surface-2:#1C2029; --line:#262A34; --line-2:#20242D;
+    --ink:#E8EAF0; --ink-2:#C0C4CF; --mute:#8A90A0; --faint:#5C6272;
+    --accent:#F27CA3; --accent-ink:#F79BBA; --accent-bg:#2A1A21; --accent-line:#4A2735;
+    --ok:#3FBF84; --ok-bg:#17302A; --warn:#E9A23B; --warn-bg:#33291A; --info:#7AA2F0; --info-bg:#1B2538;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 20px rgba(0,0,0,.35);
+    --sel:#241A20;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0E1014; --surface:#161920; --surface-2:#1C2029; --line:#262A34; --line-2:#20242D;
+  --ink:#E8EAF0; --ink-2:#C0C4CF; --mute:#8A90A0; --faint:#5C6272;
+  --accent:#F27CA3; --accent-ink:#F79BBA; --accent-bg:#2A1A21; --accent-line:#4A2735;
+  --ok:#3FBF84; --ok-bg:#17302A; --warn:#E9A23B; --warn-bg:#33291A; --info:#7AA2F0; --info-bg:#1B2538;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 20px rgba(0,0,0,.35);
+  --sel:#241A20;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 "Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.mono{font-family:"JetBrains Mono",ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums}
+a{color:inherit;text-decoration:none}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+h1,h2,h3{margin:0;font-weight:600;text-wrap:balance}
+
+/* ---------- 壳 ---------- */
+.shell{display:grid;grid-template-columns:232px 1fr;height:100vh;overflow:hidden}
+.side{border-right:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;padding:14px 10px;gap:6px;overflow:auto}
+.brand{display:flex;align-items:center;gap:9px;padding:6px 8px 12px;font-weight:600;font-size:15px}
+.brand .mark{width:22px;height:22px;border-radius:6px;background:var(--accent);position:relative}
+.brand .mark::after{content:"";position:absolute;left:8px;top:6px;border-left:8px solid #fff;border-top:5px solid transparent;border-bottom:5px solid transparent}
+.brand .ver{margin-left:auto;font-size:11px;color:var(--faint);font-weight:400}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:7px 10px;border-radius:7px;color:var(--ink-2)}
+.nav button:hover{background:var(--surface-2);color:var(--ink)}
+.nav button[aria-current="page"]{background:var(--accent-bg);color:var(--accent-ink);font-weight:500}
+.nav svg{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.nav .kbd{margin-left:auto;font-size:11px;color:var(--faint);font-family:"JetBrains Mono",monospace}
+.side .sec{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:14px 10px 4px}
+.up{display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:7px;color:var(--ink-2)}
+.up:hover{background:var(--surface-2)}
+.up .av{width:20px;height:20px;border-radius:50%;background:linear-gradient(135deg,#F5A3C0,#CF3F6B);flex:none;display:grid;place-items:center;font-size:10px;color:#fff;font-weight:600}
+.up .n{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.up .c{font-size:11px;color:var(--faint)}
+.side .foot{margin-top:auto;display:flex;flex-direction:column;gap:6px;padding-top:10px;border-top:1px solid var(--line-2)}
+.side .foot .row{display:flex;align-items:center;justify-content:space-between;padding:4px 10px;font-size:12px;color:var(--mute)}
+.toggle{width:34px;height:20px;border-radius:10px;background:var(--line);position:relative;transition:background .15s}
+.toggle::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--surface);box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .15s}
+.toggle[aria-checked="true"]{background:var(--accent)}
+.toggle[aria-checked="true"]::after{transform:translateX(14px)}
+
+.main{overflow:auto;display:flex;flex-direction:column}
+.view{display:none}.view.on{display:block}
+.page{max-width:1240px;margin:0 auto;padding:28px 36px 60px;width:100%}
+.ph{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:22px}
+.ph h1{font-size:20px;letter-spacing:-.01em}
+.ph p{margin:4px 0 0;color:var(--mute)}
+
+/* ---------- 通用件 ---------- */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px}
+.btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:7px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-weight:500;font-size:13px}
+.btn:hover{background:var(--surface-2)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(.95)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--mute)}
+.btn.ghost:hover{background:var(--surface-2);color:var(--ink)}
+.btn.sm{height:26px;padding:0 9px;font-size:12px}
+.btn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.pill{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;font-size:11.5px;font-weight:500;line-height:1;white-space:nowrap}
+.pill.ok{background:var(--ok-bg);color:var(--ok)}
+.pill.warn{background:var(--warn-bg);color:var(--warn)}
+.pill.info{background:var(--info-bg);color:var(--info)}
+.pill.neutral{background:var(--surface-2);color:var(--mute);border:1px solid var(--line)}
+.pill.accent{background:var(--accent-bg);color:var(--accent-ink)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.meta{display:flex;flex-wrap:wrap;gap:6px 14px;color:var(--mute);font-size:12.5px}
+.meta b{color:var(--ink-2);font-weight:500}
+.seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:3px;gap:2px}
+.seg button{height:26px;padding:0 11px;border-radius:5px;font-size:13px;color:var(--mute);display:inline-flex;align-items:center;gap:6px}
+.seg button:hover{color:var(--ink)}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08);font-weight:500}
+.seg .st{width:6px;height:6px;border-radius:50%;background:var(--faint)}
+.seg .st.done{background:var(--ok)}
+
+/* ---------- 新任务 ---------- */
+.urlbox{display:flex;gap:8px;align-items:center;padding:6px 6px 6px 14px}
+.urlbox svg{width:16px;height:16px;stroke:var(--faint);fill:none;stroke-width:1.8;flex:none}
+.urlbox input{flex:1;border:0;background:transparent;font:inherit;font-size:15px;color:var(--ink);min-width:0}
+.urlbox input::placeholder{color:var(--faint)}
+.probe{display:grid;grid-template-columns:168px 1fr;gap:18px;padding:16px;margin-top:14px}
+.cover{aspect-ratio:16/10;border-radius:7px;background:linear-gradient(160deg,#F7C7D6,#CF3F6B 70%,#7A1F3E);position:relative;overflow:hidden}
+.cover .dur{position:absolute;right:6px;bottom:6px;background:rgba(0,0,0,.65);color:#fff;font-size:11px;padding:2px 6px;border-radius:4px}
+.probe h2{font-size:15.5px;line-height:1.45;margin-bottom:6px}
+.opts{display:flex;flex-wrap:wrap;gap:10px 20px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line-2)}
+.opt{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2)}
+.opt label{color:var(--mute)}
+.sel{height:28px;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:0 26px 0 9px;font:inherit;font-size:13px;color:var(--ink);appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--mute) 50%),linear-gradient(135deg,var(--mute) 50%,transparent 50%);background-position:calc(100% - 13px) 12px,calc(100% - 9px) 12px;background-size:4px 4px;background-repeat:no-repeat}
+.stages{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin-top:18px;overflow:hidden}
+.stage{padding:14px 16px;border-right:1px solid var(--line-2);position:relative}
+.stage:last-child{border-right:0}
+.stage .t{display:flex;align-items:center;gap:8px;font-weight:500}
+.stage .t .i{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;font-size:11px;flex:none;border:1.5px solid var(--line);color:var(--faint)}
+.stage.done .t .i{background:var(--ok);border-color:var(--ok);color:#fff}
+.stage.run .t .i{border-color:var(--accent);color:var(--accent)}
+.stage.run .t .i::after{content:"";width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{transform:scale(.7);opacity:.6}50%{transform:scale(1);opacity:1}}
+@media (prefers-reduced-motion:reduce){.stage.run .t .i::after{animation:none}}
+.stage .d{margin-top:5px;font-size:12.5px;color:var(--mute);padding-left:26px}
+.stage.todo .t{color:var(--faint)}
+.bar{height:4px;background:var(--line-2);border-radius:2px;overflow:hidden;margin:10px 0 0 26px}
+.bar i{display:block;height:100%;width:62%;background:var(--accent);border-radius:2px}
+.logwrap{margin-top:14px}
+.logwrap summary{cursor:pointer;color:var(--mute);font-size:12.5px;display:flex;align-items:center;gap:8px;list-style:none;padding:2px 0}
+.logwrap summary::before{content:"▸";font-size:10px;color:var(--faint)}
+.logwrap[open] summary::before{content:"▾"}
+.log{margin-top:8px;padding:12px 14px;font-size:12px;line-height:1.7;color:var(--ink-2);background:var(--surface-2);border:1px solid var(--line-2);border-radius:8px;max-height:180px;overflow:auto;white-space:pre}
+.log .ts{color:var(--faint)}
+.queue{margin-top:26px}
+.queue h3{font-size:13px;color:var(--mute);font-weight:500;display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.qrow{display:grid;grid-template-columns:20px 1fr auto auto;align-items:center;gap:12px;padding:10px 14px;border-top:1px solid var(--line-2);color:var(--ink-2)}
+.qrow:first-of-type{border-top:0}
+.qrow .n{font-size:11px;color:var(--faint);font-family:"JetBrains Mono",monospace}
+.qrow .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- 详情 ---------- */
+.dhead{position:sticky;top:0;z-index:5;background:var(--bg);padding:22px 36px 14px;border-bottom:1px solid var(--line)}
+.dhead .in{max-width:1240px;margin:0 auto}
+.crumb{display:flex;align-items:center;gap:6px;color:var(--mute);font-size:12.5px;margin-bottom:8px}
+.crumb button{color:var(--mute)}.crumb button:hover{color:var(--ink)}
+.dhead h1{font-size:19px;letter-spacing:-.01em;line-height:1.4}
+.dhead .row{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:10px;flex-wrap:wrap}
+.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0;max-width:1240px;margin:0 auto;width:100%;padding:0 36px}
+.col{min-width:0;padding:22px 0}
+.col.left{padding-right:32px;border-right:1px solid var(--line)}
+.col.right{padding-left:32px}
+.colhead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;min-height:32px;flex-wrap:wrap}
+.colhead h2{font-size:14px;color:var(--mute);font-weight:500;letter-spacing:.02em}
+.search{display:flex;align-items:center;gap:7px;height:30px;padding:0 10px;border:1px solid var(--line);border-radius:7px;background:var(--surface);width:220px}
+.search svg{width:14px;height:14px;stroke:var(--faint);fill:none;stroke-width:1.8}
+.search input{border:0;background:none;font:inherit;font-size:13px;color:var(--ink);width:100%}
+.search input::placeholder{color:var(--faint)}
+.para{display:grid;grid-template-columns:52px 1fr;gap:14px;padding:10px 8px;margin:0 -8px;border-radius:8px;transition:background .12s}
+.para:hover{background:var(--surface)}
+.para .tc{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--faint);padding-top:4px;font-variant-numeric:tabular-nums}
+.para p{margin:0;font-size:15px;line-height:1.9;color:var(--ink);max-width:62ch}
+.para.hit p mark{background:var(--accent-bg);color:var(--accent-ink);padding:0 2px;border-radius:2px}
+.status{display:flex;align-items:center;gap:8px 16px;flex-wrap:wrap;font-size:12.5px;color:var(--mute);padding:10px 12px;background:var(--surface-2);border:1px solid var(--line-2);border-radius:8px;margin-bottom:16px}
+.status .sp{flex:1}
+.sum{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:26px 30px}
+.sum h2{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent-ink);margin:22px 0 10px;font-weight:600}
+.sum h2:first-child{margin-top:0}
+.sum p{margin:0 0 10px;font-size:15px;line-height:1.85;max-width:62ch}
+.sum ul{margin:0 0 6px;padding-left:18px}
+.sum li{font-size:14.5px;line-height:1.85;margin:2px 0}
+.sum li b{font-weight:600}
+.sum .lead{font-size:16px;line-height:1.8;color:var(--ink);padding:14px 18px;background:var(--accent-bg);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;margin-bottom:18px}
+.sum .prov{display:flex;gap:14px;align-items:center;margin-top:22px;padding-top:14px;border-top:1px solid var(--line-2);font-size:12px;color:var(--faint)}
+.sum .prov .sp{flex:1}
+.mm{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;position:relative}
+.mm svg{width:100%;height:600px;display:block}
+.mm .bar2{position:absolute;top:10px;right:10px;display:flex;gap:6px}
+.empty{background:var(--surface);border:1px dashed var(--line);border-radius:10px;padding:48px 24px;text-align:center;color:var(--mute)}
+.empty b{display:block;color:var(--ink);font-weight:500;margin-bottom:6px;font-size:15px}
+.empty .btn{margin-top:16px}
+.ask{position:sticky;bottom:0;margin-top:18px;padding:12px 0 4px;background:linear-gradient(to top,var(--bg) 70%,transparent)}
+.ask .box{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;background:var(--surface);border:1px solid var(--line);border-radius:9px;box-shadow:var(--shadow)}
+.ask input{flex:1;border:0;background:none;font:inherit;font-size:14px;color:var(--ink)}
+.ask input::placeholder{color:var(--faint)}
+.ask .hint{font-size:11.5px;color:var(--faint);margin:6px 2px 0}
+
+/* ---------- 历史 ---------- */
+.libbar{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+.libbar .search{width:360px;height:34px}
+.libbar .sp{flex:1}
+.hit{padding:12px 16px;margin-bottom:18px}
+.hit .h{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--mute);margin-bottom:8px}
+.hit .r{display:grid;grid-template-columns:1fr auto;gap:14px;padding:8px 0;border-top:1px solid var(--line-2);align-items:baseline}
+.hit .r .q{font-size:14px;color:var(--ink);line-height:1.7}
+.hit .r .q mark{background:var(--accent-bg);color:var(--accent-ink);padding:0 2px;border-radius:2px}
+.hit .r .w{font-size:12px;color:var(--faint);white-space:nowrap}
+.hit .r .w b{color:var(--ink-2);font-weight:500}
+.group{margin-bottom:26px}
+.group .gh{display:flex;align-items:center;gap:10px;padding:0 4px 8px;font-size:13px;color:var(--ink-2);font-weight:500}
+.group .gh .c{color:var(--faint);font-weight:400}
+.group .gh .sp{flex:1}
+.list{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.item{display:grid;grid-template-columns:64px 1fr 150px 92px 90px;gap:14px;align-items:center;padding:11px 14px;border-top:1px solid var(--line-2);transition:background .12s}
+.item:first-child{border-top:0}
+.item:hover{background:var(--surface-2)}
+.item .th{aspect-ratio:16/10;border-radius:5px;background:linear-gradient(160deg,#F7C7D6,#CF3F6B 70%,#7A1F3E)}
+.item .th.y{background:linear-gradient(160deg,#C9D6F2,#3B6FD8 70%,#1E3B7A)}
+.item .th.g{background:linear-gradient(160deg,#CFCFD6,#6E7382 70%,#3A3E4A)}
+.item .ti{min-width:0}
+.item .ti .t{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+.item .ti .s{font-size:12px;color:var(--mute);margin-top:3px;display:flex;gap:10px;flex-wrap:wrap}
+.item .badges{display:flex;gap:5px;flex-wrap:wrap}
+.item .when{font-size:12.5px;color:var(--mute);font-variant-numeric:tabular-nums}
+.item .act{display:flex;justify-content:flex-end;gap:4px;opacity:0;transition:opacity .12s}
+.item:hover .act{opacity:1}
+.iconbtn{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--mute)}
+.iconbtn:hover{background:var(--line-2);color:var(--ink)}
+.iconbtn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:22px}
+.stat{padding:12px 14px}
+.stat .k{font-size:12px;color:var(--mute)}
+.stat .v{font-size:20px;font-weight:600;margin-top:2px;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.stat .v small{font-size:12px;color:var(--faint);font-weight:400;margin-left:4px}
+.note{position:fixed;right:16px;bottom:16px;z-index:9;font-size:12px;color:var(--mute);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 12px;box-shadow:var(--shadow);max-width:280px;line-height:1.5}
+.note b{color:var(--ink);font-weight:500}
+@media (max-width:980px){.shell{grid-template-columns:1fr}.side{display:none}.split{grid-template-columns:1fr}.col.left{border-right:0;padding-right:0}.col.right{padding-left:0}.stages{grid-template-columns:1fr 1fr}.item{grid-template-columns:64px 1fr}.item .badges,.item .when,.item .act{display:none}.stats{grid-template-columns:1fr 1fr}}
+</style>
+
+<div class="shell">
+  <aside class="side">
+    <div class="brand"><span class="mark"></span>vsum<span class="ver">v0.6 稿</span></div>
+    <nav class="nav">
+      <button data-go="new" aria-current="page"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>新任务<span class="kbd">N</span></button>
+      <button data-go="lib"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>库<span class="kbd">L</span></button>
+      <button data-go="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>设置</button>
+    </nav>
+    <div class="sec">关注的 UP 主</div>
+    <a class="up" href="#"><span class="av">永</span><span class="n">永恒娘</span><span class="c">3</span></a>
+    <a class="up" href="#"><span class="av" style="background:linear-gradient(135deg,#C9D6F2,#3B6FD8)">YT</span><span class="n">YouTube 零散</span><span class="c">1</span></a>
+    <div class="sec">最近</div>
+    <a class="up" href="#" data-go="detail"><span class="n" style="padding-left:2px">妮老师的护肤课堂又开课了…</span></a>
+    <a class="up" href="#" data-go="detail"><span class="n" style="padding-left:2px">【永恒娘】天选国V！化妆品…</span></a>
+    <a class="up" href="#" data-go="detail"><span class="n" style="padding-left:2px">妮老师的皮肤护理课堂，学会…</span></a>
+    <div class="foot">
+      <div class="row"><span>深色模式</span><button class="toggle" role="switch" aria-checked="false" id="themeToggle" aria-label="深色模式"></button></div>
+      <div class="row"><span>DeepSeek 本月</span><span class="mono" style="color:var(--ink-2)">¥0.41</span></div>
+      <div class="row"><span>GPU</span><span class="mono" style="color:var(--ok)">RTX 就绪</span></div>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <!-- ============ 新任务 ============ -->
+    <section class="view on" id="view-new">
+      <div class="page">
+        <div class="ph">
+          <div><h1>新任务</h1><p>贴一个视频链接。字幕能拿到就不跑语音识别，重复的链接直接读缓存。</p></div>
+        </div>
+
+        <div class="card urlbox">
+          <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>
+          <input value="https://www.bilibili.com/video/BV1vx4y1e7x4" spellcheck="false" aria-label="视频链接">
+          <button class="btn ghost" title="清空">清空</button>
+          <button class="btn primary">开始</button>
+        </div>
+
+        <div class="card probe">
+          <div class="cover"><span class="dur mono">14:00</span></div>
+          <div>
+            <h2>妮老师的皮肤护理课堂，学会了都能找到女朋友【永恒娘】</h2>
+            <div class="meta">
+              <span><b>永恒娘</b></span><span>bilibili</span><span>BV1vx4y1e7x4</span><span>2024-04-11 发布</span>
+              <span class="pill warn"><i class="dot"></i>没有字幕，走语音识别</span>
+              <span class="pill info">上次处理过 · 转写命中缓存</span>
+            </div>
+            <div class="opts">
+              <div class="opt"><label>识别模型</label><select class="sel"><option>SenseVoice-Small（快，多语）</option><option>Paraformer-zh（分说话人，中文）</option><option>Whisper large-v3（兜底）</option></select></div>
+              <div class="opt"><label>说话人分离</label><select class="sel"><option>自动</option><option>开</option><option>关</option></select></div>
+              <div class="opt"><label>处理完就总结</label><select class="sel"><option>总体</option><option>思维导图</option><option>要点</option><option>不总结</option></select></div>
+              <div class="opt" style="margin-left:auto;color:var(--mute)">预计 <span class="mono" style="color:var(--ink-2)">¥0.03</span> · 约 20 秒</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card stages">
+          <div class="stage done"><div class="t"><span class="i">✓</span>探测</div><div class="d">yt-dlp · 1.2 秒</div></div>
+          <div class="stage done"><div class="t"><span class="i">✓</span>下载音频</div><div class="d">m4a · 13.4 MB · 4.8 秒</div></div>
+          <div class="stage run"><div class="t"><span class="i"></span>语音识别</div><div class="d">SenseVoice-Small · cuda:0 · 已识别 8:42 / 14:00</div><div class="bar"><i></i></div></div>
+          <div class="stage todo"><div class="t"><span class="i">4</span>总结</div><div class="d">总体 · DeepSeek</div></div>
+        </div>
+
+        <details class="logwrap">
+          <summary>运行日志 <span class="pill neutral">37 行</span></summary>
+          <div class="log mono"><span class="ts">21:04:11</span>  probe: BiliBili BV1vx4y1e7x4 · 840s · 无字幕
+<span class="ts">21:04:12</span>  download: audio-only, format m4a
+<span class="ts">21:04:17</span>  download: done 13.4MB in 4.8s
+<span class="ts">21:04:17</span>  asr: funasr/sensevoice-small on cuda:0
+<span class="ts">21:04:18</span>  vad: fsmn-vad, max_single_segment_time=30000
+<span class="ts">21:04:19</span>  vad: 172 segments, speech 804.6s
+<span class="ts">21:04:19</span>  asr: batch 1/6 …</div>
+        </details>
+
+        <div class="queue">
+          <h3>接下来 <span class="pill neutral">v0.6 计划 · 合集 / UP 主空间批量</span></h3>
+          <div class="card">
+            <div class="qrow"><span class="n">2</span><span class="t">【永恒娘】冬天不要刷酸，我说的</span><span class="pill neutral">排队</span><button class="btn ghost sm">移除</button></div>
+            <div class="qrow"><span class="n">3</span><span class="t">【永恒娘】三十块钱搞定男生一整套护肤</span><span class="pill neutral">排队</span><button class="btn ghost sm">移除</button></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 详情 ============ -->
+    <section class="view" id="view-detail">
+      <div class="dhead"><div class="in">
+        <div class="crumb"><button data-go="lib">库</button><span>›</span><span>永恒娘</span></div>
+        <h1>妮老师的护肤课堂又开课了，干货满满！帮大家变精致老头纸【永恒娘】</h1>
+        <div class="row">
+          <div class="meta">
+            <span><b>永恒娘</b></span><span class="mono">22:21</span><span>bilibili</span>
+            <span>语音识别 · Paraformer-zh · 分说话人</span><span>zh</span><span>识别用时 38.6 秒</span>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>原视频</button>
+            <button class="btn"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3"/></svg>导出</button>
+            <button class="btn ghost"><svg viewBox="0 0 24 24"><circle cx="12" cy="6" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="12" cy="18" r="1.2"/></svg></button>
+          </div>
+        </div>
+      </div></div>
+
+      <div class="split">
+        <div class="col left">
+          <div class="colhead">
+            <h2>转写</h2>
+            <div style="display:flex;gap:8px;align-items:center">
+              <label class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input placeholder="在这条转写里找…" value="甘油"></label>
+              <span class="pill neutral">4 处</span>
+            </div>
+          </div>
+
+          <div class="para"><span class="tc">00:00</span><p>我这老头子都要做精致的猪猪男孩，希望大家今天能学到不少干货。最近我又发现了一个美妆小心得，给大家推荐一个便宜好用的东西，男生也可以用，男女都可以用。冬天大家脸不是会干嘛？等再冷一点，屋里面开空调、有地暖了，整个人就更干了。我之前跟你们说过，男生护肤不用太复杂，简单喷个水就行了。喷雾补水，你要买那种喷头细的，小分子这样补的话比较能够进去。像那种水呀、乳液呀，其实我觉得很难进去。</p></div>
+          <div class="para hit"><span class="tc">02:13</span><p>任何很贵的面霜、贵妇化妆品都不要去花那个冤枉钱，给我买十几二十块钱的<mark>甘油</mark>就行。这个<mark>甘油</mark>买了往脸上擦，给它揉进去，只要四五滴。维E保湿护肤<mark>甘油</mark>，一般来说搜"护肤<mark>甘油</mark>"就会跳出来。我买的是伊美雅这个牌子，二十几块钱一大罐，可以用好久。滴几滴在手掌然后抹到脸上，你明显感觉水能锁住了。我的脸又出油又掉皮是什么情况？严重的水油不平衡。最简单的：洗脸一天洗一回，晚上洗早上不洗。洗面奶一天就只能用一回，哪怕你油到爆了。</p></div>
+          <div class="para"><span class="tc">04:25</span><p>然后有个万能的东西叫冰箱里的芦荟胶。芦荟胶起到镇静作用，你的脸之前太干了、补那么多东西可能负担过大，拿冰箱里的芦荟胶敷脸上敷一层，让它冰一冰，可以收缩一下毛孔又可以镇静。冬天有刺痛感是很正常的事情。我今天主要就是跟大家说甘油这个东西，大家也可以不用去买那种专门的男士护肤品或者很贵的护肤品，都没用，这是我的血泪教训，反正都已经帮你们试过了。男孩子的护肤其实都一样。男士护肤品有一些以清爽主打，洗完脸干得不行。</p></div>
+          <div class="para"><span class="tc">06:36</span><p>要用喷雾，不要用水，也不要用精华跟面霜了，冬天用那个东西没用。除非你已经买好了有面霜，就照我说的，先涂面霜，厚敷在你起皮、特别干的地方，鼻翼、脸颊、嘴角，厚敷一层擦掉，然后就只用喷雾跟甘油就可以了，别的东西都可以不花这个钱。我这个年纪还在冒痘怎么办？每个月都冒痘的话直接去皮肤科医院，不要去做挑痘，医生会给你配药膏，几毛钱涂一涂就好了。挑痘解决不了问题，而且痘痘永远不要挑。</p></div>
+          <div class="para"><span class="tc">08:03</span><p>冬天我觉得男生没有必要刷酸。补水喷雾买啥牌子？颐莲，我帮你们测试过了，这个喷雾特别细，喷出来是雾不是水。雅漾那个喷雾喷出来跟喷泉似的。你们现在是觉得水、精华、面霜这一套流程是不是冬天就不干了？妮老师告诉你们只有两个流程：喷水、涂甘油，没有了。就是告诉大家如何用最具性价比的东西去保养好自己的皮肤，因为你东西涂过多了也会过剩，吸收不进去的都被浪费掉了。这两样东西加起来也很便宜，双十一买几大罐几十块、一百块左右。</p></div>
+          <div class="para"><span class="tc">10:08</span><p>嘴角总是裂开脱皮怎么办？涂金霉素眼膏，几毛钱，厚涂后睡一晚上，不要吃进去。黑眼圈本质上是淤青，要活血化瘀，涂淤青的药膏比眼霜好用，眼霜去黑眼圈没用。水肿的话用几块钱的滚轮提拉下颚，配合美式咖啡。</p></div>
+
+          <div class="ask">
+            <div class="box">
+              <input placeholder="问这条视频：她推荐的喷雾是哪个牌子？" aria-label="问视频">
+              <button class="btn primary sm">问</button>
+            </div>
+            <div class="hint">只依据转写回答，每条结论附时间戳，点了跳过去 · v0.6 计划</div>
+          </div>
+        </div>
+
+        <div class="col right">
+          <div class="colhead">
+            <h2>总结</h2>
+            <div class="seg" id="typeSeg">
+              <button aria-pressed="true" data-type="overall"><span class="st done"></span>总体</button>
+              <button data-type="mindmap"><span class="st done"></span>思维导图</button>
+              <button data-type="key_points"><span class="st"></span>要点</button>
+              <button data-type="timeline"><span class="st"></span>时间线</button>
+              <button data-type="by_speaker"><span class="st"></span>分角色</button>
+            </div>
+          </div>
+
+          <div id="sum-overall">
+            <div class="status"><span class="pill ok"><i class="dot"></i>已生成</span><span>DeepSeek · deepseek-chat</span><span class="mono">7.9k → 1.1k tokens</span><span class="mono">¥0.02</span><span class="sp"></span><button class="btn ghost sm" title="09-12 22:30 生成">重新生成</button></div>
+            <article class="sum">
+              <div class="lead">冬天男生护肤只要两步：喷细雾喷雾，再涂十几块钱的护肤甘油。水精华面霜那一套涂多了吸收不进去，是浪费；贵妇品、男士专用品都没用。</div>
+              <h2>核心观点</h2>
+              <ul>
+                <li><b>关键在锁水，不在补水。</b>又出油又掉皮是水油不平衡，补进去锁不住才是问题。</li>
+                <li><b>两样东西，单价都不过五十块。</b>颐莲喷雾（喷头细，出来是雾不是水）+ 任意牌子的维E保湿甘油（她买的伊美雅，二十几块一大罐）。</li>
+                <li><b>洗面奶一天只能用一回。</b>早上清水泼脸、洗脸巾按干；哪怕油到爆也不要多洗，洗多了破坏角质层。</li>
+              </ul>
+              <h2>流程</h2>
+              <ul>
+                <li><b>早上：</b>清水洗脸 → 喷一层喷雾，半干时手掌摁进去（不要拍）→ 再喷一层再摁 → 四五滴甘油揉开 → 出门前防晒棒。</li>
+                <li><b>晚上：</b>洗澡时先用洗面奶洗脸 → 特别干的地方厚涂维E或大宝，半干时擦掉 → 喷雾两遍 → 甘油。</li>
+              </ul>
+              <h2>问题肌肤</h2>
+              <ul>
+                <li>冒痘：每月都冒去皮肤科开几毛钱药膏，不要挑痘。</li>
+                <li>黑头：一周一次温和泥膜敷鼻子二十分钟，擦掉后厚涂芦荟胶。</li>
+                <li>嘴角脱皮：金霉素眼膏厚涂过夜。黑眼圈：本质是淤青，涂活血化瘀药膏，眼霜没用。</li>
+              </ul>
+              <h2>避坑</h2>
+              <ul>
+                <li>功能性面膜养不进去，一周顶多两次；冬天不要刷酸；男士洗面奶洗完脸干巴；美容店小气泡、挑痘一百多块没用。</li>
+                <li>防晒冬夏都要，紫外线晒斑、晒干、长皱纹，不防晒等于白护。</li>
+              </ul>
+              <h2>带货态度</h2>
+              <p>不接工商，接了只能说违心话。想做"妮妮严选"，自己用过再分享。</p>
+              <div class="prov"><span>严格依据转写生成，未使用外部知识</span><span class="sp"></span><button class="btn ghost sm">复制 Markdown</button><button class="btn ghost sm">summary.md</button></div>
+            </article>
+          </div>
+
+          <div id="sum-mindmap" hidden>
+            <div class="status"><span class="pill ok"><i class="dot"></i>已生成</span><span>7 个主分支 · 108 个节点 · 4 层</span><span class="mono">¥0.02</span><span class="sp"></span><button class="btn ghost sm">重新生成</button></div>
+            <div class="mm">
+              <svg id="mmsvg"></svg>
+              <div class="bar2"><button class="btn sm" id="mmFit">居中</button><button class="btn sm">下载 SVG</button><button class="btn sm">mindmap.html</button></div>
+            </div>
+          </div>
+
+          <div id="sum-other" hidden>
+            <div class="status"><span class="pill neutral">还没生成</span><span id="otherHint">按时间顺序梳理内容，适合教程、课程、会议记录</span><span class="sp"></span></div>
+            <div class="empty">
+              <b>这条视频还没有<span id="otherLabel">时间线</span>总结</b>
+              转写 7.9k tokens，单次调用，预计 <span class="mono">¥0.03</span>
+              <div><button class="btn primary">生成</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 库 ============ -->
+    <section class="view" id="view-lib">
+      <div class="page">
+        <div class="ph">
+          <div><h1>库</h1><p>处理过的视频都在这里，按 UP 主归堆。搜索会搜进转写正文，不花钱。</p></div>
+          <button class="btn primary" data-go="new"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>新任务</button>
+        </div>
+
+        <div class="stats">
+          <div class="card stat"><div class="k">视频</div><div class="v">5</div></div>
+          <div class="card stat"><div class="k">转写时长</div><div class="v">44<small>分钟</small></div></div>
+          <div class="card stat"><div class="k">总结</div><div class="v">6<small>2 张导图</small></div></div>
+          <div class="card stat"><div class="k">累计花费</div><div class="v mono">¥0.41</div></div>
+        </div>
+
+        <div class="libbar">
+          <label class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input placeholder="搜标题、转写、总结…" value="防晒"></label>
+          <div class="seg"><button aria-pressed="true">全部</button><button>永恒娘</button><button>有导图</button></div>
+          <span class="sp"></span>
+          <button class="btn ghost sm">按时间</button>
+        </div>
+
+        <div class="card hit">
+          <div class="h"><span class="pill accent">转写里 3 处提到"防晒"</span><span>v0.6 计划 · SQLite 全文索引</span></div>
+          <div class="r"><div class="q">…出门前涂<mark>防晒</mark>棒，全脸抹开，雾面效果。<mark>防晒</mark>喷雾不要喷脸上，不均匀没用…</div><div class="w"><b>妮老师的护肤课堂又开课了</b> · 12:40</div></div>
+          <div class="r"><div class="q">…冬天夏天都有紫外线，不<mark>防晒</mark>等于护肤白护…</div><div class="w"><b>妮老师的护肤课堂又开课了</b> · 19:02</div></div>
+          <div class="r"><div class="q">…敏感肌<mark>防晒</mark>选物理的，成分越少越好…</div><div class="w"><b>天选国V！化妆品，护肤品还得是国产的</b> · 01:48</div></div>
+        </div>
+
+        <div class="group">
+          <div class="gh"><span class="up" style="padding:0"><span class="av">永</span></span>永恒娘 <span class="c">3 条 · 39 分钟</span><span class="sp"></span><button class="btn ghost sm">看她的全部观点 · v0.8</button></div>
+          <div class="list">
+            <div class="item" data-go="detail">
+              <div class="th"></div>
+              <div class="ti"><div class="t">妮老师的护肤课堂又开课了，干货满满！帮大家变精致老头纸【永恒娘】</div><div class="s"><span class="mono">22:21</span><span>Paraformer-zh · 分说话人</span><span>zh</span></div></div>
+              <div class="badges"><span class="pill ok">总体</span><span class="pill ok">导图</span></div>
+              <div class="when">09-12 22:30</div>
+              <div class="act"><button class="iconbtn" title="打开目录"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button><button class="iconbtn" title="删除"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button></div>
+            </div>
+            <div class="item" data-go="detail">
+              <div class="th"></div>
+              <div class="ti"><div class="t">妮老师的皮肤护理课堂，学会了都能找到女朋友【永恒娘】</div><div class="s"><span class="mono">14:00</span><span>SenseVoice-Small</span><span>zh</span></div></div>
+              <div class="badges"><span class="pill ok">总体</span></div>
+              <div class="when">09-11 20:14</div>
+              <div class="act"><button class="iconbtn" title="打开目录"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button><button class="iconbtn" title="删除"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button></div>
+            </div>
+            <div class="item" data-go="detail">
+              <div class="th"></div>
+              <div class="ti"><div class="t">【永恒娘】天选国V！化妆品，护肤品还得是国产的</div><div class="s"><span class="mono">03:27</span><span>SenseVoice-Small</span><span>zh</span></div></div>
+              <div class="badges"><span class="pill ok">导图</span></div>
+              <div class="when">09-13 21:07</div>
+              <div class="act"><button class="iconbtn" title="打开目录"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button><button class="iconbtn" title="删除"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="gh">其他 <span class="c">2 条</span></div>
+          <div class="list">
+            <div class="item">
+              <div class="th g"></div>
+              <div class="ti"><div class="t">【官方 MV】Never Gonna Give You Up - Rick Astley</div><div class="s"><span class="mono">03:32</span><span>Whisper tiny</span><span>en</span></div></div>
+              <div class="badges"><span class="pill ok">总体</span></div>
+              <div class="when">09-09 21:15</div>
+              <div class="act"><button class="iconbtn" title="打开目录"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button><button class="iconbtn" title="删除"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button></div>
+            </div>
+            <div class="item">
+              <div class="th y"></div>
+              <div class="ti"><div class="t">Me at the zoo</div><div class="s"><span class="mono">00:19</span><span>官方字幕</span><span>en</span></div></div>
+              <div class="badges"><span class="pill ok">总体</span></div>
+              <div class="when">09-10 12:54</div>
+              <div class="act"><button class="iconbtn" title="打开目录"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button><button class="iconbtn" title="删除"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-settings">
+      <div class="page"><div class="ph"><div><h1>设置</h1><p>这一页稿子里没画，先只有导航占位。</p></div></div></div>
+    </section>
+  </main>
+</div>
+
+<div class="note"><b>这是静态稿</b>，只有导航、主题切换和总结类型切换能点。标注「v0.6 计划」的是还没做的功能。</div>
+
+<script src="../../src/video_summarizer/web/static/d3.min.js"></script>
+<script src="../../src/video_summarizer/web/static/markmap-view.js"></script>
+<script>
+(function(){
+  var root=document.documentElement;
+  var tg=document.getElementById('themeToggle');
+  function syncToggle(){
+    var dark=root.getAttribute('data-theme')==='dark'||(!root.getAttribute('data-theme')&&matchMedia('(prefers-color-scheme: dark)').matches);
+    tg.setAttribute('aria-checked',dark?'true':'false');
+  }
+  tg.addEventListener('click',function(){
+    var dark=tg.getAttribute('aria-checked')==='true';
+    root.setAttribute('data-theme',dark?'light':'dark'); syncToggle();
+  });
+  syncToggle();
+
+  function go(name){
+    document.querySelectorAll('.view').forEach(function(v){v.classList.toggle('on',v.id==='view-'+name);});
+    document.querySelectorAll('.nav button').forEach(function(b){
+      var mine=b.getAttribute('data-go')===name||(name==='detail'&&b.getAttribute('data-go')==='lib');
+      if(mine)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');
+    });
+    document.querySelector('.main').scrollTo(0,0);
+    if(name==='detail')renderMM();
+  }
+  document.querySelectorAll('[data-go]').forEach(function(el){
+    el.addEventListener('click',function(e){e.preventDefault();go(el.getAttribute('data-go'));});
+  });
+  document.addEventListener('keydown',function(e){
+    if(e.target.tagName==='INPUT')return;
+    if(e.key==='n')go('new'); if(e.key==='l')go('lib');
+  });
+
+  var hints={key_points:['要点','只要结论，不要过程，扫一眼就够'],timeline:['时间线','按时间顺序梳理内容，适合教程、课程、会议记录'],by_speaker:['分角色','按说话人分别归纳，适合访谈、对话']};
+  document.querySelectorAll('#typeSeg button').forEach(function(b){
+    b.addEventListener('click',function(){
+      document.querySelectorAll('#typeSeg button').forEach(function(x){x.setAttribute('aria-pressed','false');});
+      b.setAttribute('aria-pressed','true');
+      var t=b.getAttribute('data-type');
+      document.getElementById('sum-overall').hidden=t!=='overall';
+      document.getElementById('sum-mindmap').hidden=t!=='mindmap';
+      document.getElementById('sum-other').hidden=!hints[t];
+      if(hints[t]){document.getElementById('otherLabel').textContent=hints[t][0];document.getElementById('otherHint').textContent=hints[t][1];}
+      if(t==='mindmap')renderMM();
+    });
+  });
+
+  var tree={content:"妮老师冬季极简护肤课堂",children:[
+    {content:"核心护肤理念",children:[
+      {content:"男生护肤不用复杂",children:[{content:"冬天只需两步：喷水 + 涂甘油",children:[]},{content:"水精华面霜流程冬天没用",children:[]},{content:"涂多了吸收不进去是浪费",children:[]}]},
+      {content:"关键在锁水",children:[{content:"补不进去是因为没锁住",children:[]},{content:"水油不平衡 → 出油、掉皮、冒痘",children:[]}]},
+      {content:"不花冤枉钱",children:[{content:"大牌贵妇品没用",children:[]},{content:"男士专用品没用",children:[]},{content:"两样东西单价都不超过五十",children:[]}]}]},
+    {content:"推荐产品",children:[
+      {content:"颐莲喷雾",children:[{content:"喷头细，出来是雾不是水",children:[]},{content:"比雅漾好用",children:[]}]},
+      {content:"护肤甘油（维E保湿）",children:[{content:"随便什么牌子，十几二十块",children:[]},{content:"伊美雅，二十几块一大罐",children:[]},{content:"叫甘油但其实不油",children:[]}]},
+      {content:"防晒棒",children:[{content:"像润唇膏一样扭出来涂",children:[]},{content:"雾面，五秒涂满全脸",children:[]},{content:"防晒喷雾不要喷脸",children:[]}]},
+      {content:"其他",children:[{content:"洗面奶：芙丽芳丝或温和氨基酸类",children:[]},{content:"泥膜选温和的",children:[]},{content:"芦荟胶放冰箱，镇静用",children:[]}]}]},
+    {content:"早间流程",children:[{content:"清水洗脸，洗脸巾按干",children:[]},{content:"喷雾两遍，半干时手掌摁进去，不要拍",children:[]},{content:"甘油四到五滴揉开",children:[]},{content:"出门前防晒棒",children:[]}]},
+    {content:"晚间流程",children:[{content:"洗澡时先洗脸，一天只用一回洗面奶",children:[]},{content:"冬天用沐浴油",children:[]},{content:"特别干的地方先厚涂维E或大宝，半干擦掉",children:[]},{content:"喷雾两遍再甘油",children:[]}]},
+    {content:"问题肌肤",children:[
+      {content:"又出油又掉皮",children:[{content:"一天只洗一回脸",children:[]},{content:"起皮处厚涂补水乳十分钟擦掉",children:[]}]},
+      {content:"冒痘",children:[{content:"每月都冒去皮肤科，几毛钱药膏",children:[]},{content:"永远不要挑",children:[]}]},
+      {content:"黑头毛孔",children:[{content:"一周一次温和泥膜二十分钟",children:[]},{content:"擦掉后厚涂芦荟胶",children:[]}]},
+      {content:"嘴角脱皮：金霉素眼膏过夜",children:[]},
+      {content:"黑眼圈：本质淤青，活血化瘀药膏",children:[]},
+      {content:"水肿：滚轮 + 美式咖啡",children:[]}]},
+    {content:"避坑提醒",children:[{content:"功能性面膜养不进去，一周顶多两次",children:[]},{content:"冬天不要刷酸",children:[]},{content:"男士洗面奶洗完脸干巴",children:[]},{content:"美容店小气泡、挑痘没用",children:[]},{content:"防晒冬夏都要，不防晒等于白护",children:[]}]},
+    {content:"带货态度",children:[{content:"不接工商，接了只能说违心话",children:[]},{content:"想做妮妮严选，自己用过再分享",children:[]}]}
+  ]};
+  var mm=null;
+  function renderMM(){
+    var host=document.getElementById('sum-mindmap');
+    if(host.hidden||mm||!window.markmap||!window.d3)return;
+    mm=window.markmap.Markmap.create(document.getElementById('mmsvg'),{autoFit:true,duration:300,maxWidth:300,spacingVertical:8,paddingX:12,initialExpandLevel:3},tree);
+    document.getElementById('mmFit').onclick=function(){mm.fit();};
+  }
+})();
+</script>
