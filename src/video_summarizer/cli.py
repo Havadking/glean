@@ -20,7 +20,7 @@ from .summarizer import AVAILABLE_PROVIDERS as SUMMARIZER_PROVIDERS, get_provide
 from .summarizer.base import CostEstimate
 from .summarizer.prompts import TEMPLATES
 from .summarizer.tokens import format_timestamp
-from .ytdlp_base import probe
+from .ytdlp_base import extract_url, probe
 
 SUMMARY_TYPES = tuple(TEMPLATES)
 
@@ -166,7 +166,7 @@ def run(url: str, summary_type, lang, extra, provider, model, base_url, asr_mode
         extra_instructions=extra,
     )
     result = run_pipeline(
-        url, cfg,
+        extract_url(url), cfg,
         options=options,
         force=force,
         force_asr=force_asr,
@@ -185,7 +185,7 @@ def inspect(url: str, config_path, verbose) -> None:
     """只探测：看看这个链接有没有人工字幕、时长多少。不下载任何东西。"""
     _setup_logging(verbose)
     cfg = _load(config_path, {})
-    info = probe(url, cfg.download)
+    info = probe(extract_url(url), cfg.download)
 
     click.echo(f"标题    {info.title}")
     click.echo(f"ID      {info.video_id}")

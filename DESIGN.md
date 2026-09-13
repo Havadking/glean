@@ -217,7 +217,8 @@ cache_db: ./cache.sqlite
 8. **Gradio 6**：主题和 css 只能从 `launch()` 传；`js=` 和 `fn` 不能放同一个事件；`.prose` 样式要 `!important` 才压得住；组件更新只换 innerHTML 不跑脚本（Markmap 靠 MutationObserver 重渲染）。这些是换框架的直接原因
 9. **说话人分离 pipeline 仅中文**，且对背景音乐、抢话效果打折；本项目主要内容是独白，未在真实多人素材上验证
 10. **模型权重和 uv 的 Python 默认落 C 盘**，环境变量要在装任何东西之前设好；删缓存目录前先看里面是什么
-11. 合规：定位个人学习工具，不做公开分发服务
+11. **抖音必须带浏览器 cookie**（不必登录），否则 yt-dlp 报 "Fresh cookies are needed"；`uploader` 字段是账号 handle，昵称在 `channel` 里——各站字段不一致，`VideoInfo` 里 channel 优先。分享口令里的链接用正则抠出来
+12. 合规：定位个人学习工具，不做公开分发服务
 
 ---
 

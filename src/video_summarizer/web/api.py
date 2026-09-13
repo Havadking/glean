@@ -34,7 +34,7 @@ from ..subtitle.fetcher import select_subtitle_language
 from ..summarizer import get_provider as get_summarizer
 from ..summarizer.base import CostEstimate
 from ..summarizer.prompts import TEMPLATES
-from ..ytdlp_base import VideoInfo
+from ..ytdlp_base import VideoInfo, extract_url
 from . import library as library_mod
 from . import mindmap as mindmap_mod
 from .jobs import JobManager, Reporter
@@ -362,7 +362,7 @@ def create_app(cfg: Config):
     def probe_url(body: ProbeBody):
         """贴什么都行：单个视频出探测卡，合集 / UP 主空间出一页列表。"""
         c = state.fresh_config()
-        url = body.url.strip()
+        url = extract_url(body.url)
         if not url:
             raise HTTPException(400, "先填一个视频链接")
         info = state.probed(url)
@@ -494,7 +494,7 @@ def create_app(cfg: Config):
 
     @app.post("/api/jobs")
     def create_job(body: ProcessBody):
-        url = body.url.strip()
+        url = extract_url(body.url)
         if not url:
             raise HTTPException(400, "先填一个视频链接")
         summary_type = (body.summary_type or "").strip() or None
@@ -516,7 +516,7 @@ def create_app(cfg: Config):
         summary_type = (body.summary_type or "").strip() or None
         if summary_type and summary_type not in TEMPLATES:
             raise HTTPException(400, f"不认识的总结类型 {summary_type}")
-        urls = [(str(it.get("url") or "").strip(), str(it.get("title") or "").strip() or None)
+        urls = [(extract_url(str(it.get("url") or "")), str(it.get("title") or "").strip() or None)
                 for it in body.items]
         urls = [(u, t) for u, t in urls if u]
         if not urls:

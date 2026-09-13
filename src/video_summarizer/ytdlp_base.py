@@ -101,6 +101,17 @@ def _clean_subs(raw: dict[str, Any] | None) -> dict[str, list[dict[str, Any]]]:
     }
 
 
+# 分享口令里夹着的链接："8.52 复制打开抖音 https://v.douyin.com/xxxx/ 看看..."
+_URL_IN_TEXT_RE = re.compile(r"https?://[^\s<>\"'，。！？、；：（）【】《》]+")
+
+
+def extract_url(text: str) -> str:
+    """从粘贴的文字里抠出第一个链接；本来就是链接就原样返回（去掉首尾空白）。"""
+    text = (text or "").strip()
+    m = _URL_IN_TEXT_RE.search(text)
+    return m.group(0).rstrip(".,;)]}") if m else text
+
+
 PROBE_RETRIES = 3
 PROBE_BACKOFF_SEC = 8
 
@@ -151,7 +162,8 @@ def video_info_from_dict(info: dict[str, Any], url: str) -> VideoInfo:
         extractor=info.get("extractor_key") or info.get("extractor") or "unknown",
         manual_subs=_clean_subs(info.get("subtitles")),
         auto_subs=_clean_subs(info.get("automatic_captions")),
-        uploader=info.get("uploader") or info.get("channel") or info.get("uploader_id"),
+        # 各站字段不一致：B 站 uploader 是昵称；抖音 uploader 是账号 handle、channel 才是昵称
+        uploader=info.get("channel") or info.get("uploader") or info.get("uploader_id"),
         upload_date=info.get("upload_date"),
         thumbnail=info.get("thumbnail"),
         raw=info,

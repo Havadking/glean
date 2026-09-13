@@ -130,3 +130,13 @@ def test_summary_options_defaults():
     o = SummaryOptions()
     assert o.summary_type == "overall" and o.language == "zh"
     assert o.extra_instructions is None
+
+
+def test_extract_url_from_share_text():
+    from video_summarizer.ytdlp_base import extract_url
+
+    assert extract_url("  https://www.bilibili.com/video/BV1x/  ") == "https://www.bilibili.com/video/BV1x/"
+    assert extract_url("8.52 复制打开抖音，看看【杨超越的作品】 https://v.douyin.com/iAbCdEf/ 复制此链接。") == "https://v.douyin.com/iAbCdEf/"
+    assert extract_url("链接在这（https://x.y/z），看看") == "https://x.y/z"
+    assert extract_url("不是链接") == "不是链接"
+    assert extract_url("") == ""

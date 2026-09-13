@@ -28,3 +28,7 @@ models/
 # 前端
 frontend/node_modules/
 !src/video_summarizer/web/dist/
+
+# 浏览器导出的 cookie，绝不能进仓库
+*cookie*
+*cookies*

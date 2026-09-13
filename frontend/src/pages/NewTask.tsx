@@ -91,7 +91,7 @@ export function NewTask() {
 
       <form className="card urlbox" onSubmit={(e) => { e.preventDefault(); void doProbe() }}>
         <LinkIcon />
-        <input ref={inputRef} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://www.bilibili.com/video/BV…"
+        <input ref={inputRef} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="视频 / 合集 / UP 主空间链接，抖音分享口令直接整段贴"
           spellCheck={false} aria-label="视频链接" />
         {url && <button type="button" className="btn ghost" onClick={clear}>清空</button>}
         <button type="submit" className="btn primary" disabled={!url.trim() || probing}>
