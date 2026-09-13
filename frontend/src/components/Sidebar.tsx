@@ -32,7 +32,7 @@ export function Sidebar() {
         <>
           <div className="sec">UP 主</div>
           {groups.filter((g) => g.uploader).map((g) => (
-            <button className="up" key={g.uploader!} onClick={() => nav(`/library?up=${encodeURIComponent(g.uploader!)}`)}>
+            <button className="up" key={g.uploader!} onClick={() => nav(`/uploader/${encodeURIComponent(g.uploader!)}`)}>
               <Avatar name={g.uploader} />
               <span className="n">{g.uploader}</span>
               <span className="c">{g.entries.length}</span>

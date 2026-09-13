@@ -132,13 +132,22 @@ export interface Question {
   question: string
   answer: string
   provider: string
-  citations: number[]
+  citations: (number | string)[]
   created_at: string
   cost?: number | null
   truncated?: boolean
 }
 export interface QuestionsResponse {
   estimate: { transcript_tokens: number; input_tokens: number; truncated: boolean; cost: number | null; currency: string; provider: string } | { error: string }
+  questions: Question[]
+}
+
+export interface UploaderVideo { index: number; video_id: string; title: string; upload_date: string | null; duration_sec: number; material: string; tokens: number }
+export interface UploaderInfo {
+  uploader: string
+  videos: UploaderVideo[]
+  no_summary: number
+  estimate: { input_tokens: number; cost: number | null; currency: string; provider: string }
   questions: Question[]
 }
 
@@ -225,6 +234,9 @@ export const api = {
   questions: (id: string) => call<QuestionsResponse>(`/videos/${encodeURIComponent(id)}/questions`),
   ask: (id: string, question: string, history: { question: string; answer: string }[]) =>
     post<Question & { created_at: string }>(`/videos/${encodeURIComponent(id)}/ask`, { question, history }),
+  uploader: (name: string) => call<UploaderInfo>(`/uploaders/${encodeURIComponent(name)}`),
+  askUploader: (name: string, question: string, history: { question: string; answer: string }[]) =>
+    post<Question>(`/uploaders/${encodeURIComponent(name)}/ask`, { question, history }),
   deleteQuestion: (id: number) => call<{ deleted: boolean }>(`/questions/${id}`, { method: 'DELETE' }),
   search: (q: string, signal?: AbortSignal) => call<SearchResult>(`/search?q=${encodeURIComponent(q)}`, { signal }),
   jobs: () => call<{ jobs: Job[] }>('/jobs'),

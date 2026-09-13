@@ -774,6 +774,84 @@ def create_app(cfg: Config):
         c = state.fresh_config()
         return {"deleted": Cache(c.cache_db).delete_question(question_id)}
 
+    # ----- 问 UP 主（跨视频） -----
+
+    # 材料优先级：总体摘要最全；没有就退而求其次；什么总结都没有就拿转写开头
+    _MATERIAL_ORDER = ("overall", "key_points", "timeline", "by_speaker", "mindmap")
+    _TRANSCRIPT_FALLBACK_TOKENS = 1500
+
+    def _uploader_materials(c: Config, uploader: str) -> tuple[list[qa_mod.Material], list[dict[str, Any]]]:
+        entries = [e for e in library_mod.load_library(c) if e.uploader == uploader]
+        # 按发布日期升序，模型才好说"先说 X 后来改口 Y"
+        entries.sort(key=lambda e: (e.upload_date or "", e.created_at))
+        materials, videos = [], []
+        for i, e in enumerate(entries, 1):
+            sums = library_mod.load_summaries(c, e)
+            kind = next((k for k in _MATERIAL_ORDER if k in sums), None)
+            if kind:
+                text = sums[kind].content
+            else:
+                t = library_mod.load_transcript(c, e)
+                if t is None or not t.segments:
+                    continue
+                from ..summarizer.tokens import chunk_segments, render_segments
+                chunks = chunk_segments(t.segments, _TRANSCRIPT_FALLBACK_TOKENS, with_time=False)
+                text = render_segments(chunks[0], with_time=False) if chunks else ""
+                if len(chunks) > 1:
+                    text += "\n（以下省略）"
+                kind = "transcript"
+            materials.append(qa_mod.Material(index=i, video_id=e.video_id, title=e.title,
+                                             date=_fmt_date(e.upload_date), kind=kind, text=text))
+            videos.append({"index": i, "video_id": e.video_id, "title": e.title, "upload_date": _fmt_date(e.upload_date),
+                           "duration_sec": e.duration_sec, "material": kind,
+                           "tokens": qa_mod.estimate_tokens(text)})
+        return materials, videos
+
+    @app.get("/api/uploaders/{name}")
+    def uploader_info(name: str):
+        c = state.fresh_config()
+        materials, videos = _uploader_materials(c, name)
+        if not videos and not any(e.uploader == name for e in library_mod.load_library(c)):
+            raise HTTPException(404, "库里没有这位创作者")
+        total = sum(v["tokens"] for v in videos) + 400
+        try:
+            provider_desc = get_summarizer(c.summarizer).describe()
+        except VideoSummarizerError as exc:
+            provider_desc = f"未配置（{exc}）"
+        qs = Cache(c.cache_db).questions_for_video(f"uploader:{name}")
+        return {
+            "uploader": name,
+            "videos": videos,
+            "no_summary": sum(1 for v in videos if v["material"] == "transcript"),
+            "estimate": {"input_tokens": total, "cost": _money(c, total, 800), "currency": c.summarizer.currency,
+                         "provider": provider_desc},
+            "questions": [
+                {"id": q.id, "question": q.question, "answer": q.answer, "provider": q.provider,
+                 "citations": q.citations, "created_at": q.created_at}
+                for q in qs
+            ],
+        }
+
+    @app.post("/api/uploaders/{name}/ask")
+    def uploader_ask(name: str, body: AskBody):
+        question = body.question.strip()
+        if not question:
+            raise HTTPException(400, "先写个问题")
+        c = state.fresh_config()
+        materials, _videos = _uploader_materials(c, name)
+        if not materials:
+            raise HTTPException(404, "这位创作者还没有可用的材料")
+        provider = get_summarizer(c.summarizer)
+        history = [qa_mod.Turn(h.get("question", ""), h.get("answer", "")) for h in body.history
+                   if h.get("question") and h.get("answer")]
+        answer = qa_mod.ask_uploader(provider, name, materials, question, history)
+        key = f"uploader:{name}"
+        qid = Cache(c.cache_db).add_question(key, answer.question, answer.answer, answer.provider, answer.citations)
+        used = _record_usage(c, provider, video_id=key, kind="uploader_qa", detail=question[:200])
+        return {"id": qid, **answer.to_dict(), "used": used,
+                "cost": used["cost"] if used["calls"] else _money(c, answer.input_tokens, 800),
+                "currency": c.summarizer.currency}
+
     # ----- 搜索 -----
 
     @app.get("/api/search")

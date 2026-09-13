@@ -87,7 +87,7 @@ export function AskPanel({ videoId, onJump }: { videoId: string; onJump: (sec: n
             <div className="af">
               {t.citations.length > 0
                 ? <span>引用 {t.citations.map((c) => (
-                    <button className="cite" key={c} onClick={() => onJump(c)}>{fmtDuration(c)}</button>
+                    <button className="cite" key={String(c)} onClick={() => onJump(Number(c))}>{fmtDuration(Number(c))}</button>
                   ))}</span>
                 : <span className="warnish">没有引用时间戳——回答可能不在转写里</span>}
               <span className="sp" />

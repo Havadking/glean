@@ -135,6 +135,7 @@ export function Library() {
             {g.uploader ?? '其他'}
             <span className="c">{g.entries.length} 条 · {fmtMinutes(g.entries.reduce((n, e) => n + e.duration_sec, 0))} 分钟</span>
             <span className="sp" />
+            {g.uploader && <Link className="btn ghost sm" to={`/uploader/${encodeURIComponent(g.uploader)}`}>问 TA · 跨视频</Link>}
           </div>
           <div className="list">
             {g.entries.map((e) => (

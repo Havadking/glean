@@ -49,7 +49,8 @@ class Turn:
 class Answer:
     question: str
     answer: str
-    citations: list[float] = field(default_factory=list)   # 回答里出现的时间戳（秒），去重保序
+    # 问视频：回答里出现的时间戳（秒）；问 UP 主：引用到的 video_id。都去重保序
+    citations: list = field(default_factory=list)
     truncated: bool = False                                  # 转写太长被截断了
     input_tokens: int = 0                                    # 估算值
     provider: str = ""
@@ -135,3 +136,68 @@ def ask(
         question=question.strip(), answer=text, citations=extract_citations(text),
         truncated=truncated, input_tokens=estimate_tokens(user), provider=provider.describe(),
     )
+
+
+# ---------- 问 UP 主：跨视频 ----------
+
+UPLOADER_SYSTEM = (
+    "你是一个视频内容分析助手。用户关注某位创作者，会给你这位创作者多条视频的内容摘要"
+    "（每条带编号、标题、发布日期），然后提问。\n\n"
+    "规则：\n"
+    "1. **只依据给出的材料回答。** 材料里没有的信息，哪怕你知道这位创作者，也不要写。"
+    "材料里没提到的，直接说\"这些视频里没有提到\"。\n"
+    "2. **每条结论都要标注来自哪条视频**，用方括号加编号，如 【2】，放在对应句子末尾；"
+    "多条视频都提到就标多个，如 【1】【3】。\n"
+    "3. 不同视频说法不一致或前后有变化时，明确指出来，并按发布日期说明先后。\n"
+    "4. 用用户提问的语言回答，简洁直接，用 Markdown，能用列表就用列表。\n"
+    "5. 不要复述规则，不要加开场白。"
+)
+
+CITE_INDEX_RE = re.compile(r"【(\d{1,3})】")
+
+
+@dataclass
+class Material:
+    index: int          # 从 1 开始
+    video_id: str
+    title: str
+    date: str | None    # YYYY-MM-DD
+    kind: str           # 用的是哪种总结 / transcript
+    text: str
+
+
+def build_uploader_prompt(uploader: str, materials: list[Material], question: str,
+                          history: list[Turn]) -> str:
+    parts = [f"创作者：{uploader}", f"视频数：{len(materials)}", ""]
+    for m in materials:
+        parts.append(f"=== 【{m.index}】{m.title}（{m.date or '日期不详'}）===")
+        parts.append(m.text.strip())
+        parts.append("")
+    if history:
+        parts.append("之前的问答（供上下文参考）：")
+        for t in history[-MAX_HISTORY_TURNS:]:
+            parts.append(f"问：{t.question}")
+            parts.append(f"答：{t.answer}")
+        parts.append("")
+    parts.append(f"问题：{question.strip()}")
+    return "\n".join(parts)
+
+
+def ask_uploader(
+    provider: BaseSummarizer, uploader: str, materials: list[Material], question: str,
+    history: list[Turn] | None = None,
+) -> Answer:
+    if not question.strip():
+        raise ValueError("问题不能为空")
+    if not materials:
+        raise ValueError("这位创作者还没有可用的材料")
+    user = build_uploader_prompt(uploader, materials, question, history or [])
+    text = provider.complete(UPLOADER_SYSTEM, user).strip()
+    by_index = {m.index: m.video_id for m in materials}
+    cited: list[str] = []
+    for mm in CITE_INDEX_RE.finditer(text):
+        vid = by_index.get(int(mm.group(1)))
+        if vid and vid not in cited:
+            cited.append(vid)
+    return Answer(question=question.strip(), answer=text, citations=cited,  # type: ignore[arg-type]
+                  truncated=False, input_tokens=estimate_tokens(user), provider=provider.describe())

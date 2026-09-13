@@ -26,7 +26,7 @@ class FakeSummarizer(BaseSummarizer):
     def _complete(self, system: str, user: str) -> str:
         FakeSummarizer.calls.append(user)
         self._record_usage(1000, 500)      # 假装每次调用花了这么多
-        if "视频内容问答助手" in system:
+        if "视频内容问答助手" in system or "创作者" in system:
             return self._complete_for_qa(user)
         return "# 根\n## 分支\n- 点一\n- 点二\n" if "大纲" in system + user else "## 一句话总结\n假的总结。"
 
@@ -34,6 +34,8 @@ class FakeSummarizer(BaseSummarizer):
         return "fake/model"
 
     def _complete_for_qa(self, user: str) -> str:
+        if "创作者：" in user:
+            return "她说过第一句 【1】。"
         return "第一句在开头 [00:00]，第二句紧接着 [00:04]。"
 
 
@@ -470,6 +472,33 @@ def test_deleting_video_removes_its_questions(client):
     client.delete("/api/videos/BVAAA")
     # 视频没了，问答记录也不该留着
     assert client.get("/api/videos/BVAAA/questions").status_code == 404
+
+
+# ---------- 问 UP 主 ----------
+
+
+def test_uploader_materials_prefer_summaries_and_fall_back_to_transcript(client):
+    r = client.get("/api/uploaders/某 UP").json()
+    assert [v["material"] for v in r["videos"]] == ["overall"]
+    assert r["no_summary"] == 0 and r["estimate"]["cost"] is not None
+    assert client.get("/api/uploaders/没有的人").status_code == 404
+
+    a = client.post("/api/uploaders/某 UP/ask", json={"question": "说过什么？"}).json()
+    assert a["citations"] == ["BVAAA"] and a["used"]["calls"] == 1
+    assert "=== 【1】A 视频" in FakeSummarizer.calls[-1] and "缓存里的总结" in FakeSummarizer.calls[-1]
+    qs = client.get("/api/uploaders/某 UP").json()["questions"]
+    assert len(qs) == 1 and qs[0]["citations"] == ["BVAAA"]
+    assert client.get("/api/usage").json()["recent"][0]["kind"] == "uploader_qa"
+    assert client.post("/api/uploaders/某 UP/ask", json={"question": " "}).status_code == 400
+
+
+def test_uploader_without_any_summary_uses_transcript_head(client, workspace):
+    # 把 A 的总结删掉，只剩转写
+    from video_summarizer.cache import Cache
+    Cache(workspace["cfg"].cache_db).clear("BVAAA")
+    Cache(workspace["cfg"].cache_db).put_transcript(workspace["key_a"], __import__("video_summarizer.models", fromlist=["Transcript"]).Transcript.load(workspace["dir_a"] / "transcript.json"))
+    r = client.get("/api/uploaders/某 UP").json()
+    assert [v["material"] for v in r["videos"]] == ["transcript"] and r["no_summary"] == 1
 
 
 # ---------- 搜索 ----------

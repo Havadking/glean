@@ -75,3 +75,27 @@ def test_empty_question_is_rejected(transcript):
 
     with pytest.raises(ValueError):
         qa.ask(Echo(), transcript, "   ")
+
+
+# ---------- 问 UP 主 ----------
+
+
+def test_ask_uploader_cites_videos_by_index():
+    mats = [qa.Material(1, "v1", "第一期", "2024-01-01", "overall", "推荐甘油"),
+            qa.Material(2, "v2", "第二期", "2024-06-01", "overall", "改推荐面霜")]
+    p = Echo(reply="先推荐甘油 【1】，后来改推荐面霜 【2】【1】。没提到的 【9】")
+    a = qa.ask_uploader(p, "某人", mats, "推荐什么？", [qa.Turn("上次", "上次答")])
+    system, user = p.seen[0]
+    assert "创作者：某人" in user and "=== 【2】第二期（2024-06-01）===" in user
+    assert "上次答" in user and user.rstrip().endswith("问题：推荐什么？")
+    assert "标注来自哪条视频" in system
+    assert a.citations == ["v1", "v2"]        # 去重保序，编号不存在的忽略
+
+
+def test_ask_uploader_requires_materials_and_question():
+    import pytest
+
+    with pytest.raises(ValueError):
+        qa.ask_uploader(Echo(), "x", [], "问")
+    with pytest.raises(ValueError):
+        qa.ask_uploader(Echo(), "x", [qa.Material(1, "v", "t", None, "overall", "x")], " ")

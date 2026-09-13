@@ -4,6 +4,7 @@ import { Sidebar } from './components/Sidebar'
 import { Library } from './pages/Library'
 import { NewTask } from './pages/NewTask'
 import { Settings } from './pages/Settings'
+import { Uploader } from './pages/Uploader'
 import { Video } from './pages/Video'
 import { StoreProvider } from './store'
 
@@ -36,6 +37,7 @@ export default function App() {
               <Route path="/library" element={<Library />} />
               <Route path="/video/:id" element={<Video />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="/uploader/:name" element={<Uploader />} />
               <Route path="*" element={<NewTask />} />
             </Routes>
           </main>
