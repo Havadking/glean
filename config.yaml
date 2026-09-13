@@ -12,6 +12,11 @@ download:
   # 这里填的 UA 只在前两次下载都失败后，作为最后一次重试的手段使用。
   # 注意 B 站的 412 是按 IP 的频率风控，换 UA 治不好，只能等或者用登录态。
   user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+  # 批量处理时相邻两个视频之间的最小间隔（秒）。连着打站点最容易 412
+  batch_delay_sec: 5
+  # 登录态 cookie（Netscape 格式，用 "Get cookies.txt LOCALLY" 之类的扩展导出）。
+  # 带着它 B 站的限流宽松很多，UP 主空间列表尤其需要。留空就匿名访问。
+  # cookies_file: E:/personal/.cache/bilibili-cookies.txt
   # 需要登录才能下载的内容，填浏览器名从中读 cookie：chrome | edge | firefox | null
   cookies_from_browser: null
 

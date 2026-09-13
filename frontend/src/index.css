@@ -155,6 +155,26 @@ input, select { font: inherit; color: var(--ink); }
 .log .ts { color: var(--faint); }
 .log .warning { color: var(--warn); }
 .log .error { color: var(--bad); }
+/* ---------- 合集 / 空间列表 ---------- */
+.listing { margin-top: 14px; padding: 16px; }
+.listing .lh { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.listing .lh h2 { font-size: 15.5px; margin-bottom: 4px; }
+.listing .lh .search { width: 300px; padding-right: 4px; }
+.ltools { display: flex; gap: 4px; margin: 12px 0 6px; }
+.lrows { display: flex; flex-direction: column; max-height: 52vh; overflow: auto; border: 1px solid var(--line-2); border-radius: 8px; }
+.lrow { display: grid; grid-template-columns: 18px 56px 1fr auto; gap: 12px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line-2); cursor: pointer; }
+.lrow:first-child { border-top: 0; }
+.lrow:hover { background: var(--surface-2); }
+.lrow.on { background: var(--accent-bg); }
+.lrow.off { opacity: .6; cursor: default; }
+.lrow input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+.lrow .th { aspect-ratio: 16/10; border-radius: 4px; background: linear-gradient(160deg, #CFCFD6, #6E7382 70%, #3A3E4A); overflow: hidden; display: block; }
+.lrow .th img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lrow .ti { min-width: 0; display: block; }
+.lrow .ti .t { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13.5px; }
+.lrow .ti .s { display: flex; gap: 10px; font-size: 12px; color: var(--mute); margin-top: 2px; }
+.lmore { display: flex; justify-content: center; padding: 10px 0 2px; }
+.lfoot { margin-top: 12px; }
 .queue { margin-top: 26px; }
 .queue h3 { font-size: 13px; color: var(--mute); font-weight: 500; display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .qrow { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--line-2); color: var(--ink-2); }

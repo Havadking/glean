@@ -1,7 +1,8 @@
 import { Link as LinkIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { api, type Job, type Probe } from '../api'
+import { api, type Job, type Listing, type Probe } from '../api'
+import { ListingPanel } from '../components/ListingPanel'
 import { ErrorBox, Pill } from '../components/ui'
 import { useJob, type JobView } from '../hooks/useJob'
 import { fmtDuration, fmtMoney, fmtSeconds, fmtTokens } from '../lib/format'
@@ -14,6 +15,8 @@ export function NewTask() {
   const nav = useNavigate()
   const [url, setUrl] = useState('')
   const [probe, setProbe] = useState<Probe | null>(null)
+  const [listing, setListing] = useState<Listing | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [probing, setProbing] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [asr, setAsr] = useState<string>('')
@@ -51,9 +54,11 @@ export function NewTask() {
   const doProbe = async () => {
     const u = url.trim()
     if (!u) return
-    setProbing(true); setError(null); setProbe(null)
+    setProbing(true); setError(null); setProbe(null); setListing(null); setNotice(null)
     try {
-      setProbe(await api.probe(u))
+      const r = await api.probe(u)
+      if (r.kind === 'list') setListing(r)
+      else setProbe(r)
     } catch (e) { setError(e) } finally { setProbing(false) }
   }
 
@@ -70,7 +75,8 @@ export function NewTask() {
     } catch (e) { setError(e) }
   }
 
-  const clear = () => { setUrl(''); setProbe(null); setError(null); inputRef.current?.focus() }
+  const clear = () => { setUrl(''); setProbe(null); setListing(null); setError(null); setNotice(null); inputRef.current?.focus() }
+  const refreshQueue = () => api.jobs().then((r) => setQueue(r.jobs)).catch(() => {})
   const busy = jobActive
   const pending = queue.filter((j) => j.status === 'queued' || j.status === 'running')
 
@@ -79,7 +85,7 @@ export function NewTask() {
       <div className="ph">
         <div>
           <h1>新任务</h1>
-          <p>贴一个视频链接。字幕能拿到就不跑语音识别，处理过的直接读缓存。</p>
+          <p>贴一个视频链接，或者合集 / UP 主空间的链接。字幕能拿到就不跑语音识别，处理过的直接读缓存。</p>
         </div>
       </div>
 
@@ -94,6 +100,11 @@ export function NewTask() {
       </form>
 
       <ErrorBox error={error} />
+      {notice && <div className="status"><Pill tone="ok" dot>{notice}</Pill><span>串行跑，相邻两个之间隔几秒；关掉页面也会继续，重启服务也能续上。</span></div>}
+
+      {listing && (
+        <ListingPanel listing={listing} url={url.trim()} onSubmitted={(n) => { setNotice(`已排队 ${n} 条`); void refreshQueue() }} />
+      )}
 
       {probe && (
         <div className="card probe">
@@ -149,7 +160,12 @@ export function NewTask() {
 
       {pending.length > 0 && (
         <div className="queue">
-          <h3>队列 <Pill tone="neutral">{pending.length}</Pill></h3>
+          <h3>队列 <Pill tone="neutral">{pending.length}</Pill>
+            <span style={{ flex: 1 }} />
+            {pending.some((j) => j.status === 'queued') && (
+              <button className="btn ghost sm" onClick={() => api.cancelQueued().then(refreshQueue)}>清空排队的</button>
+            )}
+          </h3>
           <div className="card">
             {pending.map((j) => (
               <div className="qrow" key={j.id}>

@@ -30,6 +30,11 @@ class DownloadConfig:
         "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     )
     cookies_from_browser: str | None = None
+    # Netscape 格式的 cookie 文件（浏览器扩展导出）。B 站带登录态时限流宽松得多。
+    # Chrome 127 之后 yt-dlp 读不了 Windows 上的 Chrome cookie，用这个更省事
+    cookies_file: str | None = None
+    # 批量处理时两个视频之间至少隔这么久再去碰站点。B 站 412 是按 IP 的频率风控
+    batch_delay_sec: float = 5.0
 
 
 @dataclass

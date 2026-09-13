@@ -73,6 +73,14 @@ CREATE TABLE IF NOT EXISTS questions (
     created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_questions_video ON questions(video_id);
+
+CREATE TABLE IF NOT EXISTS pending_jobs (
+    id          TEXT PRIMARY KEY,
+    kind        TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    params      TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
 """
 
 
@@ -452,6 +460,54 @@ class Cache:
                 return cur.rowcount > 0
         except sqlite3.Error:
             return False
+
+    # ---------- 排队中的任务（服务重启后续跑） ----------
+
+    def add_pending_job(self, job_id: str, kind: str, title: str, params: dict[str, Any]) -> None:
+        conn = self._connect()
+        if conn is None:
+            return
+        try:
+            with closing(conn):
+                conn.execute(
+                    "INSERT OR REPLACE INTO pending_jobs (id, kind, title, params, created_at) VALUES (?,?,?,?,?)",
+                    (job_id, kind, title, json.dumps(params, ensure_ascii=False), _now()),
+                )
+                conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("记录待办任务失败：%s", exc)
+
+    def remove_pending_job(self, job_id: str) -> None:
+        conn = self._connect()
+        if conn is None:
+            return
+        try:
+            with closing(conn):
+                conn.execute("DELETE FROM pending_jobs WHERE id = ?", (job_id,))
+                conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("删除待办任务失败：%s", exc)
+
+    def pending_jobs(self) -> list[dict[str, Any]]:
+        conn = self._connect()
+        if conn is None:
+            return []
+        try:
+            with closing(conn):
+                rows = conn.execute(
+                    "SELECT id, kind, title, params, created_at FROM pending_jobs ORDER BY created_at, rowid"
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        out = []
+        for r in rows:
+            try:
+                params = json.loads(r["params"])
+            except ValueError:
+                continue
+            out.append({"id": r["id"], "kind": r["kind"], "title": r["title"], "params": params,
+                        "created_at": r["created_at"]})
+        return out
 
     def update_source_meta(self, video_id: str, meta: dict[str, Any]) -> int:
         """给老记录补 UP 主等来源信息（v2 之前的行没有这几列）。返回更新行数。"""

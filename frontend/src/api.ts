@@ -73,7 +73,33 @@ export interface Estimate {
   asr_sec?: number
 }
 
+export interface ListingEntry {
+  video_id: string
+  url: string
+  title: string
+  duration_sec: number | null
+  thumbnail: string | null
+  uploader: string | null
+  upload_date: string | null
+  in_library: boolean
+  summaries_done: string[]
+  queued: boolean
+}
+export interface Listing {
+  kind: 'list'
+  list_kind: 'space' | 'playlist'
+  title: string
+  url: string
+  page: number
+  page_size: number
+  total: number | null
+  has_more: boolean
+  keyword: string
+  entries: ListingEntry[]
+}
+
 export interface Probe {
+  kind: 'video'
   url: string
   video_id: string
   title: string
@@ -176,7 +202,10 @@ export const api = {
     call<Estimate>(`/videos/${encodeURIComponent(id)}/estimate?type=${encodeURIComponent(type)}`),
   deleteVideo: (id: string) => call<{ removed_dir: boolean }>(`/videos/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   openFolder: (id: string) => post<{ ok: boolean }>(`/videos/${encodeURIComponent(id)}/open`, {}),
-  probe: (url: string) => post<Probe>('/probe', { url }),
+  probe: (url: string, page = 1, keyword = '') => post<Probe | Listing>('/probe', { url, page, keyword }),
+  batch: (body: { items: { url: string; title?: string }[]; summary_type?: string | null; asr_model?: string | null; diarize?: string | boolean | null }) =>
+    post<{ jobs: Job[]; queued: number; duplicates: number }>('/jobs/batch', body),
+  cancelQueued: () => call<{ cancelled: number }>('/jobs', { method: 'DELETE' }),
   createJob: (body: { url: string; asr_model?: string | null; diarize?: string | boolean | null; summary_type?: string | null; force?: boolean; force_asr?: boolean }) =>
     post<{ job: Job; duplicate: boolean }>('/jobs', body),
   summarize: (id: string, body: { type: string; language?: string; extra?: string | null; force?: boolean }) =>

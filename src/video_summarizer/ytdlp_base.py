@@ -84,6 +84,8 @@ def build_ydl_opts(
         opts["http_headers"] = dict(override_headers)
     if cfg.cookies_from_browser:
         opts["cookiesfrombrowser"] = (cfg.cookies_from_browser,)
+    if cfg.cookies_file:
+        opts["cookiefile"] = str(Path(cfg.cookies_file).expanduser())
     opts.update(extra)
     return opts
 
@@ -128,7 +130,11 @@ def probe(url: str, cfg: DownloadConfig) -> VideoInfo:
     if info is None:
         raise DownloadError(f"yt-dlp 没有返回任何信息: {url}（最后一次错误：{last_error}）")
 
-    # 播放列表 / 合集：只取第一个条目
+    return video_info_from_dict(info, url)
+
+
+def video_info_from_dict(info: dict[str, Any], url: str) -> VideoInfo:
+    """yt-dlp 的 info 字典 -> VideoInfo。播放列表只取第一个条目（批量走 listing.py）。"""
     if info.get("_type") == "playlist":
         entries = [e for e in (info.get("entries") or []) if e]
         if not entries:

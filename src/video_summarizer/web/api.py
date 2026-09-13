@@ -16,6 +16,8 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -25,13 +27,14 @@ from ..config import Config, load_config
 from ..errors import VideoSummarizerError
 from ..models import SummaryOptions
 from ..pipeline import plan_transcript_key, run as run_pipeline, write_summary_files
+from .. import listing as listing_mod
 from .. import qa as qa_mod
 from .. import search as search_mod
 from ..subtitle.fetcher import select_subtitle_language
 from ..summarizer import get_provider as get_summarizer
 from ..summarizer.base import CostEstimate
 from ..summarizer.prompts import TEMPLATES
-from ..ytdlp_base import VideoInfo, probe
+from ..ytdlp_base import VideoInfo
 from . import library as library_mod
 from . import mindmap as mindmap_mod
 from .jobs import JobManager, Reporter
@@ -90,6 +93,36 @@ class State:
                 log.info("搜索索引补建：%d 个视频，%d 行", videos, rows)
         except Exception as exc:  # noqa: BLE001 —— 索引坏了不能拦住界面启动
             log.warning("搜索索引补建失败：%s", exc)
+        # 上一个视频碰站点的时间，批量时据此隔开
+        self._last_site_touch = 0.0
+        self._touch_lock = threading.Lock()
+        # 列表页缓存：(url, page, keyword) -> (时间, 页)。空间接口限流很紧，翻回上一页不该再打一次
+        self._listings: dict[tuple[str, int, str], tuple[float, Any]] = {}
+
+    LISTING_TTL_SEC = 600
+
+    def listing_cached(self, url: str, page: int, keyword: str):
+        hit = self._listings.get((url, page, keyword))
+        if hit and time.monotonic() - hit[0] < self.LISTING_TTL_SEC:
+            return hit[1]
+        return None
+
+    def remember_listing(self, url: str, page: int, keyword: str, page_obj) -> None:
+        if len(self._listings) > 100:
+            self._listings.pop(next(iter(self._listings)))
+        self._listings[(url, page, keyword)] = (time.monotonic(), page_obj)
+
+    def throttle(self, delay: float) -> None:
+        """在 worker 线程里调：离上次碰站点不够 delay 秒就等。"""
+        with self._touch_lock:
+            wait = self._last_site_touch + delay - time.monotonic()
+        if wait > 0:
+            log.info("隔 %.0f 秒再碰站点（batch_delay_sec）", wait)
+            time.sleep(wait)
+
+    def touched(self) -> None:
+        with self._touch_lock:
+            self._last_site_touch = time.monotonic()
 
     def fresh_config(self) -> Config:
         """每次任务重新读 config.yaml，改了配置不用重启。output_dir 跟命令行给的。"""
@@ -310,15 +343,41 @@ def create_app(cfg: Config):
 
     class ProbeBody(BaseModel):
         url: str
+        page: int = 1
+        keyword: str = ""
+
+    def _listing_dict(c: Config, page: listing_mod.ListPage) -> dict[str, Any]:
+        known = {e.video_id: e for e in library_mod.load_library(c)}
+        active = {j.params.get("url") for j in state.jobs.list() if j.kind == "process" and not j.finished}
+        d = page.to_dict()
+        for e in d["entries"]:
+            e["upload_date"] = _fmt_date(e["upload_date"])
+            hit = known.get(e["video_id"])
+            e["in_library"] = hit is not None
+            e["summaries_done"] = [s.summary_type for s in hit.summaries] if hit else []
+            e["queued"] = e["url"] in active
+        return {**d, "kind": "list", "list_kind": d["kind"]}
 
     @app.post("/api/probe")
     def probe_url(body: ProbeBody):
+        """贴什么都行：单个视频出探测卡，合集 / UP 主空间出一页列表。"""
         c = state.fresh_config()
         url = body.url.strip()
         if not url:
             raise HTTPException(400, "先填一个视频链接")
-        info = state.probed(url) or probe(url, c.download)
-        state.remember_probe(url, info)
+        info = state.probed(url)
+        if info is None:
+            keyword = body.keyword.strip()
+            cached_page = state.listing_cached(url, body.page, keyword)
+            if cached_page is not None:
+                return _listing_dict(c, cached_page)
+            state.touched()
+            result = listing_mod.probe_any(url, c.download, page=body.page, keyword=keyword)
+            if isinstance(result, listing_mod.ListPage):
+                state.remember_listing(url, body.page, keyword, result)
+                return _listing_dict(c, result)
+            info = result
+            state.remember_probe(url, info)
 
         picked = select_subtitle_language(info, c)
         diarize = c.asr.wants_diarization(needed=False)
@@ -337,6 +396,7 @@ def create_app(cfg: Config):
             "thumbnail": info.thumbnail,
             "duration_sec": info.duration_sec,
             "extractor": info.extractor,
+            "kind": "video",
             "subtitle": {"language": picked[0], "auto": picked[1]} if picked else None,
             "transcript_cached": cached,
             "already_in_library": existing is not None,
@@ -362,6 +422,76 @@ def create_app(cfg: Config):
         force: bool = False
         force_asr: bool = False
 
+    def _submit_process(url: str, *, summary_type: str | None, asr_model: str | None,
+                        diarize: str | bool | None, force: bool, force_asr: bool,
+                        title: str | None = None, batch: bool = False, persisted_id: str | None = None):
+        dup = state.jobs.find_active("process", url=url)
+        if dup is not None:
+            return dup, True
+
+        c = state.fresh_config()
+        if asr_model == "whisper":
+            c.asr.provider, c.asr.model = "whisper", "large-v3"
+        elif asr_model:
+            c.asr.model = asr_model
+        if diarize is not None:
+            c.asr.diarize = diarize
+        info = state.probed(url)
+        job_title = title or (info.title if info else url)
+        params = {"url": url, "summary_type": summary_type, "asr_model": asr_model,
+                  "diarize": diarize, "force": force, "force_asr": force_asr, "title": job_title,
+                  "batch": batch}
+        cache = Cache(c.cache_db)
+
+        def work(rep: Reporter) -> dict[str, Any]:
+            try:
+                # 批量时相邻两个视频之间隔开一点，探测和下载各算一次碰站点
+                if batch or info is None:
+                    state.throttle(c.download.batch_delay_sec)
+                state.touched()
+                options = SummaryOptions(summary_type=summary_type or c.summarizer.summary_type)
+                result = run_pipeline(
+                    url, c, options=options, force=force, force_asr=force_asr,
+                    skip_summary=summary_type is None, on_stage=rep.stage, info=info,
+                )
+                search_mod.index_one(c, result.info.video_id)
+                return {
+                    "video_id": result.info.video_id,
+                    "title": result.info.title,
+                    "segments": len(result.transcript.segments),
+                    "summary_type": summary_type,
+                    "summary_done": result.summary is not None,
+                    "summary_skipped": result.summary_skipped_reason,
+                }
+            finally:
+                cache.remove_pending_job(rep.job.id)
+
+        job = state.jobs.submit("process", job_title, params, work)
+        # 记到库里：服务重启时排队的还能续上
+        cache.add_pending_job(job.id, "process", job_title, params)
+        if persisted_id and persisted_id != job.id:
+            cache.remove_pending_job(persisted_id)
+        return job, False
+
+    def _resume_pending() -> None:
+        c = state.fresh_config()
+        pending = Cache(c.cache_db).pending_jobs()
+        if not pending:
+            return
+        log.info("上次还有 %d 个任务没跑完，继续排队", len(pending))
+        for p in pending:
+            prm = p["params"]
+            if not prm.get("url"):
+                Cache(c.cache_db).remove_pending_job(p["id"])
+                continue
+            _submit_process(
+                prm["url"], summary_type=prm.get("summary_type"), asr_model=prm.get("asr_model"),
+                diarize=prm.get("diarize"), force=bool(prm.get("force")), force_asr=bool(prm.get("force_asr")),
+                title=prm.get("title") or p["title"], batch=True, persisted_id=p["id"],
+            )
+
+    _resume_pending()
+
     @app.post("/api/jobs")
     def create_job(body: ProcessBody):
         url = body.url.strip()
@@ -370,40 +500,49 @@ def create_app(cfg: Config):
         summary_type = (body.summary_type or "").strip() or None
         if summary_type and summary_type not in TEMPLATES:
             raise HTTPException(400, f"不认识的总结类型 {summary_type}")
+        job, dup = _submit_process(url, summary_type=summary_type, asr_model=body.asr_model,
+                                   diarize=body.diarize, force=body.force, force_asr=body.force_asr)
+        return {"job": job.to_dict(), "duplicate": dup}
 
-        dup = state.jobs.find_active("process", url=url)
-        if dup is not None:
-            return {"job": dup.to_dict(), "duplicate": True}
+    class BatchBody(BaseModel):
+        items: list[dict[str, Any]]      # {url, title?}
+        asr_model: str | None = None
+        diarize: str | bool | None = None
+        summary_type: str | None = None
 
+    @app.post("/api/jobs/batch")
+    def create_batch(body: BatchBody):
+        """一批视频排队。串行跑、相邻隔 batch_delay_sec，排队的记进库，重启续跑。"""
+        summary_type = (body.summary_type or "").strip() or None
+        if summary_type and summary_type not in TEMPLATES:
+            raise HTTPException(400, f"不认识的总结类型 {summary_type}")
+        urls = [(str(it.get("url") or "").strip(), str(it.get("title") or "").strip() or None)
+                for it in body.items]
+        urls = [(u, t) for u, t in urls if u]
+        if not urls:
+            raise HTTPException(400, "没有可处理的链接")
+        if len(urls) > 200:
+            raise HTTPException(400, "一次最多 200 个")
+        jobs, dups = [], 0
+        for url, title in urls:
+            job, dup = _submit_process(url, summary_type=summary_type, asr_model=body.asr_model,
+                                       diarize=body.diarize, force=False, force_asr=False,
+                                       title=title, batch=True)
+            jobs.append(job.to_dict())
+            dups += int(dup)
+        return {"jobs": jobs, "queued": len(jobs) - dups, "duplicates": dups}
+
+    @app.delete("/api/jobs")
+    def cancel_queued():
+        """清空还没开始的。正在跑的那个跑完为止。"""
+        n = 0
         c = state.fresh_config()
-        if body.asr_model == "whisper":
-            c.asr.provider, c.asr.model = "whisper", "large-v3"
-        elif body.asr_model:
-            c.asr.model = body.asr_model
-        if body.diarize is not None:
-            c.asr.diarize = body.diarize
-        info = state.probed(url)
-        title = info.title if info else url
-
-        def work(rep: Reporter) -> dict[str, Any]:
-            options = SummaryOptions(summary_type=summary_type or c.summarizer.summary_type)
-            result = run_pipeline(
-                url, c, options=options, force=body.force, force_asr=body.force_asr,
-                skip_summary=summary_type is None, on_stage=rep.stage, info=info,
-            )
-            search_mod.index_one(c, result.info.video_id)
-            return {
-                "video_id": result.info.video_id,
-                "title": result.info.title,
-                "segments": len(result.transcript.segments),
-                "summary_type": summary_type,
-                "summary_done": result.summary is not None,
-                "summary_skipped": result.summary_skipped_reason,
-            }
-
-        job = state.jobs.submit("process", title, {"url": url, "summary_type": summary_type,
-                                                    "asr_model": body.asr_model}, work)
-        return {"job": job.to_dict(), "duplicate": False}
+        cache = Cache(c.cache_db)
+        for j in state.jobs.list():
+            if j.status == "queued" and state.jobs.cancel(j.id):
+                cache.remove_pending_job(j.id)
+                n += 1
+        return {"cancelled": n}
 
     class SummarizeBody(BaseModel):
         type: str
@@ -479,7 +618,10 @@ def create_app(cfg: Config):
         job = state.jobs.get(job_id)
         if job is None:
             raise HTTPException(404, "没有这个任务")
-        return {"cancelled": state.jobs.cancel(job_id), "job": job.to_dict()}
+        ok = state.jobs.cancel(job_id)
+        if ok:
+            Cache(state.fresh_config().cache_db).remove_pending_job(job_id)
+        return {"cancelled": ok, "job": job.to_dict()}
 
     @app.get("/api/jobs/{job_id}/events")
     async def job_events(job_id: str, request: Request, after: int = 0):

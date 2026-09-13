@@ -43,6 +43,7 @@ def workspace(tmp_path: Path, monkeypatch):
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(yaml.safe_dump({
         "output_dir": str(out), "cache_db": str(tmp_path / "cache.sqlite"),
+        "download": {"batch_delay_sec": 0},   # 测试里别真等
         "summarizer": {"provider": "openai", "model": "m", "price_input_per_m": 2.0, "price_output_per_m": 3.0},
     }, allow_unicode=True), encoding="utf-8")
     cfg = load_config(cfg_path)
@@ -93,7 +94,7 @@ def client(workspace):
         yield c
 
 
-def _wait_job(client, job_id, timeout=5.0):
+def _wait_job(client, job_id, timeout=10.0):
     t0 = time.monotonic()
     while time.monotonic() - t0 < timeout:
         j = client.get(f"/api/jobs/{job_id}").json()
@@ -289,6 +290,96 @@ def test_cancel_queued_job(client, monkeypatch):
     _wait_job(client, r1["job"]["id"])
     ids = [j["id"] for j in client.get("/api/jobs").json()["jobs"]]
     assert r1["job"]["id"] in ids and r2["job"]["id"] in ids
+
+
+# ---------- 批量 ----------
+
+
+def _fake_pipeline(gate=None, video_id="vid"):
+    def fake_run(url, cfg, **kw):
+        if gate is not None:
+            gate.wait(3)
+
+        class R:
+            class info:
+                pass
+            transcript = Transcript("u", "asr", "zh", 1.0, [], video_id=video_id)
+            summary = None
+            summary_skipped_reason = "skip"
+        R.info.video_id = video_id
+        R.info.title = url
+        return R()
+    return fake_run
+
+
+def test_probe_returns_listing_for_space_and_marks_known(client, monkeypatch):
+    from video_summarizer import listing
+    page = listing.ListPage(kind="space", title="某人 的投稿", url="https://space.bilibili.com/1/video",
+                            page=1, page_size=30, total=2, entries=[
+                                listing.ListedVideo("BVAAA", "https://www.bilibili.com/video/BVAAA", "A 视频", 120.0, upload_date="20240102"),
+                                listing.ListedVideo("BVNEW", "https://www.bilibili.com/video/BVNEW", "新的", 30.0),
+                            ])
+    lp = page
+    monkeypatch.setattr(api_mod.listing_mod, "probe_any", lambda url, cfg, page=1, keyword="": lp)
+    r = client.post("/api/probe", json={"url": "https://space.bilibili.com/1/video", "keyword": "x"}).json()
+    assert r["kind"] == "list" and r["total"] == 2 and r["has_more"] is False
+    a, new = r["entries"]
+    assert a["in_library"] is True and a["summaries_done"] == ["overall"] and a["upload_date"] == "2024-01-02"
+    assert new["in_library"] is False and new["queued"] is False
+
+
+def test_probe_single_video_goes_through_probe_any(client, monkeypatch):
+    from video_summarizer.ytdlp_base import VideoInfo
+    info = VideoInfo(url="https://x/v", video_id="BVAAA", title="A 视频", duration_sec=120.0, extractor="BiliBili",
+                     uploader="某 UP")
+    monkeypatch.setattr(api_mod.listing_mod, "probe_any", lambda url, cfg, page=1, keyword="": info)
+    r = client.post("/api/probe", json={"url": "https://x/v"}).json()
+    assert r["kind"] == "video" and r["already_in_library"] is True and r["transcript_cached"] is True
+
+
+def test_batch_queues_serially_dedups_and_cancels(client, monkeypatch):
+    import threading
+    gate = threading.Event()
+    monkeypatch.setattr(api_mod, "run_pipeline", _fake_pipeline(gate))
+    r = client.post("/api/jobs/batch", json={"items": [
+        {"url": "https://x/1", "title": "一"}, {"url": "https://x/2", "title": "二"},
+        {"url": "https://x/1"}, {"url": "  "},
+    ], "summary_type": "overall"}).json()
+    assert r["queued"] == 2 and r["duplicates"] == 1
+    ids = [j["id"] for j in r["jobs"]]
+    assert ids[0] == ids[2]
+    jobs = client.get("/api/jobs").json()["jobs"]
+    assert {j["params"]["url"] for j in jobs if j["status"] in ("queued", "running")} == {"https://x/1", "https://x/2"}
+    assert all(j["params"]["batch"] for j in jobs)
+    # 清空排队的：正在跑的那个不受影响
+    assert client.delete("/api/jobs").json()["cancelled"] == 1
+    gate.set()
+    done = _wait_job(client, ids[0])
+    assert done["status"] == "done" and done["title"] == "一"
+    assert client.post("/api/jobs/batch", json={"items": [], "summary_type": "nope"}).status_code == 400
+
+
+def test_queued_jobs_survive_restart(workspace, monkeypatch):
+    import threading
+    gate = threading.Event()
+    monkeypatch.setattr(api_mod, "run_pipeline", _fake_pipeline(gate))
+    with TestClient(api_mod.create_app(workspace["cfg"])) as c1:
+        r = c1.post("/api/jobs/batch", json={"items": [{"url": "https://x/a", "title": "甲"}, {"url": "https://x/b", "title": "乙"}]}).json()
+        time.sleep(0.05)
+        first = c1.get(f"/api/jobs/{r['jobs'][0]['id']}").json()
+        assert first["status"] == "running"
+    # "服务重启"：库里还记着排队的乙（甲正在跑，也还没被删）
+    from video_summarizer.cache import Cache
+    pending = Cache(workspace["cfg"].cache_db).pending_jobs()
+    assert {p["title"] for p in pending} == {"甲", "乙"}
+    with TestClient(api_mod.create_app(workspace["cfg"])) as c2:
+        jobs = c2.get("/api/jobs").json()["jobs"]
+        assert {j["title"] for j in jobs} == {"甲", "乙"}
+        assert all(j["params"]["batch"] for j in jobs)
+        gate.set()   # 旧进程"死"了才放行，否则它自己跑完会把待办删掉
+        for j in jobs:
+            _wait_job(c2, j["id"])
+    assert Cache(workspace["cfg"].cache_db).pending_jobs() == []
 
 
 # ---------- 删除 ----------
