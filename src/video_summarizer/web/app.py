@@ -51,10 +51,38 @@ var render = function () { if (window.__vsRenderMindmaps) window.__vsRenderMindm
 new MutationObserver(render).observe(element, { childList: true, subtree: true });
 render();
 """
-TYPE_CHOICES = [
-    (f"{t.label} · {TYPE_HINTS.get(key, '')}".rstrip(" ·"), key)
-    for key, t in TEMPLATES.items()
-]
+TYPE_CHOICES = [(t.label, key) for key, t in TEMPLATES.items()]
+
+
+def _hint(summary_type: str) -> str:
+    return TYPE_HINTS.get(summary_type, "")
+
+
+# 全局样式。Gradio 6 的 css 只能在 launch() 传，不在 Blocks 上。
+APP_CSS = """
+/* 类型选择做成一排紧凑的 chip，而不是一列带边框的大框 */
+.vs-type-picker .wrap { gap: 6px !important; }
+.vs-type-picker label {
+  padding: 5px 12px !important; border-radius: 999px !important;
+  font-size: 13px !important; box-shadow: none !important;
+}
+/* 状态行和按钮同一行，垂直居中 */
+.vs-status-row { align-items: center !important; }
+.vs-status { font-size: 13px; color: var(--block-title-text-color); }
+.vs-status p { margin: 0 !important; }
+/* 正文限宽，行距松一点 */
+.vs-summary-body { max-width: 72ch; }
+.vs-summary-body .prose { font-size: 15px; line-height: 1.8; }
+.vs-summary-body .prose h2 { font-size: 17px; margin-top: 1.4em; }
+.vs-summary-body .prose h3 { font-size: 15px; }
+/* 溯源行小字灰色，和下载按钮同一行 */
+.vs-footer-row { align-items: center !important; margin-top: 8px; }
+.vs-provenance { font-size: 12px; color: var(--block-title-text-color); }
+.vs-provenance p { margin: 0 !important; }
+/* 历史页详情头：返回按钮 + 标题 同一行 */
+.vs-detail-head { align-items: center !important; }
+.vs-detail-head h3 { margin: 0 !important; font-size: 16px; }
+"""
 
 
 def _require_gradio():
@@ -135,7 +163,7 @@ def _error_md(exc: Exception) -> str:
     return f"**出错了**\n\n```\n{type(exc).__name__}: {exc}\n```\n\n完整堆栈见运行日志。"
 
 
-def _transcript_brief(t: Transcript) -> str:
+def _transcript_brief(t: Transcript, with_title: bool = True) -> str:
     source = "官方字幕" if t.source_type == "subtitle" else "语音识别"
     if t.source_type == "asr" and t.meta.get("asr_model"):
         source += f" {t.meta['asr_model']}"
@@ -143,7 +171,8 @@ def _transcript_brief(t: Transcript) -> str:
             f"{len(t.segments)} 句"]
     if t.speakers:
         bits.append(f"{len(t.speakers)} 位说话人")
-    return f"### {t.title or '（无标题）'}\n{' · '.join(bits)}"
+    meta = " · ".join(bits)
+    return f"### {t.title or '（无标题）'}\n{meta}" if with_title else meta
 
 
 def _summary_provenance(provider_desc: str, summary_type: str, created: str = "") -> str:
@@ -212,29 +241,37 @@ def _build_workspace(gr, cfg: Config, loaded_state):
             transcript_file = gr.File(label="transcript.json", visible=False)
 
         with gr.Tab("总结"):
+            # 类型选择横排短标签；每种类型"什么时候用它"的提示和成本估算合并进
+            # 下面那一行状态，不再各占一块。原来五个带说明的长标签竖着堆成一列，
+            # 半屏都是表单。
             summary_type = gr.Radio(
                 choices=TYPE_CHOICES, value=cfg.summarizer.summary_type,
-                label="想要哪种总结",
+                label=None, container=False, elem_classes=["vs-type-picker"],
             )
-            with gr.Row():
-                lang = gr.Textbox(value="zh", label="输出语言", scale=1)
-                extra = gr.Textbox(
-                    label="附加要求（可选）",
-                    placeholder="例如：重点关注技术细节，忽略寒暄", scale=4,
-                )
-            with gr.Row():
-                status = gr.Markdown("先获取转写。")
+            with gr.Row(elem_classes=["vs-status-row"]):
+                status = gr.Markdown("先获取转写。", elem_classes=["vs-status"])
                 generate_btn = gr.Button("生成总结", variant="primary", scale=0,
-                                         interactive=False)
+                                         min_width=110, interactive=False)
+            with gr.Accordion("更多选项", open=False):
+                with gr.Row():
+                    lang = gr.Textbox(value="zh", label="输出语言", scale=1,
+                                      info="zh / en / ja …")
+                    extra = gr.Textbox(
+                        label="附加要求",
+                        placeholder="例如：重点关注技术细节，忽略寒暄", scale=4,
+                    )
             mindmap_html = gr.HTML(
                 mindmap.widget_html(None), head=mindmap.head_html(),
                 js_on_load=_MINDMAP_JS_ON_LOAD, visible=False, padding=False,
             )
-            summary_md = gr.Markdown()
-            provenance = gr.Markdown()
-            with gr.Row():
-                summary_file = gr.File(label="summary.md", visible=False)
-                mindmap_file = gr.File(label="mindmap.html（双击可开）", visible=False)
+            # 正文限宽 —— 一行八九十个汉字没法读。样式在 APP_CSS 里
+            summary_md = gr.Markdown(elem_classes=["vs-summary-body"])
+            with gr.Row(elem_classes=["vs-footer-row"]):
+                provenance = gr.Markdown(elem_classes=["vs-provenance"])
+                summary_file = gr.File(label="summary.md", visible=False, scale=0,
+                                       min_width=180, height=64)
+                mindmap_file = gr.File(label="mindmap.html", visible=False, scale=0,
+                                       min_width=180, height=64)
 
     # ---------- 视图切换与搜索 ----------
 
@@ -311,7 +348,7 @@ def _build_workspace(gr, cfg: Config, loaded_state):
 
         if cached is not None:
             return (
-                "**已有缓存，不花钱** — 换个类型或改附加要求会重新生成。",
+                f"{_hint(chosen)} · **已有缓存，不花钱**",
                 gr.update(interactive=True, value="重新生成"),
                 *show_summary(cached, chosen, loaded, provider.describe()),
             )
@@ -324,7 +361,7 @@ def _build_workspace(gr, cfg: Config, loaded_state):
         strategy = (f"切成 {estimate.chunks} 块 + 1 次汇总，共 {estimate.chunks + 1} 次请求"
                     if estimate.is_chunked else "1 次请求")
         return (
-            f"约 {estimate.estimated_input_tokens:,} tokens · {strategy} · "
+            f"{_hint(chosen)} · 约 {estimate.estimated_input_tokens:,} tokens · {strategy} · "
             f"`{provider.describe()}`",
             gr.update(interactive=True, value="生成总结"),
             *_hidden_summary(),
@@ -355,7 +392,8 @@ def _build_workspace(gr, cfg: Config, loaded_state):
     return handles
 
 
-def _load_updates(gr, transcript: Transcript, path: Path | None, cache_key: str | None):
+def _load_updates(gr, transcript: Transcript, path: Path | None, cache_key: str | None,
+                  with_title: bool = True):
     """把一份转写装进工作区，返回给 Gradio 的更新元组。"""
     paragraphs = reading.to_paragraphs(transcript.segments)
     loaded = _Loaded(transcript=transcript, path=path, cache_key=cache_key,
@@ -417,7 +455,7 @@ def _wire_generate(gr, cfg: Config, h: dict, loaded_state, log_box):
         logs, text = done
         yield (
             logs,
-            "**已生成** — 结果已存进缓存，下次同样的设置不再花钱。",
+            f"{_hint(chosen)} · **已生成**，已存进缓存",
             gr.update(value="重新生成"),
             *h["show_summary"](text, chosen, loaded, provider.describe()),
         )
@@ -521,23 +559,37 @@ def _build_process_page(gr, cfg: Config) -> None:
 
 
 def _build_library_page(gr, cfg: Config, page) -> None:
+    """主从视图：列表和详情二选一显示。
+
+    之前是列表在上、工作区在下，点「打开」之后还得自己往下翻半页才看得到内容。
+    现在点开就切到详情、列表隐藏、页面回到顶部，左上角「返回」回列表。
+    """
     loaded_state = gr.State(_Loaded())
     entries_state = gr.State([])
 
     gr.Navbar(main_page_name="处理")
-    gr.Markdown("处理过的视频都在这儿。点「打开」把转写和总结装进下面的视图。")
-    with gr.Row():
-        search_box = gr.Textbox(label=None, container=False, lines=1, max_lines=1,
-                                placeholder="按标题搜索", scale=4)
-        sort_box = gr.Dropdown(["最近处理", "时长最长", "标题"], value="最近处理",
-                               label=None, container=False, scale=1)
-        refresh_btn = gr.Button("刷新", scale=0)
 
+    # ---- 列表视图 ----
+    with gr.Column(visible=True) as list_view:
+        with gr.Row():
+            search_box = gr.Textbox(label=None, container=False, lines=1, max_lines=1,
+                                    placeholder="按标题搜索", scale=4)
+            sort_box = gr.Dropdown(["最近处理", "时长最长", "标题"], value="最近处理",
+                                   label=None, container=False, scale=1)
+            refresh_btn = gr.Button("刷新", scale=0)
+        cards_col = gr.Column()
 
-    # 卡片列表必须排在工作区前面 —— 列表是这个页面的主角。
-    # gr.render 按声明位置渲染，但函数体要到触发时才跑，所以这里先声明、
-    # 后面再把工作区的组件填进 h；等真正渲染时它已经建好了。
-    h: dict = {}
+    # ---- 详情视图 ----
+    with gr.Column(visible=False) as detail_view:
+        with gr.Row(elem_classes=["vs-detail-head"]):
+            back_btn = gr.Button("← 返回列表", scale=0, min_width=140)
+            detail_title = gr.Markdown("", elem_classes=["vs-detail-title"])
+        # 日志折叠起来 —— 看历史的时候多半没在跑任务，一个空框占半屏很碍眼
+        with gr.Accordion("运行日志", open=False):
+            log_box = gr.Textbox(label=None, container=False, lines=3, max_lines=8,
+                                 interactive=False, autoscroll=True)
+        h = _build_workspace(gr, cfg, loaded_state)
+        _wire_generate(gr, cfg, h, loaded_state, log_box)
 
     def load_entries():
         return library.load_library(cfg)
@@ -551,61 +603,74 @@ def _build_library_page(gr, cfg: Config, page) -> None:
             items.sort(key=lambda e: (e.title or "").lower())
         return items
 
-    @gr.render(inputs=[entries_state, search_box, sort_box],
-               triggers=[entries_state.change, search_box.change, sort_box.change])
-    def render_cards(entries, query, sort):
-        items = filtered(entries, query, sort)
-        # 计数要跟着筛选走 —— 放在外面的话搜索之后还显示总数，会误导
-        total = format_timestamp(sum(e.duration_sec for e in items))
-        summaries = sum(len(e.summaries) for e in items)
-        suffix = f"（共 {len(entries)} 个）" if len(items) != len(entries) else ""
-        gr.Markdown(f"{len(items)} 个视频{suffix} · 共 {total} · {summaries} 份总结")
+    # 点开就切视图并回到页顶。视图切换的输出：列表列、详情列、标题
+    view_outputs = [list_view, detail_view, detail_title]
 
-        if not items:
-            gr.Markdown("_没有匹配的记录。换个关键词，或者去「处理」页跑一个新视频。_")
-            return
-        for entry in items:
-            with gr.Row(equal_height=True):
-                gr.HTML(render.card_html(entry), padding=False)
-                open_btn = gr.Button("打开", scale=0, min_width=72)
+    def show_detail(title: str):
+        return gr.update(visible=False), gr.update(visible=True), f"### {title}"
 
-            def _open(_entry=entry):
-                if _entry.transcript_path is None or not _entry.transcript_path.is_file():
-                    return (_Loaded(), "这条记录只在缓存里，产物文件已经不在了。",
-                            gr.update(), gr.update(), gr.update(), gr.update())
-                transcript = Transcript.load(_entry.transcript_path)
-                cache_key = transcript.meta.get("cache_key")
-                loaded, updates = _load_updates(gr, transcript,
-                                                _entry.transcript_path, cache_key)
-                return (loaded, *updates)
+    def show_list():
+        return gr.update(visible=True), gr.update(visible=False), ""
 
-            open_btn.click(
-                _open, None,
-                [loaded_state, h["brief"], h["reading_html"], h["precise_table"],
-                 h["transcript_file"], h["view_mode"]],
-            ).then(
-                h["on_type_change"],
-                [h["summary_type"], h["lang"], h["extra"], loaded_state],
-                h["summary_outputs"],
-            )
+    # 滚动到顶单独做成一个纯 JS 步骤：js= 和 fn 放在同一个事件里，Gradio 会把
+    # JS 的返回值当 Python 函数的参数，签名对不上就报 "interrupted is not a valid keyword"
+    scroll_top = dict(fn=None, inputs=None, outputs=None, js="() => window.scrollTo(0, 0)")
+    back_btn.click(show_list, None, view_outputs).then(**scroll_top)
 
-    log_box = gr.Textbox(label="运行日志", lines=4, max_lines=4,
-                         interactive=False, autoscroll=True)
-    h.update(_build_workspace(gr, cfg, loaded_state))
-    _wire_generate(gr, cfg, h, loaded_state, log_box)
+    with cards_col:
+        @gr.render(inputs=[entries_state, search_box, sort_box],
+                   triggers=[entries_state.change, search_box.change, sort_box.change])
+        def render_cards(entries, query, sort):
+            items = filtered(entries, query, sort)
+            # 计数要跟着筛选走 —— 放在外面的话搜索之后还显示总数，会误导
+            total = format_timestamp(sum(e.duration_sec for e in items))
+            summaries = sum(len(e.summaries) for e in items)
+            suffix = f"（共 {len(entries)} 个）" if len(items) != len(entries) else ""
+            gr.Markdown(f"{len(items)} 个视频{suffix} · 共 {total} · {summaries} 份总结")
+
+            if not items:
+                gr.Markdown("_没有匹配的记录。换个关键词，或者去「处理」页跑一个新视频。_")
+                return
+            for entry in items:
+                with gr.Row(equal_height=True):
+                    gr.HTML(render.card_html(entry), padding=False)
+                    open_btn = gr.Button("打开", scale=0, min_width=72)
+
+                def _open(_entry=entry):
+                    if _entry.transcript_path is None or not _entry.transcript_path.is_file():
+                        return (_Loaded(), "这条记录只在缓存里，产物文件已经不在了。",
+                                gr.update(), gr.update(), gr.update(), gr.update())
+                    transcript = Transcript.load(_entry.transcript_path)
+                    cache_key = transcript.meta.get("cache_key")
+                    loaded, updates = _load_updates(gr, transcript,
+                                                    _entry.transcript_path, cache_key,
+                                                    with_title=False)
+                    return (loaded, *updates)
+
+                open_btn.click(
+                    lambda _e=entry: show_detail(_e.title), None, view_outputs,
+                ).then(**scroll_top).then(
+                    _open, None,
+                    [loaded_state, h["brief"], h["reading_html"], h["precise_table"],
+                     h["transcript_file"], h["view_mode"]],
+                ).then(
+                    h["on_type_change"],
+                    [h["summary_type"], h["lang"], h["extra"], loaded_state],
+                    h["summary_outputs"],
+                )
 
     refresh_btn.click(load_entries, None, entries_state)
     page.load(load_entries, None, entries_state)
 
 
 def launch(cfg: Config, host: str = "127.0.0.1", port: int = 7860,
-           share: bool = False) -> None:
+           share: bool = False, inbrowser: bool = True) -> None:
     gr = _require_gradio()
 
     # Gradio 提供下载时会把文件复制一份到临时目录，默认落在 C 盘；跟着输出目录走
     os.environ.setdefault("GRADIO_TEMP_DIR", str(cfg.output_dir / ".gradio_tmp"))
 
     build_app(cfg).queue().launch(
-        server_name=host, server_port=port, share=share, inbrowser=True,
-        theme=gr.themes.Soft(),
+        server_name=host, server_port=port, share=share, inbrowser=inbrowser,
+        theme=gr.themes.Soft(), css=APP_CSS,
     )
