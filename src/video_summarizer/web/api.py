@@ -175,6 +175,14 @@ def _entry_dict(e: library_mod.LibraryEntry) -> dict[str, Any]:
     }
 
 
+def _record_usage(cfg: Config, provider, *, video_id: str, kind: str, detail: str | None) -> dict[str, Any]:
+    """把 provider 刚才真实用掉的 token 记进账本，返回这一笔。"""
+    i, o, n = provider.take_usage()
+    cost = _money(cfg, i, o) if n else None
+    Cache(cfg.cache_db).add_usage(video_id, kind, detail, provider.describe(), i, o, n, cost)
+    return {"input_tokens": i, "output_tokens": o, "calls": n, "cost": cost, "currency": cfg.summarizer.currency}
+
+
 def _money(cfg: Config, input_tokens: int, output_tokens: int) -> float | None:
     p_in, p_out = cfg.summarizer.price_input_per_m, cfg.summarizer.price_output_per_m
     if p_in is None and p_out is None:
@@ -252,6 +260,24 @@ def create_app(cfg: Config):
             "output_dir": str(c.output_dir),
         }
 
+    # ----- 花费 -----
+
+    @app.get("/api/usage")
+    def usage(limit: int = 50):
+        from datetime import datetime, timezone
+
+        c = state.fresh_config()
+        cache = Cache(c.cache_db)
+        now = datetime.now(timezone.utc)
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
+        return {
+            "currency": c.summarizer.currency,
+            "priced": c.summarizer.price_input_per_m is not None,
+            "total": cache.usage_totals(),
+            "month": cache.usage_totals(since=month_start),
+            "recent": cache.usage_recent(limit=max(1, min(limit, 500))),
+        }
+
     # ----- 库 -----
 
     @app.get("/api/library")
@@ -264,12 +290,21 @@ def create_app(cfg: Config):
         ]
         n_summaries = sum(len(e.summaries) for e in entries)
         n_mindmaps = sum(1 for e in entries for s in e.summaries if s.summary_type == "mindmap")
+        cache = Cache(c.cache_db)
+        costs = cache.usage_by_video()
+        for g in groups:
+            for e in g["entries"]:
+                e["cost"] = costs.get(e["video_id"])
+        totals = cache.usage_totals()
         return {
             "stats": {
                 "videos": len(entries),
                 "duration_sec": sum(e.duration_sec for e in entries),
                 "summaries": n_summaries,
                 "mindmaps": n_mindmaps,
+                "cost": totals["cost"],
+                "calls": totals["calls"],
+                "currency": c.summarizer.currency,
             },
             "groups": groups,
         }
@@ -284,6 +319,7 @@ def create_app(cfg: Config):
         paragraphs = to_paragraphs(transcript.segments) if transcript else []
         return {
             **_entry_dict(entry),
+            "usage": Cache(c.cache_db).usage_totals(video_id),
             "meta": transcript.meta if transcript else entry.meta,
             "paragraphs": [
                 {"start": p.start, "end": p.end, "text": p.text, "speaker": p.speaker}
@@ -455,6 +491,9 @@ def create_app(cfg: Config):
                     skip_summary=summary_type is None, on_stage=rep.stage, info=info,
                 )
                 search_mod.index_one(c, result.info.video_id)
+                if result.summary_provider is not None:
+                    _record_usage(c, result.summary_provider, video_id=result.info.video_id,
+                                  kind="summary", detail=summary_type)
                 return {
                     "video_id": result.info.video_id,
                     "title": result.info.title,
@@ -595,8 +634,9 @@ def create_app(cfg: Config):
                                   language=options.language, content=text)
             write_summary_files(text, transcript, provider.describe(), options, work_dir)
             search_mod.index_one(c, video_id)
+            used = _record_usage(c, provider, video_id=video_id, kind="summary", detail=body.type)
             return {"video_id": video_id, "type": body.type, "content": text,
-                    "provider": provider.describe(), **_estimate_dict(c, est)}
+                    "provider": provider.describe(), "estimate": _estimate_dict(c, est), "used": used}
 
         job = state.jobs.submit("summarize", f"{TEMPLATES[body.type].label} · {entry.title}",
                                 {"video_id": video_id, "type": body.type}, work)
@@ -704,8 +744,10 @@ def create_app(cfg: Config):
         answer = qa_mod.ask(provider, transcript, question, history)
         qid = Cache(c.cache_db).add_question(video_id, answer.question, answer.answer,
                                              answer.provider, answer.citations)
-        return {"id": qid, **answer.to_dict(),
-                "cost": _money(c, answer.input_tokens, 600), "currency": c.summarizer.currency}
+        used = _record_usage(c, provider, video_id=video_id, kind="qa", detail=question[:200])
+        return {"id": qid, **answer.to_dict(), "used": used,
+                "cost": used["cost"] if used["calls"] else _money(c, answer.input_tokens, 600),
+                "currency": c.summarizer.currency}
 
     @app.delete("/api/questions/{question_id}")
     def delete_question(question_id: int):

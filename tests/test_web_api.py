@@ -25,6 +25,7 @@ class FakeSummarizer(BaseSummarizer):
 
     def _complete(self, system: str, user: str) -> str:
         FakeSummarizer.calls.append(user)
+        self._record_usage(1000, 500)      # 假装每次调用花了这么多
         if "视频内容问答助手" in system:
             return self._complete_for_qa(user)
         return "# 根\n## 分支\n- 点一\n- 点二\n" if "大纲" in system + user else "## 一句话总结\n假的总结。"
@@ -176,7 +177,9 @@ def test_new_summary_runs_as_job_and_lands_in_cache_and_file(client, workspace):
     job = _wait_job(client, r["job"]["id"])
     assert job["status"] == "done", job["error"]
     assert job["result"]["type"] == "key_points" and "假的总结" in job["result"]["content"]
-    assert job["result"]["cost"] is not None
+    assert job["result"]["estimate"]["cost"] is not None
+    assert job["result"]["used"] == {"input_tokens": 1000, "output_tokens": 500, "calls": 1,
+                                     "cost": pytest.approx(1000 * 2 / 1e6 + 500 * 3 / 1e6), "currency": "¥"}
     assert len(FakeSummarizer.calls) == 1
 
     # 落了盘、进了缓存、详情里能看到
@@ -267,6 +270,7 @@ def test_process_job_passes_options_through(client, monkeypatch):
             transcript = Transcript("u", "asr", "zh", 1.0, [], video_id="vid")
             summary = None
             summary_skipped_reason = "skip"
+            summary_provider = None
         return R()
 
     monkeypatch.setattr(api_mod, "run_pipeline", fake_run)
@@ -292,6 +296,29 @@ def test_cancel_queued_job(client, monkeypatch):
     assert r1["job"]["id"] in ids and r2["job"]["id"] in ids
 
 
+# ---------- 花费 ----------
+
+
+def test_usage_is_recorded_for_summaries_and_questions(client):
+    assert client.get("/api/usage").json()["total"]["calls"] == 0
+    r = client.post("/api/videos/BVAAA/summaries", json={"type": "timeline"}).json()
+    _wait_job(client, r["job"]["id"])
+    client.post("/api/videos/BVAAA/ask", json={"question": "q"})
+    u = client.get("/api/usage").json()
+    assert u["total"]["calls"] == 2 and u["month"]["calls"] == 2
+    assert u["total"]["input_tokens"] == 2000 and u["total"]["cost"] == pytest.approx(2 * (1000 * 2 / 1e6 + 500 * 3 / 1e6))
+    assert [x["kind"] for x in u["recent"]] == ["qa", "summary"]
+    assert u["recent"][1]["detail"] == "timeline"
+    lib = client.get("/api/library").json()
+    assert lib["stats"]["cost"] == pytest.approx(u["total"]["cost"]) and lib["stats"]["calls"] == 2
+    a = lib["groups"][0]["entries"][0]
+    assert a["cost"] == pytest.approx(u["total"]["cost"])
+    assert client.get("/api/videos/BVAAA").json()["usage"]["calls"] == 2
+    # 命中缓存的不记账
+    client.post("/api/videos/BVAAA/summaries", json={"type": "timeline"})
+    assert client.get("/api/usage").json()["total"]["calls"] == 2
+
+
 # ---------- 批量 ----------
 
 
@@ -306,6 +333,7 @@ def _fake_pipeline(gate=None, video_id="vid"):
             transcript = Transcript("u", "asr", "zh", 1.0, [], video_id=video_id)
             summary = None
             summary_skipped_reason = "skip"
+            summary_provider = None
         R.info.video_id = video_id
         R.info.title = url
         return R()

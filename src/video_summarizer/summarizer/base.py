@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any
 
 from ..config import SummarizerConfig
 from ..errors import SummarizerError
@@ -43,6 +44,10 @@ class BaseSummarizer(ABC):
 
     def __init__(self, cfg: SummarizerConfig) -> None:
         self.cfg = cfg
+        # 本实例累计的真实用量（provider 从响应里读到的），用来记账
+        self.usage_input = 0
+        self.usage_output = 0
+        self.usage_calls = 0
 
     # ---------- 子类只需实现这个 ----------
 
@@ -58,6 +63,21 @@ class BaseSummarizer(ABC):
     def complete(self, system: str, user: str) -> str:
         """一次裸调用。问答这类不走总结模板的功能用它。"""
         return self._complete(system, user)
+
+    def _record_usage(self, input_tokens: Any, output_tokens: Any) -> None:
+        """provider 拿到响应后调一下。读不到用量的（"?"）不计。"""
+        try:
+            self.usage_input += int(input_tokens or 0)
+            self.usage_output += int(output_tokens or 0)
+        except (TypeError, ValueError):
+            return
+        self.usage_calls += 1
+
+    def take_usage(self) -> tuple[int, int, int]:
+        """取走并清零累计用量：(输入, 输出, 调用次数)。"""
+        u = (self.usage_input, self.usage_output, self.usage_calls)
+        self.usage_input = self.usage_output = self.usage_calls = 0
+        return u
 
     def close(self) -> None:
         """释放连接等资源。默认无操作。"""

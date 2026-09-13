@@ -74,6 +74,21 @@ CREATE TABLE IF NOT EXISTS questions (
 );
 CREATE INDEX IF NOT EXISTS idx_questions_video ON questions(video_id);
 
+CREATE TABLE IF NOT EXISTS usage (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id      TEXT NOT NULL,
+    kind          TEXT NOT NULL,
+    detail        TEXT,
+    provider      TEXT NOT NULL,
+    input_tokens  INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    calls         INTEGER NOT NULL DEFAULT 1,
+    cost          REAL,
+    created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_usage_video ON usage(video_id);
+CREATE INDEX IF NOT EXISTS idx_usage_created ON usage(created_at);
+
 CREATE TABLE IF NOT EXISTS pending_jobs (
     id          TEXT PRIMARY KEY,
     kind        TEXT NOT NULL,
@@ -460,6 +475,78 @@ class Cache:
                 return cur.rowcount > 0
         except sqlite3.Error:
             return False
+
+    # ---------- 花费记账 ----------
+
+    def add_usage(
+        self, video_id: str, kind: str, detail: str | None, provider: str,
+        input_tokens: int, output_tokens: int, calls: int, cost: float | None,
+    ) -> None:
+        """kind: summary | qa | uploader_qa。没读到用量的（比如假 provider）不记。"""
+        if calls <= 0 and input_tokens <= 0:
+            return
+        conn = self._connect()
+        if conn is None:
+            return
+        try:
+            with closing(conn):
+                conn.execute(
+                    "INSERT INTO usage (video_id, kind, detail, provider, input_tokens, output_tokens,"
+                    " calls, cost, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (video_id, kind, detail, provider, int(input_tokens), int(output_tokens),
+                     int(calls), cost, _now()),
+                )
+                conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("记账失败：%s", exc)
+
+    def usage_totals(self, video_id: str | None = None, since: str | None = None) -> dict[str, Any]:
+        """汇总：总 token、总花费、次数。可按视频或起始时间过滤。"""
+        empty = {"input_tokens": 0, "output_tokens": 0, "calls": 0, "cost": 0.0}
+        conn = self._connect()
+        if conn is None:
+            return empty
+        where, params = [], []
+        if video_id:
+            where.append("video_id = ?")
+            params.append(video_id)
+        if since:
+            where.append("created_at >= ?")
+            params.append(since)
+        sql = ("SELECT COALESCE(SUM(input_tokens),0) i, COALESCE(SUM(output_tokens),0) o,"
+               " COALESCE(SUM(calls),0) c, COALESCE(SUM(cost),0) m FROM usage"
+               + (" WHERE " + " AND ".join(where) if where else ""))
+        try:
+            with closing(conn):
+                r = conn.execute(sql, params).fetchone()
+        except sqlite3.Error:
+            return empty
+        return {"input_tokens": r["i"], "output_tokens": r["o"], "calls": r["c"], "cost": round(r["m"] or 0.0, 4)}
+
+    def usage_by_video(self) -> dict[str, float]:
+        """video_id -> 累计花费。库列表用。"""
+        conn = self._connect()
+        if conn is None:
+            return {}
+        try:
+            with closing(conn):
+                rows = conn.execute("SELECT video_id, COALESCE(SUM(cost),0) m FROM usage GROUP BY video_id").fetchall()
+        except sqlite3.Error:
+            return {}
+        return {r["video_id"]: round(r["m"] or 0.0, 4) for r in rows}
+
+    def usage_recent(self, limit: int = 50) -> list[dict[str, Any]]:
+        conn = self._connect()
+        if conn is None:
+            return []
+        try:
+            with closing(conn):
+                rows = conn.execute(
+                    "SELECT video_id, kind, detail, provider, input_tokens, output_tokens, calls, cost, created_at"
+                    " FROM usage ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        except sqlite3.Error:
+            return []
+        return [dict(r) for r in rows]
 
     # ---------- 排队中的任务（服务重启后续跑） ----------
 

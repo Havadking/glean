@@ -161,4 +161,5 @@ class ClaudeSummarizer(BaseSummarizer):
                 getattr(usage, "input_tokens", "?"),
                 getattr(usage, "output_tokens", "?"),
             )
+            self._record_usage(getattr(usage, "input_tokens", 0), getattr(usage, "output_tokens", 0))
         return text

@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from . import asr as asr_registry
 from . import cache as cache_mod
@@ -45,6 +45,8 @@ class PipelineResult:
     summary_path: Path | None = None
     estimate: CostEstimate | None = None
     summary_skipped_reason: str | None = None
+    # 这次总结用的 provider 实例，调用方从它上面读真实 token 用量记账
+    summary_provider: Any = None
 
 
 def run(
@@ -111,6 +113,7 @@ def run(
         return result
 
     provider = summarizer_registry.get_provider(cfg.summarizer)
+    result.summary_provider = provider
     summary_cache_key = cache_mod.summary_key(
         transcript_key=cache_key,
         provider_desc=provider.describe(),

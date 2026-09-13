@@ -122,6 +122,7 @@ class OllamaSummarizer(BaseSummarizer):
             "本次调用 token：输入 %s / 输出 %s",
             prompt_tokens or "?", data.get("eval_count") or "?",
         )
+        self._record_usage(prompt_tokens, data.get("eval_count"))
         return text
 
     def close(self) -> None:

@@ -38,9 +38,13 @@ export interface Entry {
   created_at: string
   work_dir: string | null
   summaries: SummaryRef[]
+  cost?: number | null
 }
 
-export interface LibraryStats { videos: number; duration_sec: number; summaries: number; mindmaps: number }
+export interface LibraryStats { videos: number; duration_sec: number; summaries: number; mindmaps: number; cost: number; calls: number; currency: string }
+export interface UsageTotals { input_tokens: number; output_tokens: number; calls: number; cost: number }
+export interface UsageRow { video_id: string; kind: string; detail: string | null; provider: string; input_tokens: number; output_tokens: number; calls: number; cost: number | null; created_at: string }
+export interface Usage { currency: string; priced: boolean; total: UsageTotals; month: UsageTotals; recent: UsageRow[] }
 export interface LibraryGroup { uploader: string | null; entries: Entry[] }
 export interface Library { stats: LibraryStats; groups: LibraryGroup[] }
 
@@ -57,6 +61,7 @@ export interface Summary {
 }
 export interface Video extends Omit<Entry, 'summaries'> {
   meta: Record<string, unknown>
+  usage: UsageTotals
   paragraphs: Paragraph[]
   summaries: Record<string, Summary>
 }
@@ -196,6 +201,7 @@ const post = <T,>(path: string, body: unknown) =>
 
 export const api = {
   meta: () => call<Meta>('/meta'),
+  usage: (limit = 50) => call<Usage>(`/usage?limit=${limit}`),
   library: () => call<Library>('/library'),
   video: (id: string) => call<Video>(`/videos/${encodeURIComponent(id)}`),
   estimate: (id: string, type: string) =>

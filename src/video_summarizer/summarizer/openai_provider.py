@@ -87,6 +87,7 @@ class OpenAICompatibleSummarizer(BaseSummarizer):
                     getattr(usage, "prompt_tokens", "?"),
                     getattr(usage, "completion_tokens", "?"),
                 )
+                self._record_usage(getattr(usage, "prompt_tokens", 0), getattr(usage, "completion_tokens", 0))
 
             if not response.choices:
                 raise SummarizerError("模型没有返回任何内容")

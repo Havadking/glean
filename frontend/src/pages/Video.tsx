@@ -95,6 +95,7 @@ export function Video() {
               {video.language && <span>{video.language}</span>}
               {typeof video.meta.elapsed_sec === 'number' && <span>识别用时 {video.meta.elapsed_sec} 秒</span>}
               {video.upload_date && <span>{video.upload_date} 发布</span>}
+              {video.usage.calls > 0 && <span className="mono" title={`${video.usage.calls} 次调用，${fmtTokens(video.usage.input_tokens)} 入 / ${fmtTokens(video.usage.output_tokens)} 出`}>已花 {fmtMoney(video.usage.cost, meta?.currency)}</span>}
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
               {video.source_url && <a className="btn" href={video.source_url} target="_blank" rel="noreferrer"><ExternalLink /> 原视频</a>}

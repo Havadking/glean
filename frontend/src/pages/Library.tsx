@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, type Entry, type SearchResult } from '../api'
 import { Avatar, ErrorBox, Highlight, Pill, Seg, Stats } from '../components/ui'
-import { fmtDuration, fmtMinutes, fmtWhen } from '../lib/format'
+import { fmtDuration, fmtMinutes, fmtMoney, fmtWhen } from '../lib/format'
 import { useStore } from '../store'
 
 type Filter = 'all' | 'mindmap' | 'nosummary'
@@ -76,7 +76,7 @@ export function Library() {
           { k: '视频', v: s.videos },
           { k: '转写时长', v: fmtMinutes(s.duration_sec), small: '分钟' },
           { k: '总结', v: s.summaries, small: s.mindmaps ? `${s.mindmaps} 张导图` : undefined },
-          { k: 'UP 主', v: library!.groups.filter((g) => g.uploader).length },
+          { k: '累计花费', v: fmtMoney(s.cost, s.currency) ?? '—', small: s.calls ? `${s.calls} 次调用` : undefined, mono: true },
         ]} />
       )}
 
@@ -149,6 +149,7 @@ export function Library() {
                     <span className="mono">{fmtDuration(e.duration_sec)}</span>
                     <span>{e.source_label}{e.diarized ? ' · 分说话人' : ''}</span>
                     {e.language && <span>{e.language}</span>}
+                    {e.cost != null && e.cost > 0 && <span className="mono">{fmtMoney(e.cost, s?.currency)}</span>}
                   </div>
                 </div>
                 <div className="badges">
