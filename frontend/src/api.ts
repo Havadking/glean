@@ -44,6 +44,7 @@ export interface Entry {
 export interface LibraryStats { videos: number; duration_sec: number; summaries: number; mindmaps: number; cost: number; calls: number; currency: string }
 export interface UsageTotals { input_tokens: number; output_tokens: number; calls: number; cost: number }
 export interface UsageRow { video_id: string; kind: string; detail: string | null; provider: string; input_tokens: number; output_tokens: number; calls: number; cost: number | null; created_at: string }
+export interface Storage { audio_bytes: number; audio_dirs: number; other_bytes: number; cache_bytes: number; output_dir: string }
 export interface Usage { currency: string; priced: boolean; total: UsageTotals; month: UsageTotals; recent: UsageRow[] }
 export interface LibraryGroup { uploader: string | null; entries: Entry[] }
 export interface Library { stats: LibraryStats; groups: LibraryGroup[] }
@@ -204,6 +205,8 @@ const post = <T,>(path: string, body: unknown) =>
 export const api = {
   meta: () => call<Meta>('/meta'),
   usage: (limit = 50) => call<Usage>(`/usage?limit=${limit}`),
+  storage: () => call<Storage>('/storage'),
+  clearAudio: () => post<{ dirs: number; freed_bytes: number }>('/storage/clear-audio', {}),
   library: () => call<Library>('/library'),
   video: (id: string, clean = false) => call<Video>(`/videos/${encodeURIComponent(id)}${clean ? '?clean=1' : ''}`),
   estimate: (id: string, type: string) =>

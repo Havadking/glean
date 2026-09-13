@@ -275,6 +275,59 @@ def _mtime_iso(path: Path) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).isoformat(timespec="seconds")
 
 
+def _dir_size(path: Path) -> int:
+    total = 0
+    try:
+        for f in path.rglob("*"):
+            if f.is_file():
+                total += f.stat().st_size
+    except OSError:
+        pass
+    return total
+
+
+def storage_report(cfg: Config) -> dict[str, Any]:
+    """产物目录占了多少：音频（可删，重跑会再下）、其他（转写和总结，小）。"""
+    audio = other = 0
+    audio_dirs = 0
+    if cfg.output_dir.is_dir():
+        for d in cfg.output_dir.iterdir():
+            if not d.is_dir():
+                continue
+            a = d / "audio"
+            if a.is_dir():
+                size = _dir_size(a)
+                if size:
+                    audio += size
+                    audio_dirs += 1
+            other += sum(_dir_size(p) if p.is_dir() else p.stat().st_size
+                         for p in d.iterdir() if p.name != "audio")
+    cache_bytes = cfg.cache_db.stat().st_size if cfg.cache_db and cfg.cache_db.is_file() else 0
+    return {"audio_bytes": audio, "audio_dirs": audio_dirs, "other_bytes": other, "cache_bytes": cache_bytes,
+            "output_dir": str(cfg.output_dir)}
+
+
+def clear_audio(cfg: Config) -> tuple[int, int]:
+    """删掉所有产物目录下的 audio/。返回 (删了几个目录, 释放字节)。转写还在，重跑 ASR 才会再下。"""
+    import shutil
+
+    n = freed = 0
+    if not cfg.output_dir.is_dir():
+        return (0, 0)
+    for d in cfg.output_dir.iterdir():
+        a = d / "audio"
+        if d.is_dir() and a.is_dir():
+            size = _dir_size(a)
+            try:
+                shutil.rmtree(a)
+            except OSError as exc:
+                log.warning("删不掉 %s：%s", a, exc)
+                continue
+            n += 1
+            freed += size
+    return (n, freed)
+
+
 def group_by_uploader(entries: list[LibraryEntry]) -> list[tuple[str | None, list[LibraryEntry]]]:
     """按 UP 主分组，组内保持传入顺序；没有 UP 主信息的归到最后一组（None）。
 

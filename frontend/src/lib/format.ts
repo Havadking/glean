@@ -30,6 +30,12 @@ export function fmtTokens(n: number | undefined): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
 }
 
+export function fmtBytes(n: number): string {
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(0)} MB`
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
 export function fmtSeconds(sec: number): string {
   if (sec < 60) return `${Math.round(sec)} 秒`
   return `${Math.floor(sec / 60)} 分 ${Math.round(sec % 60)} 秒`

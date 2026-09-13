@@ -499,6 +499,21 @@ def test_search_index_follows_summary_jobs_and_deletes(client):
     assert client.post("/api/search/reindex").json()["videos"] == 1
 
 
+# ---------- 存储 ----------
+
+
+def test_storage_report_and_clear_audio(client, workspace):
+    audio = workspace["dir_a"] / "audio"
+    audio.mkdir()
+    (audio / "BVAAA.wav").write_bytes(bytes(4096))
+    r = client.get("/api/storage").json()
+    assert r["audio_bytes"] == 4096 and r["audio_dirs"] == 1 and r["other_bytes"] > 0
+    c = client.post("/api/storage/clear-audio").json()
+    assert c == {"dirs": 1, "freed_bytes": 4096}
+    assert not audio.exists() and (workspace["dir_a"] / "transcript.json").is_file()
+    assert client.get("/api/storage").json()["audio_bytes"] == 0
+
+
 # ---------- 静态前端 ----------
 
 

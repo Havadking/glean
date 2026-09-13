@@ -279,6 +279,17 @@ def create_app(cfg: Config):
             "recent": cache.usage_recent(limit=max(1, min(limit, 500))),
         }
 
+    # ----- 存储 -----
+
+    @app.get("/api/storage")
+    def storage():
+        return library_mod.storage_report(state.fresh_config())
+
+    @app.post("/api/storage/clear-audio")
+    def clear_audio():
+        n, freed = library_mod.clear_audio(state.fresh_config())
+        return {"dirs": n, "freed_bytes": freed}
+
     # ----- 库 -----
 
     @app.get("/api/library")

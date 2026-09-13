@@ -1,12 +1,24 @@
 import { useEffect, useState } from 'react'
-import { api, type Usage } from '../api'
-import { fmtMoney, fmtTokens, fmtWhen } from '../lib/format'
+import { api, type Storage, type Usage } from '../api'
+import { fmtBytes, fmtMoney, fmtTokens, fmtWhen } from '../lib/format'
 import { useStore } from '../store'
 
 export function Settings() {
   const { meta, theme, setTheme, library } = useStore()
   const [usage, setUsage] = useState<Usage | null>(null)
-  useEffect(() => { api.usage(30).then(setUsage).catch(() => setUsage(null)) }, [])
+  const [storage, setStorage] = useState<Storage | null>(null)
+  const [clearing, setClearing] = useState(false)
+  const [cleared, setCleared] = useState<string | null>(null)
+  useEffect(() => { api.usage(30).then(setUsage).catch(() => setUsage(null)); api.storage().then(setStorage).catch(() => setStorage(null)) }, [])
+  const clearAudio = async () => {
+    if (!storage || !confirm(`删掉 ${storage.audio_dirs} 个视频的音频缓存（${fmtBytes(storage.audio_bytes)}）？转写和总结都在，只有强制重跑识别时才需要重新下载。`)) return
+    setClearing(true)
+    try {
+      const r = await api.clearAudio()
+      setCleared(`已释放 ${fmtBytes(r.freed_bytes)}`)
+      setStorage(await api.storage())
+    } catch { setCleared('删除失败') } finally { setClearing(false) }
+  }
   const titles = new Map((library?.groups ?? []).flatMap((g) => g.entries).map((e) => [e.video_id, e.title]))
   const kindLabel = (k: string) => ({ summary: '总结', qa: '问视频', uploader_qa: '问 UP 主' }[k] ?? k)
   return (
@@ -35,6 +47,25 @@ export function Settings() {
           <dt>版本</dt><dd>{meta?.app} {meta?.version}</dd>
         </dl>
       </div>
+
+      {storage && (
+        <>
+          <h2 style={{ fontSize: 15, margin: '26px 0 10px' }}>存储</h2>
+          <div className="card">
+            <dl className="kv">
+              <dt>音频缓存</dt>
+              <dd style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <span className="mono">{fmtBytes(storage.audio_bytes)}</span>
+                <span style={{ color: 'var(--mute)' }}>{storage.audio_dirs} 个视频。识别完就用不上了，删掉不影响转写和总结</span>
+                <button className="btn sm" onClick={clearAudio} disabled={clearing || storage.audio_bytes === 0}>{clearing ? '删除中…' : '清理音频缓存'}</button>
+                {cleared && <span style={{ color: 'var(--ok)', fontSize: 12.5 }}>{cleared}</span>}
+              </dd>
+              <dt>转写和总结</dt><dd className="mono">{fmtBytes(storage.other_bytes)}</dd>
+              <dt>缓存库</dt><dd className="mono">{fmtBytes(storage.cache_bytes)}</dd>
+            </dl>
+          </div>
+        </>
+      )}
 
       {usage && (
         <>
