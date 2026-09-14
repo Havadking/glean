@@ -1,9 +1,9 @@
-import { Plus, List, Settings } from 'lucide-react'
+import { Plus, List, Settings, PanelLeftClose, X } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useStore } from '../store'
 import { Avatar } from './ui'
 
-export function Sidebar() {
+export function Sidebar({ narrow, onHide }: { narrow: boolean; onHide: () => void }) {
   const { meta, library, isDark, setTheme } = useStore()
   const nav = useNavigate()
   const groups = library?.groups ?? []
@@ -15,6 +15,9 @@ export function Sidebar() {
         <span className="mark" />
         {meta?.app ?? '拾光笺'}
         <span className="ver">v{meta?.version ?? ''}</span>
+        <button className="iconbtn hide" onClick={onHide} aria-label={narrow ? '关闭侧栏' : '收起侧栏'} title={narrow ? '关闭' : '收起侧栏'}>
+          {narrow ? <X /> : <PanelLeftClose />}
+        </button>
       </div>
       <nav className="nav">
         <NavLink to="/" end className={({ isActive }) => (isActive ? 'on' : '')}>
