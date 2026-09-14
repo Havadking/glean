@@ -161,3 +161,50 @@ def test_update_pricing(tmp_path):
     updated2 = cfg_file.read_text(encoding="utf-8")
     assert "price_input_per_m: null" in updated2
     assert "price_output_per_m: null" in updated2
+
+
+def test_update_summarizer_and_asr_config(tmp_path):
+    from video_summarizer.config import (
+        mask_api_key,
+        update_asr_config,
+        update_env_key,
+        update_summarizer_config,
+    )
+
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        "summarizer:\n  provider: openai\n  model: deepseek-chat\n  base_url: null\n\nasr:\n  provider: funasr\n  model: sensevoice-small\n  device: auto\n  diarize: auto\n",
+        encoding="utf-8",
+    )
+
+    update_summarizer_config(
+        cfg_file,
+        model="gemini-1.5-flash",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        temperature=0.7,
+    )
+    content = cfg_file.read_text(encoding="utf-8")
+    assert "model: gemini-1.5-flash" in content
+    assert 'base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"' in content
+    assert "temperature: 0.7" in content
+
+    update_asr_config(cfg_file, provider="whisper", model="large-v3", device="cuda", diarize=True)
+    content = cfg_file.read_text(encoding="utf-8")
+    assert "provider: whisper" in content
+    assert "model: large-v3" in content
+    assert "device: cuda" in content
+    assert "diarize: true" in content
+
+    # Test env update
+    env_file = tmp_path / ".env"
+    env_file.write_text("DEEPSEEK_API_KEY=old_key\n", encoding="utf-8")
+    update_env_key(env_file, "DEEPSEEK_API_KEY", "new_key_12345678")
+    assert "DEEPSEEK_API_KEY=new_key_12345678" in env_file.read_text(encoding="utf-8")
+    update_env_key(env_file, "GEMINI_API_KEY", "gemini_secret_key")
+    assert "GEMINI_API_KEY=gemini_secret_key" in env_file.read_text(encoding="utf-8")
+
+    # Test masking
+    assert mask_api_key("sk-1234567890abcdef") == "sk-1****cdef"
+    assert mask_api_key("short") == "******"
+    assert mask_api_key("") == ""
+

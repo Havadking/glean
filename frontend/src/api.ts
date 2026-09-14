@@ -12,9 +12,33 @@ export interface Meta {
   asr_default: string
   diarize_default: string | boolean
   provider: string
+  model?: string
   currency: string
   priced: boolean
   output_dir: string
+}
+
+export interface LlmConfig {
+  provider: string
+  model: string
+  base_url: string | null
+  api_key_env: string
+  has_api_key: boolean
+  masked_api_key: string
+  temperature: number
+  max_context_tokens: number
+  max_output_tokens: number
+  price_input_per_m: number | null
+  price_output_per_m: number | null
+  currency: string
+  provider_desc?: string
+}
+
+export interface AsrConfig {
+  provider: string
+  model: string
+  device: string
+  diarize: string | boolean
 }
 
 export interface SummaryRef { type: string; label: string; provider: string; created_at: string }
@@ -262,7 +286,12 @@ export const api = {
   getPricing: () => call<PricingConfig>('/config/pricing'),
   updatePricing: (body: { price_input_per_m: number | null; price_output_per_m: number | null; currency?: string }) =>
     post<PricingConfig>('/config/pricing', body),
-  testLlm: () => post<TestLlmResult>('/config/test-llm', {}),
+  getLlmConfig: () => call<LlmConfig>('/config/llm'),
+  updateLlmConfig: (body: Partial<LlmConfig> & { api_key?: string }) => post<LlmConfig>('/config/llm', body),
+  getAsrConfig: () => call<AsrConfig>('/config/asr'),
+  updateAsrConfig: (body: Partial<AsrConfig>) => post<AsrConfig>('/config/asr', body),
+  testLlm: (body?: { provider?: string; model?: string; base_url?: string | null; api_key?: string; api_key_env?: string }) =>
+    post<TestLlmResult>('/config/test-llm', body ?? {}),
 }
 
 /** 订阅任务事件。返回取消函数。状态到终态后自动关闭。 */

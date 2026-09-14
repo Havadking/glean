@@ -587,3 +587,59 @@ def test_test_llm_endpoint(client, monkeypatch):
     assert r.json()["ok"] is True
     assert r.json()["reply"] == "pong"
 
+
+def test_llm_and_asr_config_endpoints(client):
+    # Test meta includes model
+    meta = client.get("/api/meta").json()
+    assert "model" in meta
+
+    # Test GET /api/config/llm
+    r = client.get("/api/config/llm")
+    assert r.status_code == 200
+    data = r.json()
+    assert "provider" in data
+    assert "model" in data
+    assert "has_api_key" in data
+    assert "masked_api_key" in data
+
+    # Test POST /api/config/llm
+    r2 = client.post(
+        "/api/config/llm",
+        json={
+            "provider": "openai",
+            "model": "gemini-1.5-flash",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "temperature": 0.5,
+        },
+    )
+    assert r2.status_code == 200
+    d2 = r2.json()
+    assert d2["model"] == "gemini-1.5-flash"
+    assert d2["base_url"] == "https://generativelanguage.googleapis.com/v1beta/openai/"
+    assert d2["temperature"] == 0.5
+
+    # Test GET /api/config/asr
+    r_asr = client.get("/api/config/asr")
+    assert r_asr.status_code == 200
+    asr_data = r_asr.json()
+    assert "provider" in asr_data
+    assert "model" in asr_data
+
+    # Test POST /api/config/asr
+    r_asr2 = client.post(
+        "/api/config/asr",
+        json={
+            "provider": "whisper",
+            "model": "large-v3",
+            "device": "cpu",
+            "diarize": False,
+        },
+    )
+    assert r_asr2.status_code == 200
+    d_asr2 = r_asr2.json()
+    assert d_asr2["provider"] == "whisper"
+    assert d_asr2["model"] == "large-v3"
+    assert d_asr2["device"] == "cpu"
+    assert d_asr2["diarize"] == "false" or d_asr2["diarize"] is False
+
+

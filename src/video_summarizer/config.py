@@ -173,6 +173,143 @@ def load_config(path: Path | None = None) -> Config:
     )
 
 
+def _update_section_key(text: str, section: str, key: str, val_str: str) -> str:
+    """在指定的顶层 section 下替换或追加 key: val。保留行尾注释与排版。"""
+    pattern = rf"(?m)^({section}\s*:.*?\n)(?=(?:^[a-zA-Z_0-9]+:|\Z))"
+    m = re.search(pattern, text, re.DOTALL)
+    if not m:
+        return text + f"\n{section}:\n  {key}: {val_str}\n"
+
+    sec_block = m.group(1)
+    key_pattern = rf"(?m)^(\s*{re.escape(key)}\s*:)[ \t]*([^#\r\n]*)(.*)$"
+    if re.search(key_pattern, sec_block):
+        new_sec_block = re.sub(
+            key_pattern,
+            rf"\g<1> {val_str}\g<3>",
+            sec_block,
+            count=1,
+        )
+    else:
+        new_sec_block = re.sub(
+            rf"(?m)^({re.escape(section)}\s*:.*)$",
+            rf"\1\n  {key}: {val_str}",
+            sec_block,
+            count=1,
+        )
+    return text[:m.start(1)] + new_sec_block + text[m.end(1):]
+
+
+_UNSET: Any = object()
+
+
+def update_summarizer_config(
+    config_path: Path | None,
+    provider: str | None = _UNSET,
+    model: str | None = _UNSET,
+    base_url: str | None = _UNSET,
+    api_key_env: str | None = _UNSET,
+    temperature: float | None = _UNSET,
+    max_context_tokens: int | None = _UNSET,
+    max_output_tokens: int | None = _UNSET,
+    price_input_per_m: float | None = _UNSET,
+    price_output_per_m: float | None = _UNSET,
+    currency: str | None = _UNSET,
+) -> None:
+    """在线更新 config.yaml 中的总结大模型配置，保持文件注释和排版不变。"""
+    if config_path is None or not config_path.is_file():
+        return
+
+    text = config_path.read_text(encoding="utf-8")
+
+    if provider is not _UNSET and provider is not None:
+        text = _update_section_key(text, "summarizer", "provider", provider.strip())
+    if model is not _UNSET and model is not None:
+        text = _update_section_key(text, "summarizer", "model", model.strip())
+    if base_url is not _UNSET:
+        b_val = "null" if not base_url or not base_url.strip() else f'"{base_url.strip()}"'
+        text = _update_section_key(text, "summarizer", "base_url", b_val)
+    if api_key_env is not _UNSET and api_key_env is not None:
+        text = _update_section_key(text, "summarizer", "api_key_env", api_key_env.strip())
+    if temperature is not _UNSET and temperature is not None:
+        text = _update_section_key(text, "summarizer", "temperature", str(temperature))
+    if max_context_tokens is not _UNSET and max_context_tokens is not None:
+        text = _update_section_key(text, "summarizer", "max_context_tokens", str(max_context_tokens))
+    if max_output_tokens is not _UNSET and max_output_tokens is not None:
+        text = _update_section_key(text, "summarizer", "max_output_tokens", str(max_output_tokens))
+    if price_input_per_m is not _UNSET:
+        in_val = "null" if price_input_per_m is None else str(price_input_per_m)
+        text = _update_section_key(text, "summarizer", "price_input_per_m", in_val)
+    if price_output_per_m is not _UNSET:
+        out_val = "null" if price_output_per_m is None else str(price_output_per_m)
+        text = _update_section_key(text, "summarizer", "price_output_per_m", out_val)
+    if currency is not _UNSET and currency is not None:
+        text = _update_section_key(text, "summarizer", "currency", f'"{currency.strip()}"')
+
+    config_path.write_text(text, encoding="utf-8")
+
+
+def update_asr_config(
+    config_path: Path | None,
+    provider: str | None = _UNSET,
+    model: str | None = _UNSET,
+    device: str | None = _UNSET,
+    diarize: str | bool | None = _UNSET,
+) -> None:
+    """在线更新 config.yaml 中的 ASR 识别模型配置，保持文件注释和排版不变。"""
+    if config_path is None or not config_path.is_file():
+        return
+
+    text = config_path.read_text(encoding="utf-8")
+
+    if provider is not _UNSET and provider is not None:
+        text = _update_section_key(text, "asr", "provider", provider.strip())
+    if model is not _UNSET and model is not None:
+        text = _update_section_key(text, "asr", "model", model.strip())
+    if device is not _UNSET and device is not None:
+        text = _update_section_key(text, "asr", "device", device.strip())
+    if diarize is not _UNSET and diarize is not None:
+        d_val = str(diarize).lower() if isinstance(diarize, bool) else diarize.strip()
+        text = _update_section_key(text, "asr", "diarize", d_val)
+
+    config_path.write_text(text, encoding="utf-8")
+
+
+def update_env_key(env_path: Path, key_name: str, key_val: str) -> None:
+    """在 .env 文件中更新或添加环境变量，并在当前运行进程立即生效。"""
+    key_name = key_name.strip()
+    key_val = key_val.strip()
+    os.environ[key_name] = key_val
+
+    lines: list[str] = []
+    if env_path.is_file():
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+
+    pattern = re.compile(rf"^\s*{re.escape(key_name)}\s*=.*$")
+    found = False
+    new_lines: list[str] = []
+    for line in lines:
+        if pattern.match(line):
+            new_lines.append(f"{key_name}={key_val}")
+            found = True
+        else:
+            new_lines.append(line)
+
+    if not found:
+        new_lines.append(f"{key_name}={key_val}")
+
+    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+
+def mask_api_key(key: str | None) -> str:
+    """对 API 密钥进行脱敏显示（如 sk-1234****abcd）。"""
+    if not key:
+        return ""
+    k = key.strip()
+    if len(k) <= 8:
+        return "******"
+    return f"{k[:4]}****{k[-4:]}"
+
+
 def update_pricing(
     config_path: Path | None,
     price_input_per_m: float | None,
@@ -180,27 +317,9 @@ def update_pricing(
     currency: str = "¥",
 ) -> None:
     """在线更新 config.yaml 中的单价和货币符号，保持文件注释和排版不变。"""
-    if config_path is None or not config_path.is_file():
-        return
-
-    text = config_path.read_text(encoding="utf-8")
-
-    in_val = "null" if price_input_per_m is None else str(price_input_per_m)
-    if re.search(r"(?m)^(\s*price_input_per_m\s*:).*$", text):
-        text = re.sub(r"(?m)^(\s*price_input_per_m\s*:).*$", rf"\g<1> {in_val}", text)
-    else:
-        text = re.sub(r"(?m)^(summarizer\s*:.*)$", rf"\1\n  price_input_per_m: {in_val}", text)
-
-    out_val = "null" if price_output_per_m is None else str(price_output_per_m)
-    if re.search(r"(?m)^(\s*price_output_per_m\s*:).*$", text):
-        text = re.sub(r"(?m)^(\s*price_output_per_m\s*:).*$", rf"\g<1> {out_val}", text)
-    else:
-        text = re.sub(r"(?m)^(summarizer\s*:.*)$", rf"\1\n  price_output_per_m: {out_val}", text)
-
-    cur_val = f'"{currency}"'
-    if re.search(r"(?m)^(\s*currency\s*:).*$", text):
-        text = re.sub(r"(?m)^(\s*currency\s*:).*$", rf"\g<1> {cur_val}", text)
-    else:
-        text = re.sub(r"(?m)^(summarizer\s*:.*)$", rf"\1\n  currency: {cur_val}", text)
-
-    config_path.write_text(text, encoding="utf-8")
+    update_summarizer_config(
+        config_path,
+        price_input_per_m=price_input_per_m,
+        price_output_per_m=price_output_per_m,
+        currency=currency,
+    )

@@ -23,7 +23,15 @@ from typing import Any
 
 from .. import __version__
 from ..cache import Cache, summary_key
-from ..config import Config, load_config, update_pricing
+from ..config import (
+    Config,
+    load_config,
+    mask_api_key,
+    update_asr_config,
+    update_env_key,
+    update_pricing,
+    update_summarizer_config,
+)
 from ..errors import VideoSummarizerError
 from ..models import SummaryOptions
 from ..pipeline import plan_transcript_key, run as run_pipeline, write_summary_files
@@ -256,6 +264,7 @@ def create_app(cfg: Config):
             "asr_default": c.asr.model,
             "diarize_default": c.asr.diarize,
             "provider": provider_desc,
+            "model": c.summarizer.model,
             "currency": c.summarizer.currency,
             "priced": c.summarizer.price_input_per_m is not None,
             "output_dir": str(c.output_dir),
@@ -267,6 +276,32 @@ def create_app(cfg: Config):
         price_input_per_m: float | None = None
         price_output_per_m: float | None = None
         currency: str = "¥"
+
+    class LlmConfigBody(BaseModel):
+        provider: str | None = None
+        model: str | None = None
+        base_url: str | None = None
+        api_key_env: str | None = None
+        api_key: str | None = None
+        temperature: float | None = None
+        max_context_tokens: int | None = None
+        max_output_tokens: int | None = None
+        price_input_per_m: float | None = None
+        price_output_per_m: float | None = None
+        currency: str | None = "¥"
+
+    class AsrConfigBody(BaseModel):
+        provider: str | None = None
+        model: str | None = None
+        device: str | None = None
+        diarize: str | bool | None = None
+
+    class TestLlmBody(BaseModel):
+        provider: str | None = None
+        model: str | None = None
+        base_url: str | None = None
+        api_key: str | None = None
+        api_key_env: str | None = None
 
     @app.get("/api/config/pricing")
     def get_pricing():
@@ -303,15 +338,103 @@ def create_app(cfg: Config):
         state.cfg.summarizer.currency = currency
         return get_pricing()
 
+    @app.get("/api/config/llm")
+    def get_llm_config():
+        c = state.fresh_config()
+        raw_key = c.summarizer.api_key or ""
+        try:
+            provider_desc = get_summarizer(c.summarizer).describe()
+        except Exception as exc:
+            provider_desc = f"未配置（{exc}）"
+
+        return {
+            "provider": c.summarizer.provider,
+            "model": c.summarizer.model,
+            "base_url": c.summarizer.base_url,
+            "api_key_env": c.summarizer.api_key_env,
+            "has_api_key": bool(raw_key),
+            "masked_api_key": mask_api_key(raw_key),
+            "temperature": c.summarizer.temperature,
+            "max_context_tokens": c.summarizer.max_context_tokens,
+            "max_output_tokens": c.summarizer.max_output_tokens,
+            "price_input_per_m": c.summarizer.price_input_per_m,
+            "price_output_per_m": c.summarizer.price_output_per_m,
+            "currency": c.summarizer.currency,
+            "provider_desc": provider_desc,
+        }
+
+    @app.post("/api/config/llm")
+    def set_llm_config(body: LlmConfigBody):
+        c = state.fresh_config()
+        api_key_env = body.api_key_env.strip() if body.api_key_env else c.summarizer.api_key_env
+        if body.api_key and body.api_key.strip():
+            env_file = (c.source_path.parent if c.source_path else Path(".")) / ".env"
+            update_env_key(env_file, api_key_env, body.api_key.strip())
+
+        update_summarizer_config(
+            c.source_path,
+            provider=body.provider,
+            model=body.model,
+            base_url=body.base_url,
+            api_key_env=api_key_env,
+            temperature=body.temperature,
+            max_context_tokens=body.max_context_tokens,
+            max_output_tokens=body.max_output_tokens,
+            price_input_per_m=body.price_input_per_m,
+            price_output_per_m=body.price_output_per_m,
+            currency=body.currency,
+        )
+        refreshed = state.fresh_config()
+        state.cfg.summarizer = refreshed.summarizer
+        return get_llm_config()
+
+    @app.get("/api/config/asr")
+    def get_asr_config():
+        c = state.fresh_config()
+        return {
+            "provider": c.asr.provider,
+            "model": c.asr.model,
+            "device": c.asr.device,
+            "diarize": c.asr.diarize,
+        }
+
+    @app.post("/api/config/asr")
+    def set_asr_config(body: AsrConfigBody):
+        c = state.fresh_config()
+        update_asr_config(
+            c.source_path,
+            provider=body.provider,
+            model=body.model,
+            device=body.device,
+            diarize=body.diarize,
+        )
+        refreshed = state.fresh_config()
+        state.cfg.asr = refreshed.asr
+        return get_asr_config()
+
     @app.post("/api/config/test-llm")
-    def test_llm():
+    def test_llm(body: TestLlmBody | None = None):
         c = state.fresh_config()
         t0 = time.monotonic()
         try:
-            provider = get_summarizer(c.summarizer)
+            target_cfg = c.summarizer
+            if body and (body.provider or body.model or body.base_url or body.api_key):
+                from ..config import SummarizerConfig
+                env_key = body.api_key_env or c.summarizer.api_key_env
+                if body.api_key and body.api_key.strip():
+                    os.environ[env_key] = body.api_key.strip()
+                target_cfg = SummarizerConfig(
+                    provider=body.provider or c.summarizer.provider,
+                    model=body.model or c.summarizer.model,
+                    base_url=body.base_url if body.base_url is not None else c.summarizer.base_url,
+                    api_key_env=env_key,
+                    temperature=0.3,
+                )
+
+            provider = get_summarizer(target_cfg)
             reply = provider.complete("请回复pong", "ping")
             elapsed_ms = int((time.monotonic() - t0) * 1000)
-            return {"ok": True, "latency_ms": elapsed_ms, "model": c.summarizer.model, "reply": reply.strip()}
+            return {"ok": True, "latency_ms": elapsed_ms, "model": target_cfg.model, "reply": reply.strip()}
         except Exception as exc:
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             return {"ok": False, "latency_ms": elapsed_ms, "error": str(exc)}

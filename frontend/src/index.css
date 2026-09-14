@@ -413,6 +413,14 @@ input, select { font: inherit; color: var(--ink); }
 .kv { display: grid; grid-template-columns: 140px 1fr; gap: 10px 18px; padding: 16px 18px; font-size: 13.5px; }
 .kv dt { color: var(--mute); }
 .kv dd { margin: 0; word-break: break-all; }
+.cfg-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 18px; }
+.cfg-field { display: flex; flex-direction: column; gap: 6px; }
+.cfg-field label { font-size: 12.5px; color: var(--mute); font-weight: 500; display: flex; align-items: center; justify-content: space-between; }
+.cfg-field input, .cfg-field select { height: 34px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 13px; outline: none; }
+.cfg-field input:focus, .cfg-field select:focus { border-color: var(--accent); }
+.cfg-field .hint { font-size: 11.5px; color: var(--faint); line-height: 1.4; margin-top: 2px; }
+.preset-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 18px; }
+.preset-bar .p-label { font-size: 12.5px; color: var(--mute); margin-right: 2px; }
 
 @media (max-width: 980px) {
   /* 窄屏/竖屏：侧栏变成抽屉，从顶栏按钮拉出 */

@@ -91,7 +91,12 @@ export function Sidebar({ narrow, onHide }: { narrow: boolean; onHide: () => voi
           <button className="toggle" role="switch" aria-checked={isDark} aria-label="深色模式"
             onClick={() => setTheme(isDark ? 'light' : 'dark')} />
         </div>
-        <div className="row"><span>模型</span><span title={meta?.provider}>{meta?.provider ?? '—'}</span></div>
+        <div className="row">
+          <span>模型</span>
+          <span title={meta?.model ? `${meta.model} (${meta.provider})` : meta?.provider}>
+            {meta?.model || meta?.provider || '—'}
+          </span>
+        </div>
       </div>
     </aside>
   )
