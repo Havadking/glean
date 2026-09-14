@@ -44,6 +44,7 @@ asr:
   beam_size: 5
 
 summarizer:
+  name: "DeepSeek V3"
   provider: openai            # openai（含所有 OpenAI 兼容接口） | claude | ollama
   model: deepseek-chat
   base_url: "https://api.deepseek.com/v1"
@@ -57,8 +58,8 @@ summarizer:
   summary_type: overall           # overall | by_speaker | timeline | key_points | mindmap
   # 每百万 token 单价，界面上把 token 换算成钱用。DeepSeek V3 标准价：输入 ¥2 / 输出 ¥3。
   # 留空只显示 token 数。
-  price_input_per_m: 2.0
-  price_output_per_m: 3.0
+  price_input_per_m: null
+  price_output_per_m: null
   currency: "¥"
   # 送给模型前去口水话（"呃""嗯""就是就是"）。省一点 token，但会改原文；阅读视图另有独立开关
   clean_transcript: false

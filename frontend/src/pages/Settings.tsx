@@ -1,4 +1,4 @@
-import { Check, Loader2, Plus, Sparkles, Trash2, X } from 'lucide-react'
+import { Check, Loader2, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import {
   api,
@@ -18,59 +18,7 @@ export interface SavedModel {
   provider: string
   apiKey?: string
   apiKeyEnv: string
-  isCustom?: boolean
 }
-
-const DEFAULT_MODELS: SavedModel[] = [
-  {
-    id: 'deepseek-chat',
-    name: 'DeepSeek V3',
-    modelId: 'deepseek-chat',
-    baseUrl: 'https://api.deepseek.com/v1',
-    provider: 'openai',
-    apiKeyEnv: 'DEEPSEEK_API_KEY',
-  },
-  {
-    id: 'deepseek-reasoner',
-    name: 'DeepSeek R1 (推理)',
-    modelId: 'deepseek-reasoner',
-    baseUrl: 'https://api.deepseek.com/v1',
-    provider: 'openai',
-    apiKeyEnv: 'DEEPSEEK_API_KEY',
-  },
-  {
-    id: 'gemini-flash',
-    name: 'Google Gemini 1.5 Flash',
-    modelId: 'gemini-1.5-flash',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-    provider: 'openai',
-    apiKeyEnv: 'GEMINI_API_KEY',
-  },
-  {
-    id: 'gemini-2-flash',
-    name: 'Google Gemini 2.0 Flash',
-    modelId: 'gemini-2.0-flash',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-    provider: 'openai',
-    apiKeyEnv: 'GEMINI_API_KEY',
-  },
-  {
-    id: 'qwen-plus',
-    name: '通义千问 Qwen-Plus',
-    modelId: 'qwen-plus',
-    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    provider: 'openai',
-    apiKeyEnv: 'DASHSCOPE_API_KEY',
-  },
-  {
-    id: 'kimi',
-    name: '月之暗面 Kimi',
-    modelId: 'moonshot-v1-32k',
-    baseUrl: 'https://api.moonshot.cn/v1',
-    provider: 'openai',
-    apiKeyEnv: 'MOONSHOT_API_KEY',
-  },
-]
 
 const TEMPLATES = [
   {
@@ -117,8 +65,8 @@ export function Settings() {
   const [clearing, setClearing] = useState(false)
   const [cleared, setCleared] = useState<string | null>(null)
 
-  // 用户添加的自定义模型列表
-  const [customModels, setCustomModels] = useState<SavedModel[]>(() => {
+  // 用户自主维护的模型列表（无硬编码默认列表）
+  const [models, setModels] = useState<SavedModel[]>(() => {
     try {
       const raw = localStorage.getItem('vsum.userModels')
       return raw ? JSON.parse(raw) : []
@@ -127,8 +75,9 @@ export function Settings() {
     }
   })
 
-  // 弹窗状态
+  // 弹窗状态与表单
   const [showModal, setShowModal] = useState(false)
+  const [editingModelId, setEditingModelId] = useState<string | null>(null)
   const [formName, setFormName] = useState('')
   const [formModelId, setFormModelId] = useState('')
   const [formBaseUrl, setFormBaseUrl] = useState('')
@@ -153,15 +102,11 @@ export function Settings() {
   const [savingAsr, setSavingAsr] = useState(false)
   const [asrNotice, setAsrNotice] = useState<string | null>(null)
 
-  const allModels = useMemo(() => {
-    return [...DEFAULT_MODELS, ...customModels]
-  }, [customModels])
-
-  // 当前生效模型
+  // 当前激活模型匹配
   const activeModel = useMemo(() => {
     const currentName = meta?.model || ''
     return (
-      allModels.find((m) => m.name === currentName || m.modelId === currentName) || {
+      models.find((m) => m.name === currentName || m.modelId === currentName) || {
         id: 'current',
         name: currentName || '未配置',
         modelId: currentName,
@@ -170,11 +115,30 @@ export function Settings() {
         apiKeyEnv: 'OPENAI_API_KEY',
       }
     )
-  }, [meta?.model, allModels])
+  }, [meta?.model, models])
 
   useEffect(() => {
     api.usage(30).then(setUsage).catch(() => setUsage(null))
     api.storage().then(setStorage).catch(() => setStorage(null))
+
+    // 初始化模型列表：若本地完全为空，从当前 config.yaml 读取当前模型放入列表中
+    api.getLlmConfig().then((cfg) => {
+      setModels((prev) => {
+        if (prev.length > 0) return prev
+        const initial: SavedModel = {
+          id: `model-${Date.now()}`,
+          name: cfg.name || cfg.model || '当前模型',
+          modelId: cfg.model || 'deepseek-chat',
+          baseUrl: cfg.base_url || '',
+          provider: cfg.provider || 'openai',
+          apiKeyEnv: cfg.api_key_env || 'OPENAI_API_KEY',
+        }
+        try {
+          localStorage.setItem('vsum.userModels', JSON.stringify([initial]))
+        } catch {}
+        return [initial]
+      })
+    }).catch(() => {})
 
     api.getAsrConfig().then((cfg) => {
       setAsrConfig(cfg)
@@ -211,7 +175,7 @@ export function Settings() {
     }
   }
 
-  // 快捷填入模板
+  // 快捷填入模板（仅新增模式使用）
   const loadTemplate = (tpl: typeof TEMPLATES[0]) => {
     setFormName(tpl.name)
     setFormModelId(tpl.modelId)
@@ -221,8 +185,9 @@ export function Settings() {
     setModalNotice(null)
   }
 
-  // 弹窗重置并打开
+  // 打开添加弹窗
   const openAddModal = () => {
+    setEditingModelId(null)
     setFormName('')
     setFormModelId('')
     setFormBaseUrl('')
@@ -233,7 +198,20 @@ export function Settings() {
     setShowModal(true)
   }
 
-  // 弹窗测试连接
+  // 打开修改弹窗
+  const openEditModal = (m: SavedModel) => {
+    setEditingModelId(m.id)
+    setFormName(m.name)
+    setFormModelId(m.modelId)
+    setFormBaseUrl(m.baseUrl)
+    setFormApiKey(m.apiKey || '')
+    setFormApiKeyEnv(m.apiKeyEnv || 'OPENAI_API_KEY')
+    setModalNotice(null)
+    setModalTestResult(null)
+    setShowModal(true)
+  }
+
+  // 弹窗内测试连接
   const testInModal = async () => {
     setModalTesting(true)
     setModalTestResult(null)
@@ -255,44 +233,80 @@ export function Settings() {
     }
   }
 
-  // 确认添加新模型
-  const handleAddModel = async () => {
+  // 保存模型（新增或修改）
+  const handleSaveModel = async () => {
     const name = formName.trim()
     if (!name) {
       setModalNotice('请填写模型显示名称（如 gemini 3.8 flash 或 DeepSeek v4.1）')
       return
     }
 
-    const newModel: SavedModel = {
-      id: `custom-${Date.now()}`,
-      name,
-      modelId: formModelId.trim() || name,
-      baseUrl: formBaseUrl.trim(),
-      provider: 'openai',
-      apiKey: formApiKey.trim() || undefined,
-      apiKeyEnv: formApiKeyEnv.trim() || 'OPENAI_API_KEY',
-      isCustom: true,
+    if (editingModelId) {
+      // 修改已有模型
+      const updatedModel: SavedModel = {
+        id: editingModelId,
+        name,
+        modelId: formModelId.trim() || name,
+        baseUrl: formBaseUrl.trim(),
+        provider: 'openai',
+        apiKey: formApiKey.trim() || undefined,
+        apiKeyEnv: formApiKeyEnv.trim() || 'OPENAI_API_KEY',
+      }
+      const updatedList = models.map((m) => (m.id === editingModelId ? updatedModel : m))
+      setModels(updatedList)
+      try {
+        localStorage.setItem('vsum.userModels', JSON.stringify(updatedList))
+      } catch {}
+
+      setShowModal(false)
+
+      // 如果修改的是当前正在生效的模型，立即同步后端
+      const isCurrentlyActive = (meta?.model && (meta.model === formName || activeModel.id === editingModelId))
+      if (isCurrentlyActive) {
+        await selectModel(updatedModel)
+      } else {
+        setSwitchNotice(`模型「${name}」修改已保存！`)
+        setTimeout(() => setSwitchNotice(null), 3000)
+      }
+    } else {
+      // 添加新模型
+      const newModel: SavedModel = {
+        id: `custom-${Date.now()}`,
+        name,
+        modelId: formModelId.trim() || name,
+        baseUrl: formBaseUrl.trim(),
+        provider: 'openai',
+        apiKey: formApiKey.trim() || undefined,
+        apiKeyEnv: formApiKeyEnv.trim() || 'OPENAI_API_KEY',
+      }
+      const updatedList = [...models, newModel]
+      setModels(updatedList)
+      try {
+        localStorage.setItem('vsum.userModels', JSON.stringify(updatedList))
+      } catch {}
+
+      setShowModal(false)
+      // 添加后直接切换使用该模型
+      await selectModel(newModel)
     }
-
-    const updated = [...customModels, newModel]
-    setCustomModels(updated)
-    try {
-      localStorage.setItem('vsum.userModels', JSON.stringify(updated))
-    } catch {}
-
-    setShowModal(false)
-    await selectModel(newModel)
   }
 
-  // 删除自定义模型
-  const deleteCustomModel = (id: string, ev: React.MouseEvent) => {
-    ev.stopPropagation()
-    if (!confirm('确定删除该自定义模型？')) return
-    const updated = customModels.filter((m) => m.id !== id)
-    setCustomModels(updated)
+  // 删除模型
+  const deleteModel = (id: string) => {
+    const target = models.find((m) => m.id === id)
+    if (!target) return
+    if (!confirm(`确定删除模型「${target.name}」？`)) return
+
+    const updatedList = models.filter((m) => m.id !== id)
+    setModels(updatedList)
     try {
-      localStorage.setItem('vsum.userModels', JSON.stringify(updated))
+      localStorage.setItem('vsum.userModels', JSON.stringify(updatedList))
     } catch {}
+
+    // 如果删除了当前激活模型，且还有其他模型，自动切到第一个
+    if ((meta?.model === target.name || activeModel.id === id) && updatedList.length > 0) {
+      selectModel(updatedList[0])
+    }
   }
 
   // 测试当前生效模型
@@ -351,7 +365,7 @@ export function Settings() {
       <div className="ph">
         <div>
           <h1>设置</h1>
-          <p>在线选择或添加总结大模型、配置语音识别引擎，全站与左下角即时生效。</p>
+          <p>在线自由添加与管理总结大模型、配置语音识别引擎，全站与左下角即时生效。</p>
         </div>
       </div>
 
@@ -384,15 +398,15 @@ export function Settings() {
         </dl>
       </div>
 
-      {/* 总结大模型配置区域 */}
+      {/* 总结大模型管理区域 */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '28px 0 10px', flexWrap: 'wrap', gap: 10 }}>
         <div>
           <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
             <Sparkles size={18} color="var(--accent)" />
-            总结大模型选择
+            我的大模型列表
           </h2>
           <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--mute)' }}>
-            点击任意模型卡片即可自由切换；点击「+ 添加大模型」可弹窗快速添加自定义模型。
+            点击卡片可自由切换；点击卡片上的「修改」可调整配置；点击右上角「+ 添加大模型」随时扩充。
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -428,7 +442,7 @@ export function Settings() {
 
       {/* 模型卡片网格 */}
       <div className="model-grid">
-        {allModels.map((m) => {
+        {models.map((m) => {
           const isActive = (meta?.model && (meta.model === m.name || meta.model === m.modelId)) ||
             (!meta?.model && activeModel.id === m.id)
           return (
@@ -440,26 +454,46 @@ export function Settings() {
             >
               <div className="m-title">
                 <span>{m.name}</span>
-                {isActive ? (
+                {isActive && (
                   <span className="pill ok" style={{ height: 20, fontSize: 11, padding: '0 6px', gap: 2 }}>
                     <Check size={12} /> 使用中
                   </span>
-                ) : (
-                  m.isCustom && (
-                    <button
-                      className="btn sm ghost"
-                      style={{ padding: 2, height: 20, width: 20, minWidth: 0, color: 'var(--mute)' }}
-                      title="删除此自定义模型"
-                      onClick={(e) => deleteCustomModel(m.id, e)}
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  )
                 )}
               </div>
               <div className="m-id">{m.modelId}</div>
               <div className="m-url" title={m.baseUrl}>
-                {m.baseUrl ? m.baseUrl.replace(/^https?:\/\//, '').split('/')[0] : '默认接口'}
+                {m.baseUrl ? m.baseUrl.replace(/^https?:\/\//, '').split('/')[0] : '官方默认接口'}
+              </div>
+
+              {/* 操作按钮栏：修改与删除 */}
+              <div className="m-actions">
+                <span className="m-tag">{m.provider || 'openai'}</span>
+                <div className="m-btns">
+                  <button
+                    type="button"
+                    className="m-btn"
+                    title="修改此模型配置"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      openEditModal(m)
+                    }}
+                  >
+                    <Pencil size={11} />
+                    <span>修改</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="m-btn del"
+                    title="删除此模型"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      deleteModel(m.id)
+                    }}
+                  >
+                    <Trash2 size={11} />
+                    <span>删除</span>
+                  </button>
+                </div>
               </div>
             </div>
           )
@@ -472,12 +506,12 @@ export function Settings() {
         </div>
       </div>
 
-      {/* 添加大模型弹窗 Modal */}
+      {/* 添加 / 修改大模型弹窗 Modal */}
       {showModal && (
         <div className="modal-backdrop" onClick={() => setShowModal(false)}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
-              <h3 style={{ margin: 0 }}>添加大模型</h3>
+              <h3 style={{ margin: 0 }}>{editingModelId ? `修改大模型：${formName || '配置'}` : '添加大模型'}</h3>
               <button
                 className="btn sm ghost"
                 style={{ padding: 4, height: 28, width: 28 }}
@@ -487,30 +521,32 @@ export function Settings() {
               </button>
             </div>
 
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 12.5, color: 'var(--mute)', marginBottom: 8 }}>
-                点击快速载入预设模板：
+            {!editingModelId && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 12.5, color: 'var(--mute)', marginBottom: 8 }}>
+                  常用模板（点击快捷填入）：
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {TEMPLATES.map((t) => (
+                    <button
+                      key={t.label}
+                      type="button"
+                      className="btn sm ghost"
+                      style={{ fontSize: 12, padding: '4px 8px' }}
+                      onClick={() => loadTemplate(t)}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {TEMPLATES.map((t) => (
-                  <button
-                    key={t.label}
-                    type="button"
-                    className="btn sm ghost"
-                    style={{ fontSize: 12, padding: '4px 8px' }}
-                    onClick={() => loadTemplate(t)}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            )}
 
             <div className="cfg-form" style={{ gridTemplateColumns: '1fr', gap: 12 }}>
               <div className="cfg-field">
                 <label>
                   模型显示名称 *
-                  <span className="hint">例如 gemini 3.8 flash 或 DeepSeek v4.1</span>
+                  <span className="hint">例如 gemini 3.8 flash 或 DeepSeek v4.1（侧栏显示此名）</span>
                 </label>
                 <input
                   type="text"
@@ -524,7 +560,7 @@ export function Settings() {
               <div className="cfg-field">
                 <label>
                   实际模型标识 (Model ID)
-                  <span className="hint">发给 API 接口的真实模型名，留空则同上方名称</span>
+                  <span className="hint">发给 API 接口的真实模型名，留空则默认同上方名称</span>
                 </label>
                 <input
                   type="text"
@@ -537,7 +573,7 @@ export function Settings() {
               <div className="cfg-field">
                 <label>
                   接口地址 (Base URL)
-                  <span className="hint">API 端点根地址</span>
+                  <span className="hint">API 根地址</span>
                 </label>
                 <input
                   type="text"
@@ -550,7 +586,7 @@ export function Settings() {
               <div className="cfg-field">
                 <label>
                   API 密钥 (API Key)
-                  <span className="hint">可选；安全加密存入本地 .env，若环境变量已配置可留空</span>
+                  <span className="hint">安全存储于本地 .env；若密钥未变或已配置可留空</span>
                 </label>
                 <input
                   type="password"
@@ -608,9 +644,9 @@ export function Settings() {
               <button
                 type="button"
                 className="btn sm primary"
-                onClick={handleAddModel}
+                onClick={handleSaveModel}
               >
-                确认添加并生效
+                {editingModelId ? '保存修改' : '确认添加并使用'}
               </button>
             </div>
           </div>

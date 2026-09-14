@@ -182,14 +182,16 @@ def _update_section_key(text: str, section: str, key: str, val_str: str) -> str:
         return text + f"\n{section}:\n  {key}: {val_str}\n"
 
     sec_block = m.group(1)
-    key_pattern = rf"(?m)^(\s*{re.escape(key)}\s*:)[ \t]*([^#\r\n]*)(.*)$"
-    if re.search(key_pattern, sec_block):
-        new_sec_block = re.sub(
-            key_pattern,
-            rf"\g<1> {val_str}\g<3>",
-            sec_block,
-            count=1,
-        )
+    key_pattern = rf"(?m)^(\s*{re.escape(key)}\s*:)[ \t]*([^#\r\n]*?)([ \t]*(#.*)?)$"
+    m_key = re.search(key_pattern, sec_block)
+    if m_key:
+        prefix = m_key.group(1)
+        comment = m_key.group(4)
+        if comment:
+            repl = f"{prefix} {val_str}   {comment}"
+        else:
+            repl = f"{prefix} {val_str}"
+        new_sec_block = sec_block[:m_key.start()] + repl + sec_block[m_key.end():]
     else:
         new_sec_block = re.sub(
             rf"(?m)^({re.escape(section)}\s*:.*)$",
