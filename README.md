@@ -19,6 +19,8 @@ cp .env.example .env              # 然后填入 DEEPSEEK_API_KEY
 uv run vsum ui
 ```
 
+Windows 日常用：双击 [`scripts/一键启动.vbs`](scripts/一键启动.vbs)，服务没起会自动起（隐藏窗口，日志写在 `logs/`），已经在跑就直接开浏览器。配套的 [`scripts/停止.vbs`](scripts/停止.vbs) 用来关掉后台服务。建个桌面快捷方式指向这两个文件最方便。
+
 命令行：
 
 ```bash
