@@ -159,7 +159,7 @@ export function NewTask() {
           <div className="card">
             {pending.map((j) => (
               <div className="qrow" key={j.id}>
-                <span className="t">{j.title}<small>{j.kind === 'summarize' ? '总结' : '转写'}</small></span>
+                <span className="t">{j.title}<small>{j.kind === 'summarize' ? '总结' : j.kind === 'audio' ? '音频' : '转写'}</small></span>
                 {j.status === 'running'
                   ? <Pill tone="accent" dot>{j.stage_detail || '进行中'}</Pill>
                   : <Pill tone="neutral">排队</Pill>}

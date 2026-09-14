@@ -62,6 +62,7 @@ export interface Entry {
   speaker_count: number
   created_at: string
   work_dir: string | null
+  has_audio: boolean
   summaries: SummaryRef[]
   cost?: number | null
 }
@@ -196,7 +197,7 @@ export interface UploaderInfo {
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
 export interface Job {
   id: string
-  kind: 'process' | 'summarize'
+  kind: 'process' | 'summarize' | 'audio'
   title: string
   params: Record<string, unknown>
   status: JobStatus
@@ -263,6 +264,9 @@ export const api = {
   estimate: (id: string, type: string) =>
     call<Estimate>(`/videos/${encodeURIComponent(id)}/estimate?type=${encodeURIComponent(type)}`),
   deleteVideo: (id: string) => call<{ removed_dir: boolean }>(`/videos/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  audioUrl: (id: string) => `/api/videos/${encodeURIComponent(id)}/audio`,
+  fetchAudio: (id: string) => post<{ job: Job | null; duplicate: boolean; cached: boolean }>(`/videos/${encodeURIComponent(id)}/audio`, {}),
+  avatarUrl: (name: string) => `/api/uploaders/${encodeURIComponent(name)}/avatar`,
   openFolder: (id: string) => post<{ ok: boolean }>(`/videos/${encodeURIComponent(id)}/open`, {}),
   probe: (url: string, page = 1, keyword = '') => post<Probe | Listing>('/probe', { url, page, keyword }),
   batch: (body: { items: { url: string; title?: string }[]; summary_type?: string | null; asr_model?: string | null; diarize?: string | boolean | null }) =>

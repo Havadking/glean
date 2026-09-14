@@ -43,7 +43,9 @@ from ..subtitle.fetcher import select_subtitle_language
 from ..summarizer import get_provider as get_summarizer
 from ..summarizer.base import CostEstimate
 from ..summarizer.prompts import TEMPLATES
-from ..ytdlp_base import VideoInfo, extract_url
+from ..audio import extractor as audio_extractor
+from ..ytdlp_base import VideoInfo, extract_url, probe
+from . import avatars as avatars_mod
 from . import library as library_mod
 from . import mindmap as mindmap_mod
 from .jobs import JobManager, Reporter
@@ -176,6 +178,7 @@ def _entry_dict(e: library_mod.LibraryEntry) -> dict[str, Any]:
         "speaker_count": e.speaker_count,
         "created_at": e.created_at,
         "work_dir": str(e.work_dir) if e.work_dir else None,
+        "has_audio": library_mod.audio_path(e) is not None,
         "summaries": [
             {"type": s.summary_type, "label": s.label, "provider": s.provider,
              "created_at": s.created_at}
@@ -523,6 +526,49 @@ def create_app(cfg: Config):
             ],
             "summaries": _summaries_dict(c, entry),
         }
+
+    @app.get("/api/videos/{video_id}/audio")
+    def video_audio(video_id: str):
+        """本地音频，给详情页的播放器用。FileResponse 支持 Range，拖进度条不用整段下。"""
+        c = state.fresh_config()
+        entry = library_mod.find_entry(c, video_id)
+        path = library_mod.audio_path(entry) if entry else None
+        if path is None:
+            raise HTTPException(404, "这条视频没有本地音频")
+        return FileResponse(path, media_type="audio/wav",
+                            headers={"Cache-Control": "private, max-age=86400"})
+
+    @app.post("/api/videos/{video_id}/audio")
+    def fetch_audio(video_id: str):
+        """字幕路径的视频没下过音频、或者清理过音频：单独下一份，进任务队列。"""
+        c = state.fresh_config()
+        entry = library_mod.find_entry(c, video_id)
+        if entry is None:
+            raise HTTPException(404, "没有这个视频")
+        if library_mod.audio_path(entry) is not None:
+            return {"job": None, "duplicate": False, "cached": True}
+        dup = state.jobs.find_active("audio", video_id=video_id)
+        if dup is not None:
+            return {"job": dup.to_dict(), "duplicate": True, "cached": False}
+        url = entry.source_url
+        if not url:
+            raise HTTPException(400, "这条视频没记录来源链接，下不了音频")
+        work_dir = entry.work_dir or (c.output_dir / f"{entry.title[:60]}-{entry.video_id}")
+
+        def work(rep: Reporter) -> dict[str, Any]:
+            info = state.probed(url)
+            if info is None:
+                state.throttle(c.download.batch_delay_sec)
+                rep.stage("probe", "探测视频")
+                info = probe(url, c.download)
+                state.remember_probe(url, info)
+            state.touched()
+            rep.stage("download", "提取音频")
+            path = audio_extractor.extract(info, c, work_dir / "audio")
+            return {"video_id": video_id, "path": str(path), "bytes": path.stat().st_size}
+
+        job = state.jobs.submit("audio", f"下载音频 · {entry.title}", {"video_id": video_id, "url": url}, work)
+        return {"job": job.to_dict(), "duplicate": False, "cached": False}
 
     @app.get("/api/videos/{video_id}/estimate")
     def estimate(video_id: str, type: str = "overall", language: str = "zh"):
@@ -1012,6 +1058,20 @@ def create_app(cfg: Config):
                 for q in qs
             ],
         }
+
+    @app.get("/api/uploaders/{name}/avatar")
+    def uploader_avatar(name: str):
+        """头像图片。本地有就直接出；没有就去站点拿一次存下来；拿不到 404，前端退回首字母。"""
+        c = state.fresh_config()
+        path = avatars_mod.cached(c, name)
+        if path is None:
+            entry = next((e for e in library_mod.load_library(c) if e.uploader == name), None)
+            if entry is None:
+                raise HTTPException(404, "库里没有这位创作者")
+            path = avatars_mod.fetch(c, name, entry)
+        if path is None:
+            raise HTTPException(404, "拿不到头像")
+        return FileResponse(path, headers={"Cache-Control": "private, max-age=604800"})
 
     @app.post("/api/uploaders/{name}/ask")
     def uploader_ask(name: str, body: AskBody):

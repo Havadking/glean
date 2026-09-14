@@ -143,6 +143,24 @@ def load_summaries(cfg: Config, entry: LibraryEntry) -> dict[str, SummaryText]:
     return out
 
 
+def audio_path(entry: LibraryEntry) -> Path | None:
+    """ASR 跑过就会在产物目录下留一份 16k wav；字幕路径的视频没有，清过音频的也没有。"""
+    if entry.work_dir is None:
+        return None
+    audio_dir = entry.work_dir / "audio"
+    if not audio_dir.is_dir():
+        return None
+    try:
+        wavs = [p for p in audio_dir.iterdir()
+                if p.is_file() and p.suffix.lower() == ".wav" and p.stat().st_size > 0]
+    except OSError:
+        return None
+    if not wavs:
+        return None
+    # 目录里正常只有一份；万一有多份，优先 <video_id>.wav
+    return next((p for p in wavs if p.stem == entry.video_id), wavs[0])
+
+
 def find_entry(cfg: Config, video_id: str) -> LibraryEntry | None:
     for e in load_library(cfg):
         if e.video_id == video_id:

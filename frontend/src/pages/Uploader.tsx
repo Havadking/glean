@@ -61,7 +61,7 @@ export function Uploader() {
       <div className="dhead">
         <div className="in">
           <div className="crumb"><Link to="/library">库</Link><span>›</span><span>UP 主</span></div>
-          <h1 style={{ display: 'flex', alignItems: 'center', gap: 10 }}><Avatar name={name} /> {name}</h1>
+          <h1 style={{ display: 'flex', alignItems: 'center', gap: 10 }}><Avatar name={name} size={28} /> {name}</h1>
           <div className="row">
             <div className="meta">
               <span>{data.videos.length} 条视频</span>
@@ -74,7 +74,7 @@ export function Uploader() {
       </div>
 
       <div className="split">
-        <div className="col left">
+        <div className="col left" style={{ width: '54%' }}>
           <div className="colhead"><h2>材料 <span style={{ color: 'var(--faint)', fontWeight: 400 }}>按发布日期</span></h2></div>
           <div className="list">
             {data.videos.map((v) => (

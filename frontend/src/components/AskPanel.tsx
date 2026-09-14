@@ -109,17 +109,23 @@ export function AskPanel({ videoId, onJump }: { videoId: string; onJump: (sec: n
   )
 }
 
-export function useCitationJump(paragraphStarts: number[]) {
+/** 引用落在哪一段：起始时间不超过 sec 的最后一段的起始时间 */
+export function paragraphAt(paragraphStarts: number[], sec: number): number {
+  let target = paragraphStarts[0] ?? 0
+  for (const s of paragraphStarts) { if (s <= sec) target = s; else break }
+  return target
+}
+
+/** 点时间戳：滚到那一段并闪一下；有本地音频时（给了 seek）再从那一秒开始播 */
+export function useCitationJump(paragraphStarts: number[], seek?: (sec: number) => void) {
   return useMemo(() => (sec: number) => {
-    // 引用落在哪一段：起始时间不超过 sec 的最后一段
-    let target = paragraphStarts[0] ?? 0
-    for (const s of paragraphStarts) { if (s <= sec) target = s; else break }
-    const el = document.getElementById(`p-${Math.floor(target)}`)
+    seek?.(sec)
+    const el = document.getElementById(`p-${Math.floor(paragraphAt(paragraphStarts, sec))}`)
     if (!el) return
     el.scrollIntoView({ block: 'center', behavior: 'smooth' })
     el.classList.remove('focus')
     void el.offsetWidth
     el.classList.add('focus')
     setTimeout(() => el.classList.remove('focus'), 2700)
-  }, [paragraphStarts])
+  }, [paragraphStarts, seek])
 }

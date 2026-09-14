@@ -1,8 +1,9 @@
-import { Copy, ExternalLink, FolderOpen, Search, Trash2 } from 'lucide-react'
+import { Copy, Download, ExternalLink, FolderOpen, Search, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, type Estimate, type Video as VideoT } from '../api'
-import { AskPanel, useCitationJump } from '../components/AskPanel'
+import { AskPanel, paragraphAt, useCitationJump } from '../components/AskPanel'
+import { AudioBar, type AudioHandle } from '../components/AudioBar'
 import { Markdown } from '../components/Markdown'
 import { Mindmap } from '../components/Mindmap'
 import { ErrorBox, Highlight, Pill, Seg, countHits } from '../components/ui'
@@ -22,6 +23,13 @@ export function Video() {
   const [copied, setCopied] = useState(false)
   const [focusStart, setFocusStart] = useState<number | null>(null)
   const [clean, setClean] = useState<boolean>(() => { try { return localStorage.getItem('clean') === '1' } catch { return false } })
+
+  // 本地音频：播放器句柄、正在播到的那一段、下载音频的任务
+  const audioRef = useRef<AudioHandle>(null)
+  const [playingStart, setPlayingStart] = useState<number | null>(null)
+  const [audioJobId, setAudioJobId] = useState<string | null>(null)
+  const audioJob = useJob(audioJobId)
+  const audioFetching = audioJob != null && !['done', 'failed', 'cancelled'].includes(audioJob.status)
 
   // 左右分栏拖拽
   const splitRef = useRef<HTMLDivElement>(null)
@@ -100,7 +108,18 @@ export function Video() {
 
   const hits = useMemo(() => video ? video.paragraphs.reduce((n, p) => n + countHits(p.text, query), 0) : 0, [video, query])
   const starts = useMemo(() => video ? video.paragraphs.map((p) => p.start) : [], [video])
-  const jump = useCitationJump(starts)
+  const hasAudio = !!video?.has_audio
+  const seek = useCallback((sec: number) => audioRef.current?.seek(sec, true), [])
+  const jump = useCitationJump(starts, hasAudio ? seek : undefined)
+  // 播放进度 → 当前段落；只在换段时更新 state，别让 timeupdate 每次都重渲染
+  const onTime = useCallback((sec: number) => {
+    const start = paragraphAt(starts, sec)
+    setPlayingStart((cur) => (cur === start ? cur : start))
+  }, [starts])
+  useEffect(() => { setPlayingStart(null); setAudioJobId(null) }, [id])
+  useEffect(() => {
+    if (audioJob?.status === 'done') { setAudioJobId(null); void load() }
+  }, [audioJob?.status, load])
 
   if (error) return <div className="page"><ErrorBox error={error} /><p><Link to="/library">回到库</Link></p></div>
   if (!video) return <div className="page" style={{ color: 'var(--mute)' }}><span className="spin" /> 读取中…</div>
@@ -109,6 +128,13 @@ export function Video() {
   const summary = video.summaries[type]
 
   const openFolder = () => api.openFolder(video.video_id).catch((e) => setError(e))
+  const fetchAudio = async () => {
+    try {
+      const r = await api.fetchAudio(video.video_id)
+      if (r.cached) { await load(); return }
+      if (r.job) setAudioJobId(r.job.id)
+    } catch (e) { setError(e) }
+  }
   const remove = async () => {
     if (!confirm(`删除「${video.title}」的转写、总结和产物目录？不可恢复。`)) return
     try {
@@ -130,6 +156,7 @@ export function Video() {
             {video.uploader && <><span>›</span><Link to={`/library?up=${encodeURIComponent(video.uploader)}`}>{video.uploader}</Link></>}
           </div>
           <h1>{video.title}</h1>
+          {audioJob?.status === 'failed' && <div className="errbox" style={{ marginTop: 10 }}>下载音频失败：{audioJob.error}</div>}
           <div className="row">
             <div className="meta">
               {video.uploader && <span><b>{video.uploader}</b></span>}
@@ -144,6 +171,12 @@ export function Video() {
             <div style={{ display: 'flex', gap: 6 }}>
               {video.source_url && <a className="btn" href={video.source_url} target="_blank" rel="noreferrer"><ExternalLink /> 原视频</a>}
               {video.work_dir && <button className="btn" onClick={openFolder}><FolderOpen /> 打开目录</button>}
+              {!hasAudio && video.source_url && (
+                <button className="btn" onClick={fetchAudio} disabled={audioFetching}
+                  title={video.source_type === 'subtitle' ? '这条走的是字幕，没下过音频。下一份就能点时间戳听原声' : '本地音频已清理，重新下一份就能点时间戳听原声'}>
+                  {audioFetching ? <><span className="spin" /> {audioJob?.status === 'queued' ? '排队中' : '下载音频中…'}</> : <><Download /> 下载音频</>}
+                </button>
+              )}
               <button className="btn ghost danger" onClick={remove} title="删除"><Trash2 /></button>
             </div>
           </div>
@@ -166,8 +199,10 @@ export function Video() {
           </div>
           {video.paragraphs.length === 0 && <div className="empty"><b>这条视频没有转写文本</b>缓存和产物目录里都没找到。</div>}
           {video.paragraphs.map((p, i) => (
-            <div className={`para${query.trim() && countHits(p.text, query) ? ' hit' : ''}`} key={i} id={`p-${Math.floor(p.start)}`}>
-              <span className="tc">{fmtDuration(p.start)}</span>
+            <div className={`para${query.trim() && countHits(p.text, query) ? ' hit' : ''}${hasAudio && playingStart === p.start ? ' playing' : ''}`} key={i} id={`p-${Math.floor(p.start)}`}>
+              {hasAudio
+                ? <button className="tc link" onClick={() => seek(p.start)} title="从这里开始听">{fmtDuration(p.start)}</button>
+                : <span className="tc">{fmtDuration(p.start)}</span>}
               <p>
                 {p.speaker && video.speaker_count > 1 && <span className="sp">{p.speaker}</span>}
                 <Highlight text={p.text} query={query} />
@@ -198,6 +233,8 @@ export function Video() {
               : <GeneratePanel video={video} type={type} hint={types.find((t) => t.key === type)?.hint ?? ''} onDone={load} />}
         </div>
       </div>
+
+      {hasAudio && <AudioBar ref={audioRef} src={api.audioUrl(video.video_id)} onTime={onTime} />}
     </div>
   )
 }

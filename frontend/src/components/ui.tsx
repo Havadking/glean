@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
+import { api } from '../api'
 
 export function Pill({ tone = 'neutral', dot, children }: { tone?: 'ok' | 'warn' | 'info' | 'bad' | 'neutral' | 'accent'; dot?: boolean; children: ReactNode }) {
   return <span className={`pill ${tone}`}>{dot && <i className="dot" />}{children}</span>
@@ -40,9 +41,23 @@ export function ErrorBox({ error }: { error: unknown }) {
   return <div className="errbox">{msg}</div>
 }
 
-export function Avatar({ name, grey }: { name: string | null; grey?: boolean }) {
+// 这次会话里已经确认拿不到头像的 UP 主，别每次渲染都再发一次请求
+const noAvatar = new Set<string>()
+
+/** UP 主头像：能从站点拿到就显示图片，拿不到退回首字母。 */
+export function Avatar({ name, grey, size }: { name: string | null; grey?: boolean; size?: number }) {
+  // 记"哪个名字的图挂了"而不是布尔值，换了 name 自然就重试，不用 effect 重置
+  const [brokenName, setBrokenName] = useState<string | null>(null)
+  const broken = !name || noAvatar.has(name) || brokenName === name
   const ch = (name ?? '?').trim().slice(0, 1).toUpperCase() || '?'
-  return <span className={`av${grey || !name ? ' g' : ''}`}>{ch}</span>
+  const style = size ? { width: size, height: size, fontSize: Math.round(size / 2) } : undefined
+  return (
+    <span className={`av${grey || !name ? ' g' : ''}`} style={style}>
+      {name && !broken
+        ? <img src={api.avatarUrl(name)} alt="" loading="lazy" onError={() => { noAvatar.add(name); setBrokenName(name) }} />
+        : ch}
+    </span>
+  )
 }
 
 /** 把 query 在文本里高亮。不区分大小写；空 query 原样返回。 */
