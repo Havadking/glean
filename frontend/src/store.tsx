@@ -10,6 +10,7 @@ interface Store {
   library: Library | null
   libraryError: unknown
   refreshLibrary: () => Promise<void>
+  refreshMeta: () => Promise<void>
   theme: Theme
   isDark: boolean
   setTheme: (t: Theme) => void
@@ -32,6 +33,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(readTheme)
   const [systemDark, setSystemDark] = useState(() => matchMedia('(prefers-color-scheme: dark)').matches)
 
+  const refreshMeta = useCallback(async () => {
+    try {
+      setMeta(await api.meta())
+    } catch {
+      setMeta(null)
+    }
+  }, [])
+
   const refreshLibrary = useCallback(async () => {
     try {
       setLibrary(await api.library())
@@ -42,9 +51,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    api.meta().then(setMeta).catch(() => setMeta(null))
+    void refreshMeta()
     void refreshLibrary()
-  }, [refreshLibrary])
+  }, [refreshMeta, refreshLibrary])
 
   useEffect(() => {
     const mq = matchMedia('(prefers-color-scheme: dark)')
@@ -69,8 +78,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const isDark = theme === 'dark' || (theme === 'system' && systemDark)
   const value = useMemo(
-    () => ({ meta, library, libraryError, refreshLibrary, theme, isDark, setTheme }),
-    [meta, library, libraryError, refreshLibrary, theme, isDark, setTheme],
+    () => ({ meta, library, libraryError, refreshLibrary, refreshMeta, theme, isDark, setTheme }),
+    [meta, library, libraryError, refreshLibrary, refreshMeta, theme, isDark, setTheme],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

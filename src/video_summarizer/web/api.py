@@ -23,7 +23,7 @@ from typing import Any
 
 from .. import __version__
 from ..cache import Cache, summary_key
-from ..config import Config, load_config
+from ..config import Config, load_config, update_pricing
 from ..errors import VideoSummarizerError
 from ..models import SummaryOptions
 from ..pipeline import plan_transcript_key, run as run_pipeline, write_summary_files
@@ -260,6 +260,61 @@ def create_app(cfg: Config):
             "priced": c.summarizer.price_input_per_m is not None,
             "output_dir": str(c.output_dir),
         }
+
+    # ----- 模型与价格配置 -----
+
+    class PricingBody(BaseModel):
+        price_input_per_m: float | None = None
+        price_output_per_m: float | None = None
+        currency: str = "¥"
+
+    @app.get("/api/config/pricing")
+    def get_pricing():
+        c = state.fresh_config()
+        try:
+            provider_desc = get_summarizer(c.summarizer).describe()
+        except VideoSummarizerError as exc:
+            provider_desc = f"未配置（{exc}）"
+        return {
+            "price_input_per_m": c.summarizer.price_input_per_m,
+            "price_output_per_m": c.summarizer.price_output_per_m,
+            "currency": c.summarizer.currency,
+            "priced": c.summarizer.price_input_per_m is not None,
+            "provider": provider_desc,
+            "model": c.summarizer.model,
+        }
+
+    @app.post("/api/config/pricing")
+    def set_pricing(body: PricingBody):
+        if body.price_input_per_m is not None and body.price_input_per_m < 0:
+            raise HTTPException(400, "输入单价不能为负数")
+        if body.price_output_per_m is not None and body.price_output_per_m < 0:
+            raise HTTPException(400, "输出单价不能为负数")
+        c = state.fresh_config()
+        currency = body.currency.strip() or "¥"
+        update_pricing(
+            c.source_path,
+            price_input_per_m=body.price_input_per_m,
+            price_output_per_m=body.price_output_per_m,
+            currency=currency,
+        )
+        state.cfg.summarizer.price_input_per_m = body.price_input_per_m
+        state.cfg.summarizer.price_output_per_m = body.price_output_per_m
+        state.cfg.summarizer.currency = currency
+        return get_pricing()
+
+    @app.post("/api/config/test-llm")
+    def test_llm():
+        c = state.fresh_config()
+        t0 = time.monotonic()
+        try:
+            provider = get_summarizer(c.summarizer)
+            reply = provider.complete("请回复pong", "ping")
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            return {"ok": True, "latency_ms": elapsed_ms, "model": c.summarizer.model, "reply": reply.strip()}
+        except Exception as exc:
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            return {"ok": False, "latency_ms": elapsed_ms, "error": str(exc)}
 
     # ----- 花费 -----
 

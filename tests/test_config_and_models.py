@@ -140,3 +140,24 @@ def test_extract_url_from_share_text():
     assert extract_url("链接在这（https://x.y/z），看看") == "https://x.y/z"
     assert extract_url("不是链接") == "不是链接"
     assert extract_url("") == ""
+
+
+def test_update_pricing(tmp_path):
+    from video_summarizer.config import update_pricing
+
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        "summarizer:\n  provider: openai\n  price_input_per_m: 2.0\n  price_output_per_m: 3.0\n  currency: '¥'\n",
+        encoding="utf-8",
+    )
+    update_pricing(cfg_file, price_input_per_m=5.5, price_output_per_m=6.5, currency="$")
+    updated = cfg_file.read_text(encoding="utf-8")
+    assert "price_input_per_m: 5.5" in updated
+    assert "price_output_per_m: 6.5" in updated
+    assert 'currency: "$"' in updated
+
+    # test clearing pricing
+    update_pricing(cfg_file, price_input_per_m=None, price_output_per_m=None, currency="¥")
+    updated2 = cfg_file.read_text(encoding="utf-8")
+    assert "price_input_per_m: null" in updated2
+    assert "price_output_per_m: null" in updated2

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -170,3 +171,36 @@ def load_config(path: Path | None = None) -> Config:
         cache_db=cache_db if cache_db.is_absolute() else base_dir / cache_db,
         source_path=config_path,
     )
+
+
+def update_pricing(
+    config_path: Path | None,
+    price_input_per_m: float | None,
+    price_output_per_m: float | None,
+    currency: str = "¥",
+) -> None:
+    """在线更新 config.yaml 中的单价和货币符号，保持文件注释和排版不变。"""
+    if config_path is None or not config_path.is_file():
+        return
+
+    text = config_path.read_text(encoding="utf-8")
+
+    in_val = "null" if price_input_per_m is None else str(price_input_per_m)
+    if re.search(r"(?m)^(\s*price_input_per_m\s*:).*$", text):
+        text = re.sub(r"(?m)^(\s*price_input_per_m\s*:).*$", rf"\g<1> {in_val}", text)
+    else:
+        text = re.sub(r"(?m)^(summarizer\s*:.*)$", rf"\1\n  price_input_per_m: {in_val}", text)
+
+    out_val = "null" if price_output_per_m is None else str(price_output_per_m)
+    if re.search(r"(?m)^(\s*price_output_per_m\s*:).*$", text):
+        text = re.sub(r"(?m)^(\s*price_output_per_m\s*:).*$", rf"\g<1> {out_val}", text)
+    else:
+        text = re.sub(r"(?m)^(summarizer\s*:.*)$", rf"\1\n  price_output_per_m: {out_val}", text)
+
+    cur_val = f'"{currency}"'
+    if re.search(r"(?m)^(\s*currency\s*:).*$", text):
+        text = re.sub(r"(?m)^(\s*currency\s*:).*$", rf"\g<1> {cur_val}", text)
+    else:
+        text = re.sub(r"(?m)^(summarizer\s*:.*)$", rf"\1\n  currency: {cur_val}", text)
+
+    config_path.write_text(text, encoding="utf-8")

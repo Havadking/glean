@@ -81,6 +81,23 @@ export interface Estimate {
   asr_sec?: number
 }
 
+export interface PricingConfig {
+  price_input_per_m: number | null
+  price_output_per_m: number | null
+  currency: string
+  priced: boolean
+  provider?: string
+  model?: string
+}
+
+export interface TestLlmResult {
+  ok: boolean
+  latency_ms: number
+  model?: string
+  reply?: string
+  error?: string
+}
+
 export interface ListingEntry {
   video_id: string
   url: string
@@ -242,6 +259,10 @@ export const api = {
   jobs: () => call<{ jobs: Job[] }>('/jobs'),
   job: (id: string) => call<Job>(`/jobs/${id}`),
   cancelJob: (id: string) => call<{ cancelled: boolean }>(`/jobs/${id}`, { method: 'DELETE' }),
+  getPricing: () => call<PricingConfig>('/config/pricing'),
+  updatePricing: (body: { price_input_per_m: number | null; price_output_per_m: number | null; currency?: string }) =>
+    post<PricingConfig>('/config/pricing', body),
+  testLlm: () => post<TestLlmResult>('/config/test-llm', {}),
 }
 
 /** 订阅任务事件。返回取消函数。状态到终态后自动关闭。 */

@@ -553,3 +553,37 @@ def test_spa_fallback_serves_index_when_built(client):
         assert "<div id=\"root\">" in r.text
     else:
         assert "前端还没构建" in r.text
+
+
+def test_pricing_get_and_set(client):
+    r = client.get("/api/config/pricing")
+    assert r.status_code == 200
+    data = r.json()
+    assert "price_input_per_m" in data
+    assert "price_output_per_m" in data
+    assert "currency" in data
+
+    # Update pricing
+    r2 = client.post("/api/config/pricing", json={"price_input_per_m": 1.5, "price_output_per_m": 2.5, "currency": "$"})
+    assert r2.status_code == 200
+    d2 = r2.json()
+    assert d2["price_input_per_m"] == 1.5
+    assert d2["price_output_per_m"] == 2.5
+    assert d2["currency"] == "$"
+
+    # Validation: negative prices rejected
+    r3 = client.post("/api/config/pricing", json={"price_input_per_m": -1})
+    assert r3.status_code == 400
+
+
+def test_test_llm_endpoint(client, monkeypatch):
+    class FakeProvider:
+        def complete(self, s, u):
+            return "pong"
+
+    monkeypatch.setattr("video_summarizer.web.api.get_summarizer", lambda cfg: FakeProvider())
+    r = client.post("/api/config/test-llm")
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    assert r.json()["reply"] == "pong"
+
