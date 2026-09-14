@@ -899,7 +899,8 @@ def create_app(cfg: Config):
             candidate = DIST_DIR / path
             if path and candidate.is_file() and ".." not in path:
                 return FileResponse(candidate)
-            return FileResponse(DIST_DIR / "index.html")
+            # index.html 不能让浏览器缓存，否则前端更新后还会引用旧的 assets
+            return FileResponse(DIST_DIR / "index.html", headers={"Cache-Control": "no-cache"})
     else:
         @app.get("/", include_in_schema=False)
         def no_frontend():
