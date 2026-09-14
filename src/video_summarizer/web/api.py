@@ -264,7 +264,7 @@ def create_app(cfg: Config):
             "asr_default": c.asr.model,
             "diarize_default": c.asr.diarize,
             "provider": provider_desc,
-            "model": c.summarizer.model,
+            "model": c.summarizer.name or c.summarizer.model,
             "currency": c.summarizer.currency,
             "priced": c.summarizer.price_input_per_m is not None,
             "output_dir": str(c.output_dir),
@@ -278,6 +278,7 @@ def create_app(cfg: Config):
         currency: str = "¥"
 
     class LlmConfigBody(BaseModel):
+        name: str | None = None
         provider: str | None = None
         model: str | None = None
         base_url: str | None = None
@@ -348,6 +349,7 @@ def create_app(cfg: Config):
             provider_desc = f"未配置（{exc}）"
 
         return {
+            "name": c.summarizer.name or c.summarizer.model,
             "provider": c.summarizer.provider,
             "model": c.summarizer.model,
             "base_url": c.summarizer.base_url,
@@ -373,6 +375,7 @@ def create_app(cfg: Config):
 
         update_summarizer_config(
             c.source_path,
+            name=body.name,
             provider=body.provider,
             model=body.model,
             base_url=body.base_url,

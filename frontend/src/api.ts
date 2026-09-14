@@ -19,6 +19,7 @@ export interface Meta {
 }
 
 export interface LlmConfig {
+  name?: string
   provider: string
   model: string
   base_url: string | null

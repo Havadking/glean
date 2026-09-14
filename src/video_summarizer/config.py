@@ -70,6 +70,7 @@ class ASRConfig:
 class SummarizerConfig:
     provider: str = "openai"
     model: str = "deepseek-chat"
+    name: str | None = None  # 用户友好显示名称，如 "DeepSeek v4.1" 或 "gemini 3.8 flash"
     # 默认留空，具体地址由 config.yaml 给。这里要是写死某一家的地址，
     # 换 provider 时忘了改就会把请求（连同密钥）发到错误的厂商去。
     base_url: str | None = None
@@ -204,6 +205,7 @@ _UNSET: Any = object()
 
 def update_summarizer_config(
     config_path: Path | None,
+    name: str | None = _UNSET,
     provider: str | None = _UNSET,
     model: str | None = _UNSET,
     base_url: str | None = _UNSET,
@@ -221,6 +223,9 @@ def update_summarizer_config(
 
     text = config_path.read_text(encoding="utf-8")
 
+    if name is not _UNSET:
+        n_val = "null" if not name or not name.strip() else f'"{name.strip()}"'
+        text = _update_section_key(text, "summarizer", "name", n_val)
     if provider is not _UNSET and provider is not None:
         text = _update_section_key(text, "summarizer", "provider", provider.strip())
     if model is not _UNSET and model is not None:
