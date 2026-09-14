@@ -22,6 +22,7 @@ export function NewTask() {
   const [asr, setAsr] = useState<string>('')
   const [diarize, setDiarize] = useState<string>('auto')
   const [summaryType, setSummaryType] = useState<string>('')
+  const [correctTerms, setCorrectTerms] = useState<boolean>(false)
   const [jobId, setJobId] = useState<string | null>(() => sessionStorage.getItem(JOB_KEY))
   const inputRef = useRef<HTMLInputElement>(null)
   const job = useJob(jobId)
@@ -31,6 +32,7 @@ export function NewTask() {
       setAsr((a) => a || meta.asr_default)
       setSummaryType((t) => t || meta.default_summary_type)
       setDiarize(String(meta.diarize_default))
+      setCorrectTerms(meta.correct_terms_default)
     }
   }, [meta])
 
@@ -59,7 +61,7 @@ export function NewTask() {
     try {
       const r = await api.createJob({
         url: probe.url, asr_model: asr || null, diarize: diarize === 'auto' ? 'auto' : diarize === 'true',
-        summary_type: summaryType || null,
+        summary_type: summaryType || null, correct_terms: correctTerms,
       })
       sessionStorage.setItem(JOB_KEY, r.job.id)
       setJobId(r.job.id)
@@ -137,6 +139,12 @@ export function NewTask() {
                   <option value="">不总结</option>
                 </select>
               </div>
+              {!probe.subtitle && (
+                <label className="opt check" title={'识别完让模型出一张专有名词替换表叠在原文上（"语数科技"→"宇树科技"），原文不动、逐条可否决。要把全文喂一遍，1 小时约 3 分钱'}>
+                  <input type="checkbox" checked={correctTerms} onChange={(e) => setCorrectTerms(e.target.checked)} />
+                  纠专有名词
+                </label>
+              )}
               <div className="opt" style={{ marginLeft: 'auto' }}>
                 <EstimateLine probe={probe} summaryType={summaryType} />
                 <button className="btn primary" onClick={start} disabled={busy}>开始</button>
@@ -190,6 +198,7 @@ const STAGE_ORDER: { key: string; label: string; alt?: string[] }[] = [
   { key: 'probe', label: '探测' },
   { key: 'download', label: '下载音频', alt: ['subtitle'] },
   { key: 'transcribe', label: '语音识别' },
+  { key: 'polish', label: '纠专有名词' },
   { key: 'summarize', label: '总结' },
 ]
 

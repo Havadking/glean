@@ -25,10 +25,10 @@ download:
   # douyin_browser: auto
 
 asr:
-  provider: funasr            # funasr | whisper
-  model: sensevoice-small     # funasr: sensevoice-small | paraformer-zh
+  provider: funasr   # funasr | whisper
+  model: sensevoice-small   # funasr: sensevoice-small | paraformer-zh
                               # whisper: tiny | base | small | medium | large-v3
-  device: auto                # auto | cuda | cpu
+  device: cuda   # auto | cuda | cpu
   language: null              # null = 自动检测；也可写 "zh" / "en" 强制
 
   # 主 provider 不支持该语言、或跑失败/结果为空时的兜底。
@@ -39,7 +39,7 @@ asr:
   # 说话人分离。auto = 只在总结类型选了 by_speaker 时才开。
   # 不默认全开是因为它换用 paraformer-zh 这条 pipeline：只做中文，
   # 而且比 sensevoice 慢一半（22 分钟视频约 31 秒 vs 11 秒）。
-  diarize: auto               # auto | true | false
+  diarize: auto   # auto | true | false
   diarize_model: paraformer-zh
 
   # 以下只对 whisper 生效，FunASR 用自己内置的 FSMN-VAD
@@ -69,6 +69,10 @@ summarizer:
   clean_transcript: false
   # 处理完一条视频后顺手让模型打 3–5 个主题标签，用总结做输入，几乎不花钱。不想要就改成 false
   # auto_tags: true
+  # 语音识别完让模型纠专有名词（"语数科技"→"宇树科技"）：只出替换表叠在原文上，原文不动，
+  # 界面上能逐条否决。要把全文喂一遍，1 小时视频约 ¥0.03、十几秒，所以默认关；处理时可单独勾选。
+  # 官方字幕不跑；ollama 本地小模型干这个不靠谱，也跳过。
+  # correct_terms: false
 
 # 换 provider 只改上面这一段，主流程不动。三种写法：
 #

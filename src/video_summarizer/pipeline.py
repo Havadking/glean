@@ -12,6 +12,7 @@ from typing import Any, Callable
 from . import asr as asr_registry
 from . import cache as cache_mod
 from . import cleaning
+from . import correction
 from . import summarizer as summarizer_registry
 from .audio import extractor
 from .config import Config
@@ -28,7 +29,7 @@ log = logging.getLogger(__name__)
 ConfirmFn = Callable[[CostEstimate, "Transcript"], bool]
 
 # 阶段回调：(阶段名, 一句说明)。界面用它画进度，CLI 不用。
-# 阶段名固定为 probe / subtitle / download / transcribe / summarize / done
+# 阶段名固定为 probe / subtitle / download / transcribe / polish / summarize / done
 StageFn = Callable[[str, str], None]
 
 
@@ -48,6 +49,9 @@ class PipelineResult:
     summary_skipped_reason: str | None = None
     # 这次总结用的 provider 实例，调用方从它上面读真实 token 用量记账
     summary_provider: Any = None
+    # 纠错那一步的真实用量 (输入, 输出, 次数) 和模型名；没跑就是 None
+    correction_usage: tuple[int, int, int] | None = None
+    correction_provider_desc: str | None = None
 
 
 def run(
@@ -95,12 +99,6 @@ def run(
             "模型只能靠语气和称呼推断角色。",
             "官方字幕不区分说话人" if transcript.source_type == "subtitle" else "这一路的 ASR 没有分离能力",
         )
-    # 记下指纹，下次缓存万一没了还能靠它认领这份产物
-    transcript.meta["cache_key"] = cache_key
-    transcript.save(transcript_path)
-    cache.put_transcript(cache_key, transcript)
-    log.info("转写已保存: %s（%d 条分句）", transcript_path, len(transcript.segments))
-
     result = PipelineResult(
         info=info,
         transcript=transcript,
@@ -108,12 +106,37 @@ def run(
         work_dir=work_dir,
     )
 
+    # 纠专有名词：只对 ASR 来源，且这份转写还没有表（缓存命中的老转写也补）。
+    # 出错不阻塞主流程 —— 转写照常落盘，只是没有替换表。
+    provider = None
+    if cfg.summarizer.correct_terms and transcript.source_type == "asr"             and "corrections" not in transcript.meta:
+        if cfg.summarizer.provider == "ollama":
+            log.warning("summarizer.correct_terms 开着，但本地小模型纠专有名词不靠谱，跳过")
+        else:
+            try:
+                provider = summarizer_registry.get_provider(cfg.summarizer)
+                stage("polish", f"调用 {provider.describe()} 纠专有名词")
+                transcript = correction.polish(
+                    provider, transcript, title=info.title, uploader=info.uploader,
+                )
+                result.transcript = transcript
+                result.correction_usage = provider.take_usage()
+                result.correction_provider_desc = provider.describe()
+            except Exception as exc:  # noqa: BLE001 —— 纠错是锦上添花，不能把转写搭进去
+                log.warning("纠专有名词失败，跳过：%s", exc)
+
+    # 记下指纹，下次缓存万一没了还能靠它认领这份产物
+    transcript.meta["cache_key"] = cache_key
+    transcript.save(transcript_path)
+    cache.put_transcript(cache_key, transcript)
+    log.info("转写已保存: %s（%d 条分句）", transcript_path, len(transcript.segments))
+
     if skip_summary:
         result.summary_skipped_reason = "按 --no-summary 跳过"
         stage("done", "转写完成")
         return result
 
-    provider = summarizer_registry.get_provider(cfg.summarizer)
+    provider = provider or summarizer_registry.get_provider(cfg.summarizer)
     result.summary_provider = provider
     summary_cache_key = cache_mod.summary_key(
         transcript_key=cache_key,
@@ -121,12 +144,15 @@ def run(
         summary_type=options.summary_type,
         language=options.language,
         extra=options.extra_instructions,
+        corrections=correction.fingerprint(transcript),
     )
 
     # 同样的转写 + 同样的模型 + 同样的总结类型，没必要再花一次钱
     cached_summary = None if force else cache.get_summary(summary_cache_key)
-    # 给模型看的可以是清洗过的；落盘和缓存里的转写永远是原文
-    model_input = cleaning.clean_transcript(transcript) if cfg.summarizer.clean_transcript else transcript
+    # 给模型看的可以是纠过错、清洗过的；落盘和缓存里的转写永远是原文
+    model_input = correction.apply(transcript)
+    if cfg.summarizer.clean_transcript:
+        model_input = cleaning.clean_transcript(model_input)
     if cached_summary is not None:
         log.info("命中总结缓存（%s），跳过大模型调用", summary_cache_key[:12])
         stage("summarize", "命中总结缓存")

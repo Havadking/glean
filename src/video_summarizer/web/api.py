@@ -36,6 +36,7 @@ from ..errors import VideoSummarizerError
 from ..models import SummaryOptions
 from ..pipeline import plan_transcript_key, run as run_pipeline, write_summary_files
 from .. import cleaning
+from .. import correction as correction_mod
 from .. import digest as digest_mod
 from .. import tagging as tagging_mod
 from .. import listing as listing_mod
@@ -197,6 +198,29 @@ def _record_usage(cfg: Config, provider, *, video_id: str, kind: str, detail: st
     return {"input_tokens": i, "output_tokens": o, "calls": n, "cost": cost, "currency": cfg.summarizer.currency}
 
 
+def _record_usage_raw(cfg: Config, usage: tuple[int, int, int] | None, provider_desc: str | None,
+                      *, video_id: str, kind: str) -> None:
+    """流水线里已经取走的用量（比如纠错那一步）记进账本。"""
+    if not usage or not provider_desc:
+        return
+    i, o, n = usage
+    Cache(cfg.cache_db).add_usage(video_id, kind, None, provider_desc, i, o, n, _money(cfg, i, o) if n else None)
+
+
+def _corrections_dict(transcript) -> dict[str, Any] | None:
+    """meta 里的纠错表给界面看的形状。没跑过纠错返回 None。"""
+    block = transcript.meta.get("corrections") if transcript else None
+    if not isinstance(block, dict):
+        return None
+    items = correction_mod.items_of(transcript)
+    return {
+        "provider": block.get("provider"),
+        "created_at": block.get("created_at"),
+        "items": [{"index": i, **c.to_dict()} for i, c in enumerate(items)],
+        "applied_hits": sum(c.hits for c in items if c.applied),
+    }
+
+
 def _money(cfg: Config, input_tokens: int, output_tokens: int) -> float | None:
     p_in, p_out = cfg.summarizer.price_input_per_m, cfg.summarizer.price_output_per_m
     if p_in is None and p_out is None:
@@ -297,6 +321,7 @@ def create_app(cfg: Config):
             "asr_choices": ASR_CHOICES,
             "asr_default": c.asr.model,
             "diarize_default": c.asr.diarize,
+            "correct_terms_default": c.summarizer.correct_terms,
             "provider": provider_desc,
             "model": c.summarizer.name or c.summarizer.model,
             "currency": c.summarizer.currency,
@@ -520,7 +545,9 @@ def create_app(cfg: Config):
         cache = Cache(c.cache_db)
         costs = cache.usage_by_video()
         tags = cache.tags_by_video()
+        up_groups = cache.get_uploader_groups()
         for g in groups:
+            g["group"] = up_groups.get(g["uploader"]) if g["uploader"] else None
             for e in g["entries"]:
                 e["cost"] = costs.get(e["video_id"])
                 e["tags"] = _tags_list(tags.get(e["video_id"], []))
@@ -540,6 +567,7 @@ def create_app(cfg: Config):
                 "currency": c.summarizer.currency,
             },
             "groups": groups,
+            "uploader_groups": cache.list_uploader_groups(),
             "review": {
                 "period": "week", "key": week_key, "videos": len(week_ids),
                 "generated": week_digest is not None,
@@ -548,17 +576,20 @@ def create_app(cfg: Config):
         }
 
     @app.get("/api/videos/{video_id}")
-    def video(video_id: str, clean: bool = False):
+    def video(video_id: str, clean: bool = False, raw: bool = False):
+        """raw=1 看没应用纠错表的原文。"""
         c = state.fresh_config()
         entry = library_mod.find_entry(c, video_id)
         if entry is None:
             raise HTTPException(404, "没有这个视频")
-        transcript = library_mod.load_transcript(c, entry)
+        transcript = library_mod.load_transcript(c, entry, raw=raw)
         segments = transcript.segments if transcript else []
         paragraphs = to_paragraphs(cleaning.clean_segments(segments) if clean else segments)
         return {
             **_entry_dict(entry),
             "cleaned": clean,
+            "raw": raw,
+            "corrections": _corrections_dict(transcript),
             "clean_ratio": round(cleaning.removed_ratio(segments), 4) if segments else 0.0,
             "usage": Cache(c.cache_db).usage_totals(video_id),
             "meta": transcript.meta if transcript else entry.meta,
@@ -744,10 +775,12 @@ def create_app(cfg: Config):
         summary_type: str | None = None     # None / "" = 只转写
         force: bool = False
         force_asr: bool = False
+        correct_terms: bool | None = None   # None = 按 config
 
     def _submit_process(url: str, *, summary_type: str | None, asr_model: str | None,
                         diarize: str | bool | None, force: bool, force_asr: bool,
-                        title: str | None = None, batch: bool = False, persisted_id: str | None = None):
+                        title: str | None = None, batch: bool = False, persisted_id: str | None = None,
+                        correct_terms: bool | None = None):
         dup = state.jobs.find_active("process", url=url)
         if dup is not None:
             return dup, True
@@ -759,11 +792,13 @@ def create_app(cfg: Config):
             c.asr.model = asr_model
         if diarize is not None:
             c.asr.diarize = diarize
+        if correct_terms is not None:
+            c.summarizer.correct_terms = correct_terms
         info = state.probed(url)
         job_title = title or (info.title if info else url)
         params = {"url": url, "summary_type": summary_type, "asr_model": asr_model,
                   "diarize": diarize, "force": force, "force_asr": force_asr, "title": job_title,
-                  "batch": batch}
+                  "batch": batch, "correct_terms": correct_terms}
         cache = Cache(c.cache_db)
 
         def work(rep: Reporter) -> dict[str, Any]:
@@ -778,6 +813,8 @@ def create_app(cfg: Config):
                     skip_summary=summary_type is None, on_stage=rep.stage, info=info,
                 )
                 search_mod.index_one(c, result.info.video_id)
+                _record_usage_raw(c, result.correction_usage, result.correction_provider_desc,
+                                  video_id=result.info.video_id, kind="polish")
                 if result.summary_provider is not None:
                     _record_usage(c, result.summary_provider, video_id=result.info.video_id,
                                   kind="summary", detail=summary_type)
@@ -816,6 +853,7 @@ def create_app(cfg: Config):
                 prm["url"], summary_type=prm.get("summary_type"), asr_model=prm.get("asr_model"),
                 diarize=prm.get("diarize"), force=bool(prm.get("force")), force_asr=bool(prm.get("force_asr")),
                 title=prm.get("title") or p["title"], batch=True, persisted_id=p["id"],
+                correct_terms=prm.get("correct_terms"),
             )
 
     _resume_pending()
@@ -829,7 +867,8 @@ def create_app(cfg: Config):
         if summary_type and summary_type not in TEMPLATES:
             raise HTTPException(400, f"不认识的总结类型 {summary_type}")
         job, dup = _submit_process(url, summary_type=summary_type, asr_model=body.asr_model,
-                                   diarize=body.diarize, force=body.force, force_asr=body.force_asr)
+                                   diarize=body.diarize, force=body.force, force_asr=body.force_asr,
+                                   correct_terms=body.correct_terms)
         return {"job": job.to_dict(), "duplicate": dup}
 
     class BatchBody(BaseModel):
@@ -837,6 +876,7 @@ def create_app(cfg: Config):
         asr_model: str | None = None
         diarize: str | bool | None = None
         summary_type: str | None = None
+        correct_terms: bool | None = None
 
     @app.post("/api/jobs/batch")
     def create_batch(body: BatchBody):
@@ -855,7 +895,7 @@ def create_app(cfg: Config):
         for url, title in urls:
             job, dup = _submit_process(url, summary_type=summary_type, asr_model=body.asr_model,
                                        diarize=body.diarize, force=False, force_asr=False,
-                                       title=title, batch=True)
+                                       title=title, batch=True, correct_terms=body.correct_terms)
             jobs.append(job.to_dict())
             dups += int(dup)
         return {"jobs": jobs, "queued": len(jobs) - dups, "duplicates": dups}
@@ -899,6 +939,7 @@ def create_app(cfg: Config):
         key = summary_key(
             transcript_key=entry.cache_key or "", provider_desc=provider.describe(),
             summary_type=body.type, language=options.language, extra=options.extra_instructions,
+            corrections=correction_mod.fingerprint(transcript),
         ) if entry.cache_key else None
 
         # 已经有一份且没要求重做：不进队列，直接给
@@ -912,6 +953,7 @@ def create_app(cfg: Config):
                                     "provider": provider.describe()}}
 
         work_dir = entry.work_dir or (c.output_dir / f"{entry.title[:60]}-{entry.video_id}")
+        # load_transcript 给的已经是应用了纠错表的；清洗再叠在上面
         model_input = cleaning.clean_transcript(transcript) if c.summarizer.clean_transcript else transcript
 
         def work(rep: Reporter) -> dict[str, Any]:
@@ -987,6 +1029,61 @@ def create_app(cfg: Config):
 
         return StreamingResponse(gen(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # ----- 纠专有名词 -----
+
+    def _corrections_response(c: Config, entry: library_mod.LibraryEntry) -> dict[str, Any]:
+        t = library_mod.load_transcript(c, entry, raw=True)
+        return {"video_id": entry.video_id, "corrections": _corrections_dict(t)}
+
+    @app.post("/api/videos/{video_id}/corrections")
+    def run_corrections(video_id: str):
+        """给一条已有的视频（重新）出替换表。进任务队列，用量按 polish 记账。"""
+        c = state.fresh_config()
+        entry = library_mod.find_entry(c, video_id)
+        transcript = library_mod.load_transcript(c, entry, raw=True) if entry else None
+        if entry is None or transcript is None:
+            raise HTTPException(404, "没有这个视频的转写")
+        if transcript.source_type != "asr":
+            raise HTTPException(400, "官方字幕是人工的，不用纠错")
+        if c.summarizer.provider == "ollama":
+            raise HTTPException(400, "本地小模型纠专有名词不靠谱，换一个在线模型再试")
+        dup = state.jobs.find_active("polish", video_id=video_id)
+        if dup is not None:
+            return {"job": dup.to_dict(), "duplicate": True}
+        provider = get_summarizer(c.summarizer)
+
+        def work(rep: Reporter) -> dict[str, Any]:
+            rep.stage("polish", f"调用 {provider.describe()} 纠专有名词")
+            fixed = correction_mod.polish(provider, transcript, title=entry.title, uploader=entry.uploader)
+            library_mod.save_transcript(c, entry, fixed)
+            search_mod.index_one(c, video_id)
+            used = _record_usage(c, provider, video_id=video_id, kind="polish", detail=None)
+            return {**_corrections_response(c, entry), "used": used}
+
+        job = state.jobs.submit("polish", f"纠专有名词 · {entry.title}", {"video_id": video_id}, work)
+        return {"job": job.to_dict(), "duplicate": False}
+
+    class CorrectionStateBody(BaseModel):
+        state: str      # applied | rejected
+
+    @app.patch("/api/videos/{video_id}/corrections/{index}")
+    def set_correction_state(video_id: str, index: int, body: CorrectionStateBody):
+        """否决或恢复一条替换。即时生效：阅读视图、搜索索引、总结缓存 key 都跟着变。"""
+        c = state.fresh_config()
+        entry = library_mod.find_entry(c, video_id)
+        transcript = library_mod.load_transcript(c, entry, raw=True) if entry else None
+        if entry is None or transcript is None:
+            raise HTTPException(404, "没有这个视频的转写")
+        try:
+            fixed = correction_mod.set_state(transcript, index, body.state)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except IndexError:
+            raise HTTPException(404, "没有这一条")
+        library_mod.save_transcript(c, entry, fixed)
+        search_mod.index_one(c, video_id)
+        return _corrections_response(c, entry)
 
     # ----- 问视频 -----
 
@@ -1066,6 +1163,47 @@ def create_app(cfg: Config):
                            "tokens": qa_mod.estimate_tokens(text)})
         return materials, videos
 
+    @app.get("/api/uploaders/groups")
+    def uploader_groups():
+        c = state.fresh_config()
+        cache = Cache(c.cache_db)
+        return {
+            "groups": cache.list_uploader_groups(),
+            "mapping": cache.get_uploader_groups(),
+        }
+
+    class RenameGroupBody(BaseModel):
+        from_name: str
+        to_name: str
+
+    @app.post("/api/uploaders/groups/rename")
+    def rename_uploader_group_endpoint(body: RenameGroupBody):
+        c = state.fresh_config()
+        cache = Cache(c.cache_db)
+        n = cache.rename_uploader_group(body.from_name, body.to_name)
+        return {"renamed": n, "groups": cache.list_uploader_groups()}
+
+    @app.delete("/api/uploaders/groups/{name}")
+    def delete_uploader_group_endpoint(name: str):
+        c = state.fresh_config()
+        cache = Cache(c.cache_db)
+        n = cache.delete_uploader_group(name)
+        return {"deleted": n, "groups": cache.list_uploader_groups()}
+
+    class UploaderGroupBody(BaseModel):
+        group: str | None = None
+
+    @app.put("/api/uploaders/{name}/group")
+    def set_uploader_group_endpoint(name: str, body: UploaderGroupBody):
+        c = state.fresh_config()
+        cache = Cache(c.cache_db)
+        cache.set_uploader_group(name, body.group)
+        return {
+            "uploader": name,
+            "group": cache.get_uploader_group(name),
+            "groups": cache.list_uploader_groups(),
+        }
+
     @app.get("/api/uploaders/{name}")
     def uploader_info(name: str):
         c = state.fresh_config()
@@ -1077,9 +1215,12 @@ def create_app(cfg: Config):
             provider_desc = get_summarizer(c.summarizer).describe()
         except VideoSummarizerError as exc:
             provider_desc = f"未配置（{exc}）"
-        qs = Cache(c.cache_db).questions_for_video(f"uploader:{name}")
+        cache = Cache(c.cache_db)
+        qs = cache.questions_for_video(f"uploader:{name}")
+        group = cache.get_uploader_group(name)
         return {
             "uploader": name,
+            "group": group,
             "videos": videos,
             "no_summary": sum(1 for v in videos if v["material"] == "transcript"),
             "estimate": {"input_tokens": total, "cost": _money(c, total, 800), "currency": c.summarizer.currency,

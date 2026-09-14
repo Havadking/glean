@@ -118,6 +118,14 @@ CREATE TABLE IF NOT EXISTS digests (
     created_at  TEXT NOT NULL,
     PRIMARY KEY (period, key)
 );
+
+-- UP 主分组
+CREATE TABLE IF NOT EXISTS uploader_groups (
+    uploader    TEXT PRIMARY KEY,
+    group_name  TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_uploader_groups_group ON uploader_groups(group_name);
 """
 
 
@@ -186,15 +194,23 @@ def summary_key(
     summary_type: str,
     language: str,
     extra: str | None,
+    corrections: str = "",
 ) -> str:
-    """总结的指纹。同样的转写换个模型或换个总结类型，都算不同的东西。"""
-    return _fingerprint({
+    """总结的指纹。同样的转写换个模型或换个总结类型，都算不同的东西。
+
+    corrections 是生效的纠错替换表（correction.fingerprint）：表变了模型看到的正文就变了。
+    没有表时不掺进去，老的缓存条目照样能命中。
+    """
+    parts = {
         "transcript": transcript_key,
         "provider": provider_desc,
         "type": summary_type,
         "lang": language,
         "extra": extra or "",
-    })
+    }
+    if corrections:
+        parts["corrections"] = corrections
+    return _fingerprint(parts)
 
 
 @dataclass
@@ -646,6 +662,100 @@ class Cache:
         except sqlite3.Error:
             return set()
         return {r["video_id"] for r in rows}
+
+    # ---------- UP 主分组 ----------
+
+    def get_uploader_groups(self) -> dict[str, str]:
+        """所有有分组的 UP 主 -> 分组名。"""
+        conn = self._connect()
+        if conn is None:
+            return {}
+        try:
+            with closing(conn):
+                rows = conn.execute("SELECT uploader, group_name FROM uploader_groups").fetchall()
+        except sqlite3.Error:
+            return {}
+        return {r["uploader"]: r["group_name"] for r in rows}
+
+    def get_uploader_group(self, uploader: str) -> str | None:
+        """获取单个 UP 主的分组名。"""
+        conn = self._connect()
+        if conn is None:
+            return None
+        try:
+            with closing(conn):
+                r = conn.execute("SELECT group_name FROM uploader_groups WHERE uploader = ?", (uploader,)).fetchone()
+                return r["group_name"] if r else None
+        except sqlite3.Error:
+            return None
+
+    def list_uploader_groups(self) -> list[str]:
+        """列出所有不重复的分组名称（按名称排序）。"""
+        conn = self._connect()
+        if conn is None:
+            return []
+        try:
+            with closing(conn):
+                rows = conn.execute("SELECT DISTINCT group_name FROM uploader_groups ORDER BY group_name").fetchall()
+        except sqlite3.Error:
+            return []
+        return [r["group_name"] for r in rows]
+
+    def set_uploader_group(self, uploader: str, group_name: str | None) -> None:
+        """设置或清除一个 UP 主的分组。group_name 为空字符串或 None 时删除。"""
+        conn = self._connect()
+        if conn is None:
+            return
+        uploader = uploader.strip()
+        group_name = group_name.strip() if group_name else None
+        try:
+            with closing(conn):
+                if not group_name:
+                    conn.execute("DELETE FROM uploader_groups WHERE uploader = ?", (uploader,))
+                else:
+                    conn.execute(
+                        "INSERT INTO uploader_groups (uploader, group_name, created_at)"
+                        " VALUES (?, ?, ?) ON CONFLICT(uploader) DO UPDATE SET group_name=excluded.group_name",
+                        (uploader, group_name, _now()),
+                    )
+                conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("设置 UP 主分组失败：%s", exc)
+
+    def rename_uploader_group(self, from_name: str, to_name: str) -> int:
+        """将某个分组重命名为新名字。"""
+        conn = self._connect()
+        if conn is None:
+            return 0
+        from_name = from_name.strip()
+        to_name = to_name.strip()
+        if not from_name or not to_name or from_name == to_name:
+            return 0
+        try:
+            with closing(conn):
+                res = conn.execute("UPDATE uploader_groups SET group_name = ? WHERE group_name = ?", (to_name, from_name))
+                conn.commit()
+                return res.rowcount
+        except sqlite3.Error as exc:
+            log.warning("重命名 UP 主分组失败：%s", exc)
+            return 0
+
+    def delete_uploader_group(self, group_name: str) -> int:
+        """删除某个分组（该组下的 UP 主自动恢复为未分组）。"""
+        conn = self._connect()
+        if conn is None:
+            return 0
+        group_name = group_name.strip()
+        if not group_name:
+            return 0
+        try:
+            with closing(conn):
+                res = conn.execute("DELETE FROM uploader_groups WHERE group_name = ?", (group_name,))
+                conn.commit()
+                return res.rowcount
+        except sqlite3.Error as exc:
+            log.warning("删除 UP 主分组失败：%s", exc)
+            return 0
 
     # ---------- 回顾 ----------
 

@@ -97,6 +97,9 @@ class SummarizerConfig:
     clean_transcript: bool = False
     # 处理完一条视频后顺手让模型打 3–5 个主题标签（用总结做输入，几乎不花钱）
     auto_tags: bool = True
+    # ASR 转写完让模型出一张专有名词替换表（"语数科技"→"宇树科技"），叠加在原文上显示。
+    # 要把全文喂一遍模型，1 小时视频约 ¥0.03、十几秒，所以默认关；界面上每次处理可单独勾
+    correct_terms: bool = False
 
     @property
     def api_key(self) -> str | None:

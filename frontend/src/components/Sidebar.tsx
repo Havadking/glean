@@ -22,6 +22,7 @@ export function Sidebar({ narrow, onHide }: { narrow: boolean; onHide: () => voi
       subtitle: '下载字幕',
       download: '提取音频',
       transcribe: '语音识别',
+      polish: '纠专有名词',
       summarize: 'AI 总结',
       tags: '打标签',
     }

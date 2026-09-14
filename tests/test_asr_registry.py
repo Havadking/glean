@@ -149,3 +149,13 @@ def test_diarize_tristate(value, when_needed, when_not):
     cfg = ASRConfig(diarize=value)
     assert cfg.wants_diarization(needed=True) is when_needed
     assert cfg.wants_diarization(needed=False) is when_not
+
+
+def test_funasr_strip_tags_fixes_decimal_points():
+    from video_summarizer.asr.funasr_provider import _strip_tags, fix_decimal_point
+
+    # ct-punc 把小数点当句号切开；只在两边都是数字时才当小数点
+    assert fix_decimal_point("当日收盘价是49。5块钱每股。中签率0。0181。") == "当日收盘价是49.5块钱每股。中签率0.0181。"
+    assert fix_decimal_point("第一句。第二句。") == "第一句。第二句。"
+    text, lang = _strip_tags("<|zh|><|NEUTRAL|><|Speech|><|withitn|>发行价是151。5块。")
+    assert (text, lang) == ("发行价是151.5块。", "zh")

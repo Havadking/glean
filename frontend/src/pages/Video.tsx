@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, type Estimate, type Video as VideoT } from '../api'
 import { AskPanel, paragraphAt, useCitationJump } from '../components/AskPanel'
 import { AudioBar, type AudioHandle } from '../components/AudioBar'
+import { useCorrections } from '../components/Corrections'
 import { Markdown } from '../components/Markdown'
 import { Mindmap } from '../components/Mindmap'
 import { TagEditor } from '../components/Tags'
@@ -24,6 +25,8 @@ export function Video() {
   const [copied, setCopied] = useState(false)
   const [focusStart, setFocusStart] = useState<number | null>(null)
   const [clean, setClean] = useState<boolean>(() => { try { return localStorage.getItem('clean') === '1' } catch { return false } })
+  // 看没应用纠错表的原文。只是临时看一眼，不记住
+  const [raw, setRaw] = useState(false)
 
   // 本地音频：播放器句柄、正在播到的那一段、下载音频的任务
   const audioRef = useRef<AudioHandle>(null)
@@ -72,12 +75,12 @@ export function Video() {
 
   const load = useCallback(async () => {
     try {
-      const v = await api.video(id, clean)
+      const v = await api.video(id, clean, raw)
       setVideo(v)
       setError(null)
       setType((t) => t || Object.keys(v.summaries)[0] || meta?.default_summary_type || 'overall')
     } catch (e) { setError(e) }
-  }, [id, clean, meta?.default_summary_type])
+  }, [id, clean, raw, meta?.default_summary_type])
   const toggleClean = () => {
     const next = !clean
     setClean(next)
@@ -117,7 +120,8 @@ export function Video() {
     const start = paragraphAt(starts, sec)
     setPlayingStart((cur) => (cur === start ? cur : start))
   }, [starts])
-  useEffect(() => { setPlayingStart(null); setAudioJobId(null) }, [id])
+  useEffect(() => { setPlayingStart(null); setAudioJobId(null); setRaw(false) }, [id])
+  const corrections = useCorrections(video, load)
   useEffect(() => {
     if (audioJob?.status === 'done') { setAudioJobId(null); void load() }
   }, [audioJob?.status, load])
@@ -191,16 +195,24 @@ export function Video() {
         <div className="col left" style={{ width: `${(splitRatio * 100).toFixed(1)}%` }}>
           <div className="colhead">
             <h2>转写 <span style={{ color: 'var(--faint)', fontWeight: 400 }}>{video.paragraphs.length} 段 · {video.segment_count} 句</span></h2>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div className="tools">
               <label className="search"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="在这条转写里找…" /></label>
               {query.trim() && <Pill tone={hits ? 'neutral' : 'warn'}>{hits} 处</Pill>}
               <button className={`btn sm${clean ? ' primary' : ' ghost'}`} onClick={toggleClean}
                 title={clean ? '正在显示去掉口水话的版本，点击看原文' : `去掉"呃""嗯""就是就是"这类口水话（约 ${Math.round(video.clean_ratio * 100)}%），时间轴不变`}>
                 {clean ? '已去口水话' : '去口水话'}
               </button>
+              {corrections.chip}
+              {!!video.corrections?.applied_hits && (
+                <button className={`btn sm${raw ? ' primary' : ' ghost'}`} onClick={() => setRaw((r) => !r)}
+                  title={raw ? '正在看识别出来的原文，点击回到修正后的' : '看一眼没应用纠错表的原文'}>
+                  {raw ? '正在看原文' : '看原文'}
+                </button>
+              )}
               <button className="btn ghost sm" title="复制全文" onClick={() => copyText(video.paragraphs.map((p) => `[${fmtDuration(p.start)}] ${p.text}`).join('\n\n'))}><Copy /> {copied ? '已复制' : '复制'}</button>
             </div>
           </div>
+          {corrections.panel}
           {video.paragraphs.length === 0 && <div className="empty"><b>这条视频没有转写文本</b>缓存和产物目录里都没找到。</div>}
           {video.paragraphs.map((p, i) => (
             <div className={`para${query.trim() && countHits(p.text, query) ? ' hit' : ''}${hasAudio && playingStart === p.start ? ' playing' : ''}`} key={i} id={`p-${Math.floor(p.start)}`}>

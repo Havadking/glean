@@ -61,6 +61,8 @@ EXPECTED_SAMPLE_RATE = 16000
 
 # SenseVoice 的富文本标签：<|zh|><|EMO_UNKNOWN|><|Speech|><|withitn|>
 _TAG_RE = re.compile(r"<\|([^|]*)\|>")
+# 标点模型把小数点当句号："49。5 块" -> "49.5 块"。两边都是数字时才是小数点
+_DECIMAL_RE = re.compile(r"(?<=\d)。(?=\d)")
 
 
 class FunASRProvider(BaseASRProvider):
@@ -166,7 +168,7 @@ class FunASRProvider(BaseASRProvider):
             Segment(
                 start=float(s.get("start", 0)) / 1000.0,
                 end=float(s.get("end", 0)) / 1000.0,
-                text=(s.get("text") or "").strip(),
+                text=fix_decimal_point((s.get("text") or "").strip()),
                 speaker=f"{SPEAKER_PREFIX}{int(s.get('spk', 0)) + 1}",
             )
             for s in sentences
@@ -358,7 +360,11 @@ def _strip_tags(raw: str) -> tuple[str, str | None]:
         if low in SENSEVOICE_LANGUAGES:
             language = low
             break
-    return _TAG_RE.sub("", raw or "").strip(), language
+    return fix_decimal_point(_TAG_RE.sub("", raw or "").strip()), language
+
+
+def fix_decimal_point(text: str) -> str:
+    return _DECIMAL_RE.sub(".", text)
 
 
 def _hms(seconds: float) -> str:

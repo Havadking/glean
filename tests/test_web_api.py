@@ -30,6 +30,8 @@ class FakeSummarizer(BaseSummarizer):
             return self._complete_for_qa(user)
         if "打主题标签" in system:
             return '["护肤", "成分分析", "防晒"]'
+        if "校对员" in system:
+            return '[{"from": "第一句", "to": "第壹句", "why": "测试"}, {"from": "没有的", "to": "也没有", "why": ""}]'
         if "个人知识库助手" in system:
             return "## 护肤\n这段时间两条都在讲护肤 【1】【2】。"
         return "# 根\n## 分支\n- 点一\n- 点二\n" if "大纲" in system + user else "## 一句话总结\n假的总结。"
@@ -279,6 +281,8 @@ def test_process_job_passes_options_through(client, monkeypatch):
             summary = None
             summary_skipped_reason = "skip"
             summary_provider = None
+            correction_usage = None
+            correction_provider_desc = None
         return R()
 
     monkeypatch.setattr(api_mod, "run_pipeline", fake_run)
@@ -342,6 +346,8 @@ def _fake_pipeline(gate=None, video_id="vid"):
             summary = None
             summary_skipped_reason = "skip"
             summary_provider = None
+            correction_usage = None
+            correction_provider_desc = None
         R.info.video_id = video_id
         R.info.title = url
         return R()
@@ -532,6 +538,94 @@ def test_search_index_follows_summary_jobs_and_deletes(client):
     client.delete("/api/videos/BVAAA")
     assert client.get("/api/search?q=第二句").json()["videos"] == []
     assert client.post("/api/search/reindex").json()["videos"] == 1
+
+
+# ---------- 纠专有名词 ----------
+
+
+def test_corrections_job_applies_on_read_and_indexes_both_spellings(client, workspace):
+    v = client.get("/api/videos/BVAAA").json()
+    assert v["corrections"] is None and v["paragraphs"][0]["text"].startswith("第一句")
+
+    r = client.post("/api/videos/BVAAA/corrections").json()
+    job = _wait_job(client, r["job"]["id"])
+    assert job["status"] == "done" and job["result"]["used"]["calls"] == 1
+    items = job["result"]["corrections"]["items"]
+    assert [(i["index"], i["from"], i["to"], i["hits"], i["state"]) for i in items] == [(0, "第一句", "第壹句", 1, "applied")]
+
+    v = client.get("/api/videos/BVAAA").json()
+    assert v["paragraphs"][0]["text"].startswith("第壹句") and v["corrections"]["applied_hits"] == 1
+    assert v["raw"] is False
+    raw = client.get("/api/videos/BVAAA?raw=1").json()
+    assert raw["paragraphs"][0]["text"].startswith("第一句") and raw["raw"] is True
+    # 缓存和目录里的都是原文 + 表
+    saved = Transcript.load(workspace["dir_a"] / "transcript.json")
+    assert Cache(workspace["cfg"].cache_db).get_transcript(workspace["key_a"]).meta["corrections"] == saved.meta["corrections"]
+    assert saved.segments[0].text == "第一句。" and saved.meta["corrections"]["items"][0]["to"] == "第壹句"
+    # 原文和修正文都能搜到，摘录显示修正后的
+    for q in ("第一句", "第壹句"):
+        hits = client.get(f"/api/search?q={q}").json()
+        assert hits["transcript_hits"] == 1 and "第壹句" in hits["videos"][0]["hits"][0]["snippet"], q
+    # 用量记成 polish
+    assert any(u["kind"] == "polish" for u in client.get("/api/usage").json()["recent"])
+
+
+def test_corrections_reject_restore_and_summary_cache_key(client):
+    r = client.post("/api/videos/BVAAA/corrections").json()
+    _wait_job(client, r["job"]["id"])
+    # 表变了，缓存里的旧总结不再命中，要重新算
+    r = client.post("/api/videos/BVAAA/summaries", json={"type": "overall"}).json()
+    assert r["cached"] is False
+    job = _wait_job(client, r["job"]["id"])
+    assert job["status"] == "done" and "第壹句" in FakeSummarizer.calls[-1]
+
+    r = client.patch("/api/videos/BVAAA/corrections/0", json={"state": "rejected"}).json()
+    assert r["corrections"]["items"][0]["state"] == "rejected" and r["corrections"]["applied_hits"] == 0
+    assert client.get("/api/videos/BVAAA").json()["paragraphs"][0]["text"].startswith("第一句")
+    assert client.get("/api/search?q=第壹句").json()["transcript_hits"] == 0
+    # 否决之后总结 key 回到没有表的样子，命中最初那份缓存
+    assert client.post("/api/videos/BVAAA/summaries", json={"type": "overall"}).json()["cached"] is True
+
+    r = client.patch("/api/videos/BVAAA/corrections/0", json={"state": "applied"}).json()
+    assert r["corrections"]["applied_hits"] == 1
+    assert client.patch("/api/videos/BVAAA/corrections/9", json={"state": "applied"}).status_code == 404
+    assert client.patch("/api/videos/BVAAA/corrections/0", json={"state": "maybe"}).status_code == 400
+    # 重跑一次，之前否决过的还是否决
+    client.patch("/api/videos/BVAAA/corrections/0", json={"state": "rejected"})
+    r = client.post("/api/videos/BVAAA/corrections").json()
+    assert _wait_job(client, r["job"]["id"])["result"]["corrections"]["items"][0]["state"] == "rejected"
+
+
+def test_corrections_refuse_subtitle_sources(client):
+    assert client.post("/api/videos/bbb/corrections").status_code == 400
+    assert client.post("/api/videos/nope/corrections").status_code == 404
+
+
+def test_process_job_passes_correct_terms_through(client, monkeypatch):
+    seen = {}
+
+    def fake_run(url, cfg, **kw):
+        seen["correct"] = cfg.summarizer.correct_terms
+
+        class R:
+            class info:
+                video_id = "vid"
+                title = "t"
+            transcript = Transcript("u", "asr", "zh", 1.0, [], video_id="vid")
+            summary = None
+            summary_skipped_reason = "skip"
+            summary_provider = None
+            correction_usage = (100, 10, 1)
+            correction_provider_desc = "fake/model"
+        return R()
+
+    monkeypatch.setattr(api_mod, "run_pipeline", fake_run)
+    assert client.get("/api/meta").json()["correct_terms_default"] is False
+    r = client.post("/api/jobs", json={"url": "https://x/v3", "correct_terms": True}).json()
+    _wait_job(client, r["job"]["id"])
+    assert seen["correct"] is True
+    row = next(u for u in client.get("/api/usage").json()["recent"] if u["kind"] == "polish")
+    assert row["video_id"] == "vid" and row["input_tokens"] == 100 and row["cost"] == 0.0002   # 四舍五入到 4 位
 
 
 # ---------- 存储 ----------
@@ -754,3 +848,43 @@ def test_review_day_and_empty_period(client):
     assert client.post("/api/review/generate", json={"period": "week", "key": "2020-W01"}).status_code == 404
     assert client.get("/api/review?period=month").status_code == 400
     assert client.get("/api/review?key=垃圾").status_code == 400
+
+
+# ---------- UP 主分组 ----------
+
+
+def test_uploader_group_crud(client):
+    # 初始状态：无分组
+    r = client.get("/api/uploaders/groups").json()
+    assert r["groups"] == [] and r["mapping"] == {}
+
+    # 设置分组
+    r = client.put("/api/uploaders/某 UP/group", json={"group": "财经"}).json()
+    assert r["group"] == "财经" and r["groups"] == ["财经"]
+
+    # 查询详情带出分组
+    info = client.get("/api/uploaders/某 UP").json()
+    assert info["group"] == "财经"
+
+    # 库接口带出分组
+    lib = client.get("/api/library").json()
+    up_group = next(g for g in lib["groups"] if g["uploader"] == "某 UP")
+    assert up_group["group"] == "财经"
+    assert "财经" in lib["uploader_groups"]
+
+    # 重命名分组
+    rn = client.post("/api/uploaders/groups/rename", json={"from_name": "财经", "to_name": "经济金融"}).json()
+    assert rn["renamed"] == 1 and rn["groups"] == ["经济金融"]
+    assert client.get("/api/uploaders/某 UP").json()["group"] == "经济金融"
+
+    # 删除分组（成员恢复未分组）
+    dl = client.delete("/api/uploaders/groups/经济金融").json()
+    assert dl["deleted"] == 1 and dl["groups"] == []
+    assert client.get("/api/uploaders/某 UP").json()["group"] is None
+
+    # 清除分组为 None
+    client.put("/api/uploaders/某 UP/group", json={"group": "科技"})
+    assert client.get("/api/uploaders/某 UP").json()["group"] == "科技"
+    client.put("/api/uploaders/某 UP/group", json={"group": None})
+    assert client.get("/api/uploaders/某 UP").json()["group"] is None
+

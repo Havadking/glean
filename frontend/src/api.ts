@@ -11,6 +11,7 @@ export interface Meta {
   asr_choices: AsrChoice[]
   asr_default: string
   diarize_default: string | boolean
+  correct_terms_default: boolean
   provider: string
   model?: string
   currency: string
@@ -75,12 +76,15 @@ export interface UsageTotals { input_tokens: number; output_tokens: number; call
 export interface UsageRow { video_id: string; kind: string; detail: string | null; provider: string; input_tokens: number; output_tokens: number; calls: number; cost: number | null; created_at: string }
 export interface Storage { audio_bytes: number; audio_dirs: number; other_bytes: number; cache_bytes: number; output_dir: string }
 export interface Usage { currency: string; priced: boolean; total: UsageTotals; month: UsageTotals; recent: UsageRow[] }
-export interface LibraryGroup { uploader: string | null; entries: Entry[] }
+export interface LibraryGroup { uploader: string | null; group?: string | null; entries: Entry[] }
 /** 本周回顾的状态：侧栏据此画小红点 */
 export interface ReviewStatus { period: 'week' | 'day'; key: string; videos: number; generated: boolean; stale: boolean }
-export interface Library { stats: LibraryStats; groups: LibraryGroup[]; review: ReviewStatus }
+export interface Library { stats: LibraryStats; groups: LibraryGroup[]; review: ReviewStatus; uploader_groups?: string[] }
 
 export interface Paragraph { start: number; end: number; text: string; speaker: string | null }
+/** 纠专有名词的替换表里的一条。index 是在表里的位置，否决/恢复按它定位 */
+export interface CorrectionItem { index: number; from: string; to: string; why: string; hits: number; state: 'applied' | 'rejected' }
+export interface Corrections { provider: string | null; created_at: string | null; items: CorrectionItem[]; applied_hits: number }
 export interface MindmapNode { content: string; children: MindmapNode[] }
 export interface Summary {
   type: string
@@ -96,6 +100,10 @@ export interface Video extends Omit<Entry, 'summaries'> {
   usage: UsageTotals
   cleaned: boolean
   clean_ratio: number
+  /** true = 正在看没应用替换表的原文 */
+  raw: boolean
+  /** 没跑过纠错是 null */
+  corrections: Corrections | null
   paragraphs: Paragraph[]
   summaries: Record<string, Summary>
   tags: Tag[]
@@ -194,6 +202,7 @@ export interface QuestionsResponse {
 export interface UploaderVideo { index: number; video_id: string; title: string; upload_date: string | null; duration_sec: number; material: string; tokens: number }
 export interface UploaderInfo {
   uploader: string
+  group?: string | null
   videos: UploaderVideo[]
   no_summary: number
   estimate: { input_tokens: number; cost: number | null; currency: string; provider: string }
@@ -293,7 +302,14 @@ export const api = {
   storage: () => call<Storage>('/storage'),
   clearAudio: () => post<{ dirs: number; freed_bytes: number }>('/storage/clear-audio', {}),
   library: () => call<Library>('/library'),
-  video: (id: string, clean = false) => call<Video>(`/videos/${encodeURIComponent(id)}${clean ? '?clean=1' : ''}`),
+  video: (id: string, clean = false, raw = false) => {
+    const q = [clean && 'clean=1', raw && 'raw=1'].filter(Boolean).join('&')
+    return call<Video>(`/videos/${encodeURIComponent(id)}${q ? `?${q}` : ''}`)
+  },
+  runCorrections: (id: string) => post<{ job: Job; duplicate: boolean }>(`/videos/${encodeURIComponent(id)}/corrections`, {}),
+  setCorrectionState: (id: string, index: number, state: 'applied' | 'rejected') =>
+    call<{ video_id: string; corrections: Corrections }>(`/videos/${encodeURIComponent(id)}/corrections/${index}`,
+      { method: 'PATCH', body: JSON.stringify({ state }) }),
   estimate: (id: string, type: string) =>
     call<Estimate>(`/videos/${encodeURIComponent(id)}/estimate?type=${encodeURIComponent(type)}`),
   deleteVideo: (id: string) => call<{ removed_dir: boolean }>(`/videos/${encodeURIComponent(id)}`, { method: 'DELETE' }),
@@ -302,10 +318,10 @@ export const api = {
   avatarUrl: (name: string) => `/api/uploaders/${encodeURIComponent(name)}/avatar`,
   openFolder: (id: string) => post<{ ok: boolean }>(`/videos/${encodeURIComponent(id)}/open`, {}),
   probe: (url: string, page = 1, keyword = '') => post<Probe | Listing>('/probe', { url, page, keyword }),
-  batch: (body: { items: { url: string; title?: string }[]; summary_type?: string | null; asr_model?: string | null; diarize?: string | boolean | null }) =>
+  batch: (body: { items: { url: string; title?: string }[]; summary_type?: string | null; asr_model?: string | null; diarize?: string | boolean | null; correct_terms?: boolean | null }) =>
     post<{ jobs: Job[]; queued: number; duplicates: number }>('/jobs/batch', body),
   cancelQueued: () => call<{ cancelled: number }>('/jobs', { method: 'DELETE' }),
-  createJob: (body: { url: string; asr_model?: string | null; diarize?: string | boolean | null; summary_type?: string | null; force?: boolean; force_asr?: boolean }) =>
+  createJob: (body: { url: string; asr_model?: string | null; diarize?: string | boolean | null; summary_type?: string | null; force?: boolean; force_asr?: boolean; correct_terms?: boolean | null }) =>
     post<{ job: Job; duplicate: boolean }>('/jobs', body),
   summarize: (id: string, body: { type: string; language?: string; extra?: string | null; force?: boolean }) =>
     post<{ job: Job | null; duplicate: boolean; cached: boolean; summary?: { type: string; content: string; provider: string } }>(
@@ -314,6 +330,16 @@ export const api = {
   ask: (id: string, question: string, history: { question: string; answer: string }[]) =>
     post<Question & { created_at: string }>(`/videos/${encodeURIComponent(id)}/ask`, { question, history }),
   uploader: (name: string) => call<UploaderInfo>(`/uploaders/${encodeURIComponent(name)}`),
+  setUploaderGroup: (name: string, group: string | null) =>
+    call<{ uploader: string; group: string | null; groups: string[] }>(`/uploaders/${encodeURIComponent(name)}/group`, {
+      method: 'PUT',
+      body: JSON.stringify({ group }),
+    }),
+  uploaderGroups: () => call<{ groups: string[]; mapping: Record<string, string> }>('/uploaders/groups'),
+  renameUploaderGroup: (from_name: string, to_name: string) =>
+    post<{ renamed: number; groups: string[] }>('/uploaders/groups/rename', { from_name, to_name }),
+  deleteUploaderGroup: (name: string) =>
+    call<{ deleted: number; groups: string[] }>(`/uploaders/groups/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   askUploader: (name: string, question: string, history: { question: string; answer: string }[]) =>
     post<Question>(`/uploaders/${encodeURIComponent(name)}/ask`, { question, history }),
   deleteQuestion: (id: number) => call<{ deleted: boolean }>(`/questions/${id}`, { method: 'DELETE' }),

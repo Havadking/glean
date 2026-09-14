@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from . import correction
 from .models import Transcript
 from .web.reading import _is_cjk, to_paragraphs
 
@@ -147,12 +148,20 @@ class SearchIndex:
         self, video_id: str, transcript: Transcript | None,
         summaries: Iterable[tuple[str, str]] = (),
     ) -> int:
-        """重建一个视频的全部索引行。summaries 是 (类型, 正文) 列表。返回写入行数。"""
+        """重建一个视频的全部索引行。summaries 是 (类型, 正文) 列表。返回写入行数。
+
+        transcript 传原文（带纠错表的那份）：摘录显示修正后的，索引列原文和修正文都进 ——
+        用户记得哪个写法就搜哪个。纠错不动标点和时间轴，所以段落编号和阅读视图一致。
+        """
         rows: list[tuple[str, str, str, str, float, str]] = []
         if transcript is not None:
+            fixes = correction.applied_items(transcript)
             for i, p in enumerate(to_paragraphs(transcript.segments)):
-                if p.text.strip():
-                    rows.append((tokenize(p.text), video_id, "transcript", str(i), p.start, p.text))
+                if not p.text.strip():
+                    continue
+                shown = correction.apply_text(p.text, fixes)
+                tok = tokenize(shown) if shown == p.text else tokenize(shown) + " " + tokenize(p.text)
+                rows.append((tok, video_id, "transcript", str(i), p.start, shown))
         for summary_type, content in summaries:
             for line_no, line in enumerate(content.splitlines()):
                 clean = line.strip().lstrip("#-*>0123456789. ").strip()
@@ -259,7 +268,7 @@ def sync_index(cfg, *, force: bool = False) -> tuple[int, int]:
     for entry in load_library(cfg):
         if entry.video_id in have:
             continue
-        n = index.index_video(entry.video_id, load_transcript(cfg, entry),
+        n = index.index_video(entry.video_id, load_transcript(cfg, entry, raw=True),
                               [(k, v.content) for k, v in load_summaries(cfg, entry).items()])
         videos += 1
         rows += n
@@ -275,5 +284,5 @@ def index_one(cfg, video_id: str) -> int:
     if entry is None:
         index.remove_video(video_id)
         return 0
-    return index.index_video(video_id, load_transcript(cfg, entry),
+    return index.index_video(video_id, load_transcript(cfg, entry, raw=True),
                              [(k, v.content) for k, v in load_summaries(cfg, entry).items()])

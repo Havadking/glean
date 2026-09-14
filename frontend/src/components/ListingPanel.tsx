@@ -22,10 +22,14 @@ export function ListingPanel({ listing, url, onSubmitted }: {
     listing.entries.filter((e) => !e.in_library && !e.queued).map((e) => e.video_id)))
   const [summaryType, setSummaryType] = useState<string>('')
   const [asr, setAsr] = useState<string>('')
+  const [correctTerms, setCorrectTerms] = useState<boolean>(false)
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
-    if (meta) { setSummaryType((t) => t || meta.default_summary_type); setAsr((a) => a || meta.asr_default) }
+    if (meta) {
+      setSummaryType((t) => t || meta.default_summary_type); setAsr((a) => a || meta.asr_default)
+      setCorrectTerms(meta.correct_terms_default)
+    }
   }, [meta])
   useEffect(() => { setPages([listing]); setKeyword(listing.keyword ?? '') }, [listing])
 
@@ -71,7 +75,7 @@ export function ListingPanel({ listing, url, onSubmitted }: {
     try {
       const r = await api.batch({
         items: chosen.map((e) => ({ url: e.url, title: e.title })),
-        summary_type: summaryType || null, asr_model: asr || null,
+        summary_type: summaryType || null, asr_model: asr || null, correct_terms: correctTerms,
       })
       setPages((ps) => ps.map((p) => ({ ...p, entries: p.entries.map((e) => selected.has(e.video_id) ? { ...e, queued: true } : e) })))
       setSelected(new Set())
@@ -152,6 +156,10 @@ export function ListingPanel({ listing, url, onSubmitted }: {
             <option value="">不总结</option>
           </select>
         </div>
+        <label className="opt check" title="走语音识别的视频识别完让模型纠专有名词，叠在原文上、逐条可否决。1 小时约 3 分钱">
+          <input type="checkbox" checked={correctTerms} onChange={(e) => setCorrectTerms(e.target.checked)} />
+          纠专有名词
+        </label>
         <div className="opt" style={{ marginLeft: 'auto' }}>
           <span style={{ color: 'var(--mute)', marginRight: 10 }}>
             已选 {chosen.length} 条 · {fmtMinutes(totalSec)} 分钟{cost ? ` · 预计 ${cost}` : ''}

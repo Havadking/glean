@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .. import correction
 from ..cache import Cache
 from ..config import Config
 from ..models import Transcript
@@ -96,8 +97,19 @@ def load_library(cfg: Config) -> list[LibraryEntry]:
     return result
 
 
-def load_transcript(cfg: Config, entry: LibraryEntry) -> Transcript | None:
-    """读一个视频的转写：缓存优先，其次目录里的 transcript.json。"""
+def load_transcript(cfg: Config, entry: LibraryEntry, *, raw: bool = False) -> Transcript | None:
+    """读一个视频的转写：缓存优先，其次目录里的 transcript.json。
+
+    默认把 meta 里的纠错替换表应用上（阅读、搜索、总结、问答都该看修正后的）；
+    要改替换表本身、或者用户要看原文时传 raw=True。
+    """
+    t = _load_raw_transcript(cfg, entry)
+    if t is None or raw:
+        return t
+    return correction.apply(t)
+
+
+def _load_raw_transcript(cfg: Config, entry: LibraryEntry) -> Transcript | None:
     if entry.cache_key:
         t = Cache(cfg.cache_db).get_transcript(entry.cache_key)
         if t is not None:
@@ -108,6 +120,17 @@ def load_transcript(cfg: Config, entry: LibraryEntry) -> Transcript | None:
         except (OSError, ValueError, TypeError) as exc:
             log.warning("读不了 %s：%s", entry.transcript_path, exc)
     return None
+
+
+def save_transcript(cfg: Config, entry: LibraryEntry, transcript: Transcript) -> None:
+    """把（原文的）转写写回缓存和目录，两处都在就都写。改了纠错表之后用。"""
+    if entry.cache_key:
+        Cache(cfg.cache_db).put_transcript(entry.cache_key, transcript)
+    if entry.transcript_path:
+        try:
+            transcript.save(entry.transcript_path)
+        except OSError as exc:
+            log.warning("写不了 %s：%s", entry.transcript_path, exc)
 
 
 @dataclass
