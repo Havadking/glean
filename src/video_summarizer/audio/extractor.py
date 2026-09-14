@@ -91,7 +91,7 @@ def _run_ydl(
         outtmpl={"default": str(workdir / "%(id)s.%(ext)s")},
         progress_hooks=[_hook],
     )
-    download(info, opts)
+    download(info, opts, cfg.download)
 
     if downloaded:
         return Path(downloaded[-1])

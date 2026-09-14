@@ -23,7 +23,10 @@ from yt_dlp.utils import DownloadError as YTDLPDownloadError, ExtractorError
 
 from .config import DownloadConfig
 from .errors import DownloadError
-from .ytdlp_base import VideoInfo, _is_rate_limited, build_ydl_opts, video_info_from_dict
+from . import douyin
+from .ytdlp_base import (
+    VideoInfo, _is_rate_limited, build_ydl_opts, video_info_from_dict, wants_douyin_browser,
+)
 
 T = TypeVar("T")
 
@@ -177,8 +180,15 @@ def _flat_extract(url: str, cfg: DownloadConfig, page: int) -> dict[str, Any]:
                           playlist_items=f"{start}:{end}")
 
     def fetch():
-        with YoutubeDL(opts) as ydl:
-            return ydl.sanitize_info(ydl.extract_info(url, download=False))
+        try:
+            with YoutubeDL(opts) as ydl:
+                return ydl.sanitize_info(ydl.extract_info(url, download=False))
+        except YTDLPDownloadError as exc:
+            if not wants_douyin_browser(url, cfg, exc):
+                raise
+            # 抖音没有列表，这里只会是单个视频；详情接口被风控拦下就换本机浏览器去拿
+            log.info("yt-dlp 打不通抖音详情接口，改用本机浏览器：%s", str(exc).splitlines()[0][:120])
+            return douyin.probe_via_browser(url, cfg)
 
     info = _with_backoff("读取列表", fetch)
     if not info:

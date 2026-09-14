@@ -34,6 +34,10 @@ class DownloadConfig:
     # Netscape 格式的 cookie 文件（浏览器扩展导出）。B 站带登录态时限流宽松得多。
     # Chrome 127 之后 yt-dlp 读不了 Windows 上的 Chrome cookie，用这个更省事
     cookies_file: str | None = None
+    # 抖音详情接口被风控拦下（yt-dlp 报 "Fresh cookies are needed" / 403）时，
+    # 无头拉起本机浏览器替它请求，拿到的 cookie 也会写回 cookies_file。
+    # auto = 依次试 chrome / msedge / playwright 自带 chromium；也可以指定其中一个；off = 关掉
+    douyin_browser: str = "auto"
     # 批量处理时两个视频之间至少隔这么久再去碰站点。B 站 412 是按 IP 的频率风控
     batch_delay_sec: float = 5.0
 

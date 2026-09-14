@@ -35,6 +35,11 @@ funasr = [
     "torch>=2.9",
     "torchaudio>=2.9",
 ]
+# 抖音 cookie 自动刷新：用本机已装的 Chrome/Edge 无头访问一次抖音拿新 cookie。
+# 只装 Python 包，不需要 `playwright install` 下载浏览器内核。
+cookies = [
+    "playwright>=1.45",
+]
 # 测试。跑 `uv run pytest`。
 dev = [
     "pytest>=8.0",

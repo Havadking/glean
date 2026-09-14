@@ -17,7 +17,9 @@ from urllib.parse import urlparse
 
 from yt_dlp import YoutubeDL
 from yt_dlp.networking import Request
+from yt_dlp.utils import ExtractorError
 
+from .. import douyin
 from ..config import Config
 from ..ytdlp_base import build_ydl_opts
 from .library import LibraryEntry
@@ -77,7 +79,7 @@ def _fetch_locked(cfg: Config, name: str, entry: LibraryEntry) -> Path | None:
         if site == "bilibili":
             url, referer = _bilibili_face(ydl, entry), "https://www.bilibili.com/"
         else:
-            url, referer = _douyin_face(ydl, entry), "https://www.douyin.com/"
+            url, referer = _douyin_face(ydl, cfg, entry), "https://www.douyin.com/"
         if not url:
             return None
         with ydl.urlopen(Request(url, headers={"Referer": referer})) as resp:
@@ -110,14 +112,20 @@ def _bilibili_face(ydl: YoutubeDL, entry: LibraryEntry) -> str | None:
     return owner.get("face") or None
 
 
-def _douyin_face(ydl: YoutubeDL, entry: LibraryEntry) -> str | None:
-    """走 yt-dlp 抖音 extractor 用的同一个详情接口，cookie 一起复用；cookie 过期时这里也会 403。"""
+def _douyin_face(ydl: YoutubeDL, cfg: Config, entry: LibraryEntry) -> str | None:
+    """走 yt-dlp 抖音 extractor 用的同一个详情接口；被风控拦下（403）就和探测一样换本机浏览器去拿。"""
     ie = ydl.get_info_extractor("Douyin")
-    data = ie._download_json(  # noqa: SLF001
-        "https://www.douyin.com/aweme/v1/web/aweme/detail/", entry.video_id,
-        query={"aweme_id": entry.video_id}, note="拿作者头像",
-    )
-    author = ((data or {}).get("aweme_detail") or {}).get("author") or {}
+    try:
+        data = ie._download_json(  # noqa: SLF001
+            "https://www.douyin.com/aweme/v1/web/aweme/detail/", entry.video_id,
+            query={"aweme_id": entry.video_id}, note="拿作者头像",
+        )
+        detail = (data or {}).get("aweme_detail") or {}
+    except ExtractorError as exc:
+        if not (douyin.enabled(cfg.download) and douyin.needs_browser(exc)):
+            raise
+        detail = douyin.fetch_detail_via_browser(entry.video_id, cfg.download)
+    author = detail.get("author") or {}
     for key in ("avatar_larger", "avatar_medium", "avatar_thumb"):
         urls = (author.get(key) or {}).get("url_list") or []
         if urls:

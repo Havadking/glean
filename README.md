@@ -7,11 +7,11 @@
 ## 快速开始
 
 ```bash
-uv sync --extra cuda --extra ui --extra funasr
+uv sync --extra cuda --extra ui --extra funasr --extra cookies
 cp .env.example .env              # 然后填入 DEEPSEEK_API_KEY
 ```
 
-各 extra 的作用：`funasr` 是默认 ASR（要拉 torch，约 3GB）、`cuda` 是 whisper 兜底走 GPU 需要的运行库、`ui` 是 Web 界面。只想先跑起来的话 `uv sync --extra funasr` 就够。
+各 extra 的作用：`funasr` 是默认 ASR（要拉 torch，约 3GB）、`cuda` 是 whisper 兜底走 GPU 需要的运行库、`ui` 是 Web 界面、`cookies` 是抖音的浏览器兜底（只装 playwright 的 Python 包，用本机 Chrome/Edge，不下载浏览器内核）。只想先跑起来的话 `uv sync --extra funasr` 就够。
 
 图形界面：
 
@@ -58,7 +58,11 @@ FastAPI 后端 + React 前端，构建产物随包分发，**用户不需要装 
 
 ### 抖音
 
-底层是 yt-dlp，抖音链接直接贴。分享口令（"8.52 复制打开抖音… https://v.douyin.com/xxx/ …"）整段贴进去也行，程序会把链接抠出来。唯一的门槛：抖音要求带浏览器 cookie（不用登录，打开过 douyin.com 就有）——用「Get cookies.txt LOCALLY」之类的扩展导出，`config.yaml` 里 `download.cookies_file` 指过去。**cookie 文件绝不能提交进仓库**（`.gitignore` 已经挡了 `*cookie*`）。抖音没有字幕，永远走语音识别。
+底层是 yt-dlp，抖音链接直接贴。分享口令（"8.52 复制打开抖音… https://v.douyin.com/xxx/ …"）整段贴进去也行，程序会把链接抠出来。抖音没有字幕，永远走语音识别。
+
+抖音的详情接口要页面 JS 现算的风控参数（uifid、a_bogus、x-secsdk-web-signature），yt-dlp 只带 cookie 会被拦，报 "Fresh cookies (not necessarily logged in) are needed"——手动导出多新的 cookie 都没用。程序的做法是被拦时无头拉起本机已装的 Chrome / Edge（访客身份，不登录，不碰你日常的浏览器配置），打开一次 douyin.com，在页面上下文里请求详情接口让站点自己把签名补齐，拿到的结果交回 yt-dlp 解析、下载。整个过程 3~5 秒，全自动。需要 `uv sync --extra cookies`；`config.yaml` 里 `download.douyin_browser` 可以指定浏览器或关掉。
+
+拿到的抖音 cookie 会顺手合并写回 `download.cookies_file`（只动抖音域，B 站等其他站点的原样保留）。**cookie 文件绝不能提交进仓库**（`.gitignore` 已经挡了 `*cookie*`）；用扩展手动导出时也请只导出当前站点，别把全部站点的登录态一起导出来。
 
 ### 合集 / UP 主空间批量处理
 

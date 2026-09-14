@@ -23,6 +23,7 @@ from typing import Any
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError as YTDLPDownloadError
 
+from . import douyin
 from .config import DownloadConfig
 from .errors import DownloadError
 
@@ -132,6 +133,11 @@ def probe(url: str, cfg: DownloadConfig) -> VideoInfo:
             break
         except YTDLPDownloadError as exc:
             last_error = exc
+            if wants_douyin_browser(url, cfg, exc):
+                # 抖音的 403 不是限流，是详情接口要签名，退避重试没意义，直接换浏览器去拿
+                log.info("yt-dlp 打不通抖音详情接口，改用本机浏览器：%s", str(exc).splitlines()[0][:120])
+                info = douyin.probe_via_browser(url, cfg)
+                break
             if attempt == PROBE_RETRIES or not _is_rate_limited(exc):
                 raise DownloadError(_probe_error_message(exc)) from exc
             wait = PROBE_BACKOFF_SEC * attempt
@@ -170,27 +176,47 @@ def video_info_from_dict(info: dict[str, Any], url: str) -> VideoInfo:
     )
 
 
-def download(info: VideoInfo, opts: dict[str, Any]) -> None:
+def download(info: VideoInfo, opts: dict[str, Any], cfg: DownloadConfig | None = None) -> None:
     """执行下载。
 
     优先用探测阶段拿到的 info 直接下载（等价于 `--load-info-json`），
     这样不用再请求一次网页，能明显降低被站点风控拦住的概率。
-    info 不可用时退回按 URL 重新解析。
+    info 不可用时退回按 URL 重新解析。传了 cfg 才会启用抖音的浏览器兜底。
     """
     if info.raw:
-        with tempfile.TemporaryDirectory() as tmp:
-            info_file = Path(tmp) / "info.json"
-            try:
-                info_file.write_text(json.dumps(info.raw), encoding="utf-8")
-            except (TypeError, ValueError):
-                log.debug("info 无法序列化，退回按 URL 下载")
-            else:
-                with YoutubeDL(opts) as ydl:
-                    ydl.download_with_info_file(str(info_file))
-                return
+        try:
+            _download_from_info(info.raw, opts)
+            return
+        except YTDLPDownloadError as exc:
+            if not (cfg and wants_douyin_browser(info.url, cfg, exc)):
+                raise
+            # 探测结果里的抖音 CDN 地址带签名、几小时就过期；过期了让浏览器重新拿一份详情
+            log.info("抖音媒体地址失效，用本机浏览器重新探测：%s", str(exc).splitlines()[0][:120])
+            fresh = douyin.probe_via_browser(info.url, cfg)
+            _download_from_info(fresh, opts)
+            return
 
     with YoutubeDL(opts) as ydl:
         ydl.download([info.url])
+
+
+def _download_from_info(raw: dict[str, Any], opts: dict[str, Any]) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        info_file = Path(tmp) / "info.json"
+        try:
+            info_file.write_text(json.dumps(raw), encoding="utf-8")
+        except (TypeError, ValueError):
+            log.debug("info 无法序列化，退回按 URL 下载")
+            with YoutubeDL(opts) as ydl:
+                ydl.download([raw.get("webpage_url") or raw.get("url")])
+            return
+        with YoutubeDL(opts) as ydl:
+            ydl.download_with_info_file(str(info_file))
+
+
+def wants_douyin_browser(url: str, cfg: DownloadConfig, exc: Exception) -> bool:
+    """yt-dlp 这次失败是不是该换本机浏览器去打抖音的详情接口。"""
+    return douyin.is_douyin_url(url) and douyin.enabled(cfg) and douyin.needs_browser(exc)
 
 
 def pick_language(

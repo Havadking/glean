@@ -19,6 +19,10 @@ download:
   cookies_file: ./抖音-cookie.txt
   # 需要登录才能下载的内容，填浏览器名从中读 cookie：chrome | edge | firefox | null
   cookies_from_browser: null
+  # 抖音的详情接口要页面 JS 现算的签名，yt-dlp 只带 cookie 会被拦（"Fresh cookies are needed" / 403）。
+  # 拦下时无头拉起本机浏览器替它请求，顺手把新 cookie 写回 cookies_file，不用再手动导出。
+  # 需要 `uv sync --extra cookies`。默认 auto = 依次试 chrome / msedge / chromium；也可指定一个；off = 关掉
+  # douyin_browser: auto
 
 asr:
   provider: funasr            # funasr | whisper
