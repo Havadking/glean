@@ -1,13 +1,118 @@
-import { Trash2 } from 'lucide-react'
+import { Check, ChevronDown, Folder, Plus, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api, type Question, type UploaderInfo } from '../api'
 import { Avatar, ErrorBox, Pill } from '../components/ui'
 import { citeHtml } from '../lib/cite'
 import { fmtDuration, fmtMinutes, fmtMoney, fmtTokens, fmtWhen } from '../lib/format'
+import { useStore } from '../store'
+
+function UploaderGroupPicker({
+  name,
+  group,
+  allGroups,
+  onGroupChange,
+}: {
+  name: string
+  group?: string | null
+  allGroups: string[]
+  onGroupChange: (next: string | null) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [newGroupInput, setNewGroupInput] = useState('')
+  const [saving, setSaving] = useState(false)
+  const popoverRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDocClick = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [open])
+
+  const selectGroup = async (target: string | null) => {
+    setSaving(true)
+    try {
+      await api.setUploaderGroup(name, target)
+      onGroupChange(target)
+      setOpen(false)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleAddNew = async () => {
+    const val = newGroupInput.trim()
+    if (!val) return
+    setNewGroupInput('')
+    await selectGroup(val)
+  }
+
+  return (
+    <div className="group-picker-wrap" ref={popoverRef}>
+      <button
+        type="button"
+        className="group-picker-btn"
+        onClick={() => setOpen((o) => !o)}
+        title="点击设置 UP 主分组"
+        disabled={saving}
+      >
+        <Folder size={13} style={{ color: group ? 'var(--accent)' : 'var(--mute)' }} />
+        <span>{group ? group : '未分组'}</span>
+        <ChevronDown size={11} style={{ opacity: 0.7 }} />
+      </button>
+
+      {open && (
+        <div className="group-picker-popup">
+          <div className="group-picker-title">UP 主分组</div>
+          {allGroups.map((g) => (
+            <button
+              key={g}
+              type="button"
+              className={`group-picker-item ${group === g ? 'active' : ''}`}
+              onClick={() => selectGroup(g)}
+            >
+              <span>{g}</span>
+              {group === g && <Check size={12} />}
+            </button>
+          ))}
+          <button
+            type="button"
+            className={`group-picker-item ${!group ? 'active' : ''}`}
+            onClick={() => selectGroup(null)}
+          >
+            <span style={{ color: 'var(--mute)' }}>未分组</span>
+            {!group && <Check size={12} />}
+          </button>
+          <div className="group-picker-new">
+            <input
+              value={newGroupInput}
+              onChange={(e) => setNewGroupInput(e.target.value)}
+              placeholder="新建分组…"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  void handleAddNew()
+                }
+              }}
+            />
+            <button type="button" onClick={() => void handleAddNew()} disabled={!newGroupInput.trim()} title="添加分组">
+              <Plus size={12} />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function Uploader() {
   const { name = '' } = useParams()
+  const { library, refreshLibrary } = useStore()
   const [data, setData] = useState<UploaderInfo | null>(null)
   const [err, setErr] = useState<unknown>(null)
   const [q, setQ] = useState('')
@@ -17,6 +122,18 @@ export function Uploader() {
 
   const load = useCallback(() => api.uploader(name).then(setData).catch(setErr), [name])
   useEffect(() => { setData(null); setErr(null); void load() }, [load])
+
+  const allGroups = useMemo(() => {
+    const set = new Set<string>()
+    for (const g of library?.uploader_groups ?? []) set.add(g)
+    for (const g of library?.groups ?? []) if (g.group) set.add(g.group)
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'zh-CN'))
+  }, [library])
+
+  const handleGroupChange = (newGroup: string | null) => {
+    setData((d) => (d ? { ...d, group: newGroup } : d))
+    void refreshLibrary()
+  }
 
   const byIndex = useMemo(() => new Map((data?.videos ?? []).map((v) => [v.index, v])), [data])
 
@@ -47,7 +164,15 @@ export function Uploader() {
       <div className="dhead">
         <div className="in">
           <div className="crumb"><Link to="/library">库</Link><span>›</span><span>UP 主</span></div>
-          <h1 style={{ display: 'flex', alignItems: 'center', gap: 10 }}><Avatar name={name} size={28} /> {name}</h1>
+          <h1 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Avatar name={name} size={28} /> {name}
+            <UploaderGroupPicker
+              name={name}
+              group={data.group}
+              allGroups={allGroups}
+              onGroupChange={handleGroupChange}
+            />
+          </h1>
           <div className="row">
             <div className="meta">
               <span>{data.videos.length} 条视频</span>

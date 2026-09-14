@@ -1,4 +1,5 @@
-import { Plus, List, Settings, PanelLeftClose, X, CalendarDays } from 'lucide-react'
+import { Plus, List, Settings, PanelLeftClose, X, CalendarDays, ChevronDown, Folder } from 'lucide-react'
+import { useState, useMemo } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useStore } from '../store'
 import { Avatar } from './ui'
@@ -8,6 +9,46 @@ export function Sidebar({ narrow, onHide }: { narrow: boolean; onHide: () => voi
   const nav = useNavigate()
   const groups = library?.groups ?? []
   const recent = groups.flatMap((g) => g.entries).sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, 5)
+
+  const [collapsedUpGroups, setCollapsedUpGroups] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('vsum.sidebar.collapsedUpGroups')
+      return raw ? new Set(JSON.parse(raw)) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
+
+  const toggleUpGroup = (gname: string) => {
+    setCollapsedUpGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(gname)) next.delete(gname)
+      else next.add(gname)
+      try {
+        localStorage.setItem('vsum.sidebar.collapsedUpGroups', JSON.stringify(Array.from(next)))
+      } catch {}
+      return next
+    })
+  }
+
+  const uploaderItems = useMemo(() => groups.filter((g) => g.uploader), [groups])
+  const hasAnyGroup = useMemo(() => uploaderItems.some((g) => Boolean(g.group)), [uploaderItems])
+
+  const groupedUploaders = useMemo(() => {
+    if (!hasAnyGroup) return null
+    const map = new Map<string, typeof uploaderItems>()
+    for (const item of uploaderItems) {
+      const gname = item.group?.trim() || '未分组'
+      const list = map.get(gname) ?? []
+      list.push(item)
+      map.set(gname, list)
+    }
+    return Array.from(map.entries()).sort(([a], [b]) => {
+      if (a === '未分组') return 1
+      if (b === '未分组') return -1
+      return a.localeCompare(b, 'zh-CN')
+    })
+  }, [uploaderItems, hasAnyGroup])
 
   const runningJob = queue.find((j) => j.status === 'running')
   // 本周收藏了东西但回顾还没生成 / 已经过期：给个小点提醒
@@ -54,16 +95,55 @@ export function Sidebar({ narrow, onHide }: { narrow: boolean; onHide: () => voi
         </NavLink>
       </nav>
 
-      {groups.some((g) => g.uploader) && (
+      {uploaderItems.length > 0 && (
         <>
           <div className="sec">UP 主</div>
-          {groups.filter((g) => g.uploader).map((g) => (
-            <button className="up" key={g.uploader!} onClick={() => nav(`/uploader/${encodeURIComponent(g.uploader!)}`)}>
-              <Avatar name={g.uploader} />
-              <span className="n">{g.uploader}</span>
-              <span className="c">{g.entries.length}</span>
-            </button>
-          ))}
+          {!groupedUploaders ? (
+            uploaderItems.map((g) => (
+              <button className="up" key={g.uploader!} onClick={() => nav(`/uploader/${encodeURIComponent(g.uploader!)}`)}>
+                <Avatar name={g.uploader} />
+                <span className="n">{g.uploader}</span>
+                <span className="c">{g.entries.length}</span>
+              </button>
+            ))
+          ) : (
+            groupedUploaders.map(([groupName, items]) => {
+              const isCollapsed = collapsedUpGroups.has(groupName)
+              return (
+                <div className="side-up-group" key={groupName}>
+                  <div
+                    className="side-up-gh"
+                    onClick={() => toggleUpGroup(groupName)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        toggleUpGroup(groupName)
+                      }
+                    }}
+                    title={isCollapsed ? `展开 ${groupName}` : `折叠 ${groupName}`}
+                  >
+                    <ChevronDown className={`chevron ${isCollapsed ? 'collapsed' : ''}`} />
+                    <Folder size={13} style={{ flex: 'none', color: 'var(--mute)' }} />
+                    <span className="gn">{groupName}</span>
+                    <span className="c">{items.length}</span>
+                  </div>
+                  {!isCollapsed && (
+                    <div className="side-up-list">
+                      {items.map((g) => (
+                        <button className="up" key={g.uploader!} onClick={() => nav(`/uploader/${encodeURIComponent(g.uploader!)}`)}>
+                          <Avatar name={g.uploader} />
+                          <span className="n">{g.uploader}</span>
+                          <span className="c">{g.entries.length}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })
+          )}
         </>
       )}
 

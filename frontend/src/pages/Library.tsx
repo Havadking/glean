@@ -1,4 +1,4 @@
-import { ArrowUpDown, ChevronDown, ChevronsUpDown, FolderOpen, Plus, Search, Sparkles, Trash2 } from 'lucide-react'
+import { ArrowUpDown, ChevronDown, ChevronsUpDown, Folder, FolderOpen, Plus, Search, Sparkles, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, type Entry, type SearchResult } from '../api'
@@ -66,6 +66,7 @@ export function Library() {
   const [searching, setSearching] = useState(false)
   const nav = useNavigate()
   const up = params.get('up')
+  const groupFilter = params.get('group')
   // 搜索框里打 #xx 等于点标签
   const hashTag = query.trim().startsWith('#') ? query.trim().slice(1).trim() : ''
   const tag = hashTag || params.get('tag')
@@ -146,6 +147,7 @@ export function Library() {
     const q = hashTag ? '' : query.trim().toLowerCase()
     const processed = library.groups
       .filter((g) => !up || g.uploader === up)
+      .filter((g) => !groupFilter || (groupFilter === '未分组' ? !g.group : g.group === groupFilter))
       .map((g) => {
         const filteredEntries = g.entries.filter((e) => {
           if (tag && !(e.tags ?? []).some((t) => t.tag === tag)) return false
@@ -198,7 +200,7 @@ export function Library() {
           return 0
       }
     })
-  }, [library, query, hashTag, tag, filter, up, sortBy])
+  }, [library, query, hashTag, tag, filter, up, groupFilter, sortBy])
 
   const allCollapsed = groups.length > 0 && groups.every((g) => isGroupCollapsed(g.uploader ?? '__none'))
 
@@ -255,6 +257,7 @@ export function Library() {
           </select>
         </div>
         {up && <button className="btn sm" onClick={() => { const n = new URLSearchParams(params); n.delete('up'); setParams(n) }}>只看 {up} ✕</button>}
+        {groupFilter && <button className="btn sm" onClick={() => { const n = new URLSearchParams(params); n.delete('group'); setParams(n) }}>只看分组: {groupFilter} ✕</button>}
         <span className="sp" />
         {groups.length > 1 && !query.trim() && !tag && (
           <button
@@ -354,6 +357,21 @@ export function Library() {
                 <ChevronDown className={`gh-chevron ${isCollapsed ? 'collapsed' : ''}`} />
                 <Avatar name={g.uploader} grey={!g.uploader} />
                 <span>{g.uploader ?? '其他'}</span>
+                {g.group && (
+                  <span
+                    className="gh-badge"
+                    style={{ color: 'var(--accent)', borderColor: 'var(--accent-line)', display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'pointer' }}
+                    onClick={(ev) => {
+                      ev.stopPropagation()
+                      const n = new URLSearchParams(params)
+                      n.set('group', g.group!)
+                      setParams(n)
+                    }}
+                    title={`只看「${g.group}」分组`}
+                  >
+                    <Folder size={11} /> {g.group}
+                  </span>
+                )}
                 <span className="c">
                   {g.entries.length} 条 · {fmtMinutes(groupDuration)} 分钟
                   {groupCost > 0 && ` · ${fmtMoney(groupCost, s?.currency)}`}
