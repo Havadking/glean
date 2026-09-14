@@ -23,7 +23,8 @@ _ALIASES = {
 
 
 def get_provider(cfg: SummarizerConfig) -> BaseSummarizer:
-    name = (cfg.provider or "").strip().lower()
+    raw = (cfg.provider or "").strip()
+    name = raw.split("#")[0].strip().lower()
     name = _ALIASES.get(name, name)
 
     if name == "openai":

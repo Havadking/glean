@@ -44,7 +44,7 @@ asr:
   beam_size: 5
 
 summarizer:
-  name: "DeepSeek V3"
+  name: "deepseek-flash"
   provider: openai            # openai（含所有 OpenAI 兼容接口） | claude | ollama
   model: deepseek-chat
   base_url: "https://api.deepseek.com/v1"
