@@ -340,6 +340,11 @@ input, select { font: inherit; color: var(--ink); }
 .abar input[type="range"]::-moz-range-track { height: 4px; border-radius: 2px; background: var(--line); }
 .abar input[type="range"]::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--accent); }
 .abar input[type="range"]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: var(--accent); border: 2px solid var(--surface); }
+.abar .vol { display: flex; align-items: center; gap: 4px; flex: none; }
+.abar .vol .iconbtn { width: 28px; height: 28px; color: var(--mute); }
+.abar .vol .iconbtn svg { width: 16px; height: 16px; }
+.abar .vol input[type="range"] { flex: none; width: 72px; min-width: 0; }
+@media (max-width: 640px) { .abar .vol input[type="range"] { display: none; } }
 .abar .rate { min-width: 44px; justify-content: center; font-family: "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; flex: none; }
 .abar .hint { font-size: 11.5px; color: var(--faint); white-space: nowrap; flex: none; }
 @media (max-width: 900px) { .abar .hint { display: none; } }
