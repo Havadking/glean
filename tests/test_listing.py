@@ -100,3 +100,20 @@ def test_backoff_retries_rate_limits_then_gives_up(monkeypatch):
 
     with pytest.raises(DownloadError):
         listing._with_backoff("x", other)
+
+
+def test_multipart_bilibili_entries_without_ids_are_kept():
+    """B 站多 P 视频 flat 出来只有 url：id 按 yt-dlp 完整探测的格式 BVxxx_pN 推出来，标题用总标题加 P 号。"""
+    info = {
+        "_type": "playlist", "title": "某视频", "webpage_url": "https://www.bilibili.com/video/BV1zUh56RE8k/",
+        "playlist_count": 2, "uploader": "某人",
+        "entries": [
+            {"_type": "url", "url": "https://www.bilibili.com/video/BV1zUh56RE8k?p=1", "ie_key": "BiliBili"},
+            {"_type": "url", "url": "https://www.bilibili.com/video/BV1zUh56RE8k?p=2", "ie_key": "BiliBili"},
+            {"_type": "url", "url": ""},
+        ],
+    }
+    page = listing._page_from_flat(info, info["webpage_url"], page=1)
+    assert [e.video_id for e in page.entries] == ["BV1zUh56RE8k_p1", "BV1zUh56RE8k_p2"]
+    assert page.entries[1].title == "某视频 · P2" and page.entries[1].uploader == "某人"
+    assert listing._flat_entry_id("https://www.youtube.com/watch?v=abc") is None   # 别的站不乱编

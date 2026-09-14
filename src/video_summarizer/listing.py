@@ -196,17 +196,33 @@ def _flat_extract(url: str, cfg: DownloadConfig, page: int) -> dict[str, Any]:
     return info
 
 
+_BV_PART_RE = re.compile(r"/video/(BV[0-9A-Za-z]{10})/?\?(?:.*&)?p=(\d+)")
+
+
+def _flat_entry_id(page_url: str) -> str | None:
+    """flat 条目没给 id 时从链接推。只认 B 站多 P 视频（每一 P 是 BVxxx?p=N）：
+    yt-dlp 完整探测它时给的 id 是 BVxxx_pN，这里保持一致，库里的记录才对得上。
+    其他站点乱编 id 和库里对不上，还是跳过。"""
+    m = _BV_PART_RE.search(page_url)
+    return f"{m.group(1)}_p{m.group(2)}" if m else None
+
+
 def _page_from_flat(info: dict[str, Any], url: str, page: int) -> ListPage:
     entries = []
     for e in info.get("entries") or []:
         if not e:
             continue
-        vid = str(e.get("id") or "")
         page_url = e.get("url") or e.get("webpage_url") or ""
-        if not vid or not page_url:
+        if not page_url:
             continue
+        # B 站多 P 视频 flat 出来的条目只有 url，id / 标题都是空的
+        vid = str(e.get("id") or "") or _flat_entry_id(page_url)
+        if not vid:
+            continue
+        m = _BV_PART_RE.search(page_url)
+        fallback_title = f"{info.get('title')} · P{m.group(2)}" if m and info.get("title") else vid
         entries.append(ListedVideo(
-            video_id=vid, url=page_url, title=e.get("title") or vid,
+            video_id=vid, url=page_url, title=e.get("title") or fallback_title,
             duration_sec=float(e["duration"]) if e.get("duration") else None,
             thumbnail=e.get("thumbnail") or next((t.get("url") for t in (e.get("thumbnails") or []) if t.get("url")), None),
             uploader=e.get("uploader") or e.get("channel") or info.get("uploader") or info.get("channel"),
