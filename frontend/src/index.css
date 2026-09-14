@@ -327,8 +327,10 @@ input, select { font: inherit; color: var(--ink); }
 
 /* ---------- 库 ---------- */
 .libbar { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
-.libbar .search { width: 360px; height: 34px; }
+.libbar .search { width: 320px; height: 34px; }
 .libbar .sp { flex: 1; }
+.lib-sort { display: inline-flex; align-items: center; gap: 6px; }
+.lib-sort .sort-icon { color: var(--mute); flex: none; }
 .hit { padding: 12px 16px; margin-bottom: 18px; }
 .hit .h { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--mute); }
 .hit .hv { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-2); }
@@ -340,8 +342,42 @@ input, select { font: inherit; color: var(--ink); }
 .hit .r .q { font-size: 13.5px; color: var(--ink); line-height: 1.7; }
 .hit .r .w { font-size: 12px; color: var(--faint); white-space: nowrap; }
 .hit .more { font-size: 12px; color: var(--faint); padding: 4px 0 0; }
-.group { margin-bottom: 26px; }
-.group .gh { display: flex; align-items: center; gap: 10px; padding: 0 4px 8px; font-size: 13px; color: var(--ink-2); font-weight: 500; }
+.group { margin-bottom: 24px; transition: margin-bottom .15s; }
+.group.is-collapsed { margin-bottom: 12px; }
+.group .gh { display: flex; align-items: center; gap: 8px; padding: 2px 4px 8px; font-size: 13px; color: var(--ink-2); font-weight: 500; }
+.group .gh-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 4px 8px 4px 4px;
+  border-radius: 6px;
+  transition: background .12s, color .12s;
+  user-select: none;
+}
+.group .gh-toggle:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+.group .gh-chevron {
+  width: 16px;
+  height: 16px;
+  color: var(--mute);
+  transition: transform .18s ease;
+  flex: none;
+}
+.group .gh-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+.group .gh-badge {
+  font-size: 11px;
+  color: var(--mute);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-weight: 400;
+}
 .group .gh .c { color: var(--faint); font-weight: 400; }
 .group .gh .sp { flex: 1; }
 .list { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
@@ -392,6 +428,7 @@ input, select { font: inherit; color: var(--ink); }
   .resizer { display: none; }
   .col.right { width: 100% !important; padding-left: 0; }
   .stages { grid-template-columns: 1fr 1fr; }
+  .libbar .search { width: 100%; }
   .item { grid-template-columns: 64px 1fr; }
   .item .badges, .item .when, .item .act { display: none; }
   .stats { grid-template-columns: 1fr 1fr; }
