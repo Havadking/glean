@@ -1,4 +1,4 @@
-import { Plus, List, Settings, PanelLeftClose, X } from 'lucide-react'
+import { Plus, List, Settings, PanelLeftClose, X, CalendarDays } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useStore } from '../store'
 import { Avatar } from './ui'
@@ -10,6 +10,9 @@ export function Sidebar({ narrow, onHide }: { narrow: boolean; onHide: () => voi
   const recent = groups.flatMap((g) => g.entries).sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, 5)
 
   const runningJob = queue.find((j) => j.status === 'running')
+  // 本周收藏了东西但回顾还没生成 / 已经过期：给个小点提醒
+  const rv = library?.review
+  const reviewDot = !!rv && rv.videos > 0 && (!rv.generated || rv.stale)
   const queuedJobs = queue.filter((j) => j.status === 'queued')
 
   const stageName = (s?: string | null) => {
@@ -20,6 +23,7 @@ export function Sidebar({ narrow, onHide }: { narrow: boolean; onHide: () => voi
       download: '提取音频',
       transcribe: '语音识别',
       summarize: 'AI 总结',
+      tags: '打标签',
     }
     return m[s] || s
   }
@@ -40,6 +44,9 @@ export function Sidebar({ narrow, onHide }: { narrow: boolean; onHide: () => voi
         </NavLink>
         <NavLink to="/library" className={({ isActive }) => (isActive ? 'on' : '')}>
           <List /> 库 <span className="kbd">L</span>
+        </NavLink>
+        <NavLink to="/review" className={({ isActive }) => (isActive ? 'on' : '')} title={reviewDot ? (rv?.generated ? '本周又收藏了新东西，回顾可以更新了' : `本周收藏了 ${rv?.videos} 条，还没生成回顾`) : undefined}>
+          <CalendarDays /> 回顾 {reviewDot && <span className="ndot" />}<span className="kbd">R</span>
         </NavLink>
         <NavLink to="/settings" className={({ isActive }) => (isActive ? 'on' : '')}>
           <Settings /> 设置

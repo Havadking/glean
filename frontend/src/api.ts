@@ -43,6 +43,8 @@ export interface AsrConfig {
 }
 
 export interface SummaryRef { type: string; label: string; provider: string; created_at: string }
+export interface Tag { tag: string; source: 'ai' | 'user' }
+export interface TagCount { tag: string; count: number }
 
 export interface Entry {
   video_id: string
@@ -64,6 +66,7 @@ export interface Entry {
   work_dir: string | null
   has_audio: boolean
   summaries: SummaryRef[]
+  tags: Tag[]
   cost?: number | null
 }
 
@@ -73,7 +76,9 @@ export interface UsageRow { video_id: string; kind: string; detail: string | nul
 export interface Storage { audio_bytes: number; audio_dirs: number; other_bytes: number; cache_bytes: number; output_dir: string }
 export interface Usage { currency: string; priced: boolean; total: UsageTotals; month: UsageTotals; recent: UsageRow[] }
 export interface LibraryGroup { uploader: string | null; entries: Entry[] }
-export interface Library { stats: LibraryStats; groups: LibraryGroup[] }
+/** 本周回顾的状态：侧栏据此画小红点 */
+export interface ReviewStatus { period: 'week' | 'day'; key: string; videos: number; generated: boolean; stale: boolean }
+export interface Library { stats: LibraryStats; groups: LibraryGroup[]; review: ReviewStatus }
 
 export interface Paragraph { start: number; end: number; text: string; speaker: string | null }
 export interface MindmapNode { content: string; children: MindmapNode[] }
@@ -93,6 +98,7 @@ export interface Video extends Omit<Entry, 'summaries'> {
   clean_ratio: number
   paragraphs: Paragraph[]
   summaries: Record<string, Summary>
+  tags: Tag[]
 }
 
 export interface Estimate {
@@ -194,10 +200,37 @@ export interface UploaderInfo {
   questions: Question[]
 }
 
+export type ReviewPeriod = 'week' | 'day'
+export interface ReviewVideo {
+  index: number
+  video_id: string
+  title: string
+  uploader: string | null
+  thumbnail: string | null
+  duration_sec: number
+  created_at: string
+  tags: string[]
+  material: string
+  tokens: number
+}
+export interface Digest { content: string; provider: string; created_at: string; video_ids: string[]; stale: boolean; new_count: number }
+export interface Review {
+  period: ReviewPeriod
+  key: string
+  current: string
+  label: string
+  range: { start: string; end: string }
+  periods: { key: string; label: string; videos: number; generated: boolean }[]
+  videos: ReviewVideo[]
+  no_material: number
+  digest: Digest | null
+  estimate: { input_tokens: number; cost: number | null; currency: string; provider: string }
+}
+
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
 export interface Job {
   id: string
-  kind: 'process' | 'summarize' | 'audio'
+  kind: 'process' | 'summarize' | 'audio' | 'tags'
   title: string
   params: Record<string, unknown>
   status: JobStatus
@@ -284,6 +317,15 @@ export const api = {
   askUploader: (name: string, question: string, history: { question: string; answer: string }[]) =>
     post<Question>(`/uploaders/${encodeURIComponent(name)}/ask`, { question, history }),
   deleteQuestion: (id: number) => call<{ deleted: boolean }>(`/questions/${id}`, { method: 'DELETE' }),
+  tags: () => call<{ tags: TagCount[]; untagged: number }>('/tags'),
+  addTag: (id: string, tag: string) => post<{ tags: Tag[] }>(`/videos/${encodeURIComponent(id)}/tags`, { tag }),
+  removeTag: (id: string, tag: string) =>
+    call<{ removed: boolean; tags: Tag[] }>(`/videos/${encodeURIComponent(id)}/tags/${encodeURIComponent(tag)}`, { method: 'DELETE' }),
+  generateTags: (id: string) => post<{ generated: string[]; tags: Tag[]; provider: string }>(`/videos/${encodeURIComponent(id)}/tags/generate`, {}),
+  backfillTags: () => post<{ job: Job | null; duplicate: boolean; count: number }>('/tags/backfill', {}),
+  review: (period: ReviewPeriod, key = '') => call<Review>(`/review?period=${period}&key=${encodeURIComponent(key)}`),
+  generateReview: (period: ReviewPeriod, key: string, force = false) =>
+    post<{ digest: Digest; cached: boolean }>('/review/generate', { period, key, force }),
   search: (q: string, signal?: AbortSignal) => call<SearchResult>(`/search?q=${encodeURIComponent(q)}`, { signal }),
   jobs: () => call<{ jobs: Job[] }>('/jobs'),
   job: (id: string) => call<Job>(`/jobs/${id}`),

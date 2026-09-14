@@ -143,6 +143,29 @@ def load_summaries(cfg: Config, entry: LibraryEntry) -> dict[str, SummaryText]:
     return out
 
 
+# 拿一条视频当模型材料时的优先级：总体摘要最全；没有就退而求其次；什么总结都没有就拿转写开头。
+# 问 UP 主、打标签、回顾都用这一套，所以放在这里而不是各自的模块里
+MATERIAL_ORDER = ("overall", "key_points", "timeline", "by_speaker", "mindmap")
+TRANSCRIPT_FALLBACK_TOKENS = 1500
+
+
+def material_text(cfg: Config, entry: LibraryEntry) -> tuple[str, str] | None:
+    """一条视频送给模型的材料：(种类, 正文)。种类是总结类型或 "transcript"。什么都没有返回 None。"""
+    sums = load_summaries(cfg, entry)
+    kind = next((k for k in MATERIAL_ORDER if k in sums), None)
+    if kind:
+        return kind, sums[kind].content
+    t = load_transcript(cfg, entry)
+    if t is None or not t.segments:
+        return None
+    from ..summarizer.tokens import chunk_segments, render_segments
+    chunks = chunk_segments(t.segments, TRANSCRIPT_FALLBACK_TOKENS, with_time=False)
+    text = render_segments(chunks[0], with_time=False) if chunks else ""
+    if len(chunks) > 1:
+        text += "\n（以下省略）"
+    return "transcript", text
+
+
 def audio_path(entry: LibraryEntry) -> Path | None:
     """ASR 跑过就会在产物目录下留一份 16k wav；字幕路径的视频没有，清过音频的也没有。"""
     if entry.work_dir is None:

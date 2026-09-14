@@ -4,6 +4,7 @@ import { BrowserRouter, Route, Routes, useLocation, useNavigate } from 'react-ro
 import { Sidebar } from './components/Sidebar'
 import { Library } from './pages/Library'
 import { NewTask } from './pages/NewTask'
+import { Review } from './pages/Review'
 import { Settings } from './pages/Settings'
 import { Uploader } from './pages/Uploader'
 import { Video } from './pages/Video'
@@ -36,6 +37,7 @@ function Hotkeys() {
       if (e.metaKey || e.ctrlKey || e.altKey) return
       if (e.key === 'n') nav('/')
       if (e.key === 'l') nav('/library')
+      if (e.key === 'r') nav('/review')
     }
     window.addEventListener('keydown', on)
     return () => window.removeEventListener('keydown', on)
@@ -84,6 +86,7 @@ function Shell() {
         <Routes>
           <Route path="/" element={<NewTask />} />
           <Route path="/library" element={<Library />} />
+          <Route path="/review" element={<Review />} />
           <Route path="/video/:id" element={<Video />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/uploader/:name" element={<Uploader />} />

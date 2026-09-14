@@ -27,7 +27,7 @@ from .models import Transcript
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS transcripts (
@@ -95,6 +95,28 @@ CREATE TABLE IF NOT EXISTS pending_jobs (
     title       TEXT NOT NULL,
     params      TEXT NOT NULL,
     created_at  TEXT NOT NULL
+);
+
+-- 标签。source 三种：ai 是模型打的，user 是手动加的，
+-- rejected 是用户删掉的 AI 标签 —— 留着是为了重新生成时不再冒出来
+CREATE TABLE IF NOT EXISTS tags (
+    video_id    TEXT NOT NULL,
+    tag         TEXT NOT NULL,
+    source      TEXT NOT NULL DEFAULT 'ai',
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (video_id, tag)
+);
+CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);
+
+-- 回顾：一段时间（一周 / 一天）里收藏的视频的综合总结。按需生成，生成过的存这里
+CREATE TABLE IF NOT EXISTS digests (
+    period      TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    video_ids   TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    provider    TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (period, key)
 );
 """
 
@@ -200,6 +222,24 @@ class QuestionEntry:
     answer: str
     provider: str
     citations: list[float]
+    created_at: str
+
+
+@dataclass
+class TagEntry:
+    video_id: str
+    tag: str
+    source: str          # ai | user
+    created_at: str
+
+
+@dataclass
+class DigestEntry:
+    period: str          # week | day
+    key: str             # 2026-W37 / 2026-09-14
+    video_ids: list[str]
+    content: str
+    provider: str
     created_at: str
 
 
@@ -476,6 +516,196 @@ class Cache:
         except sqlite3.Error:
             return False
 
+    # ---------- 标签 ----------
+
+    def tags_for_video(self, video_id: str) -> list[TagEntry]:
+        conn = self._connect()
+        if conn is None:
+            return []
+        try:
+            with closing(conn):
+                rows = conn.execute(
+                    "SELECT video_id, tag, source, created_at FROM tags"
+                    " WHERE video_id = ? AND source != 'rejected' ORDER BY source DESC, rowid",
+                    (video_id,),
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        return [TagEntry(r["video_id"], r["tag"], r["source"], r["created_at"]) for r in rows]
+
+    def tags_by_video(self) -> dict[str, list[TagEntry]]:
+        """全库的标签，按视频归堆。库页面一次查完，别每个视频查一遍。"""
+        conn = self._connect()
+        if conn is None:
+            return {}
+        try:
+            with closing(conn):
+                rows = conn.execute(
+                    "SELECT video_id, tag, source, created_at FROM tags"
+                    " WHERE source != 'rejected' ORDER BY source DESC, rowid"
+                ).fetchall()
+        except sqlite3.Error:
+            return {}
+        out: dict[str, list[TagEntry]] = {}
+        for r in rows:
+            out.setdefault(r["video_id"], []).append(TagEntry(r["video_id"], r["tag"], r["source"], r["created_at"]))
+        return out
+
+    def tag_counts(self) -> list[tuple[str, int]]:
+        """每个标签挂了几条视频，多的在前。给模型当词表、给界面画标签云。"""
+        conn = self._connect()
+        if conn is None:
+            return []
+        try:
+            with closing(conn):
+                rows = conn.execute(
+                    "SELECT tag, COUNT(*) c FROM tags WHERE source != 'rejected'"
+                    " GROUP BY tag ORDER BY c DESC, tag"
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        return [(r["tag"], r["c"]) for r in rows]
+
+    def add_tag(self, video_id: str, tag: str, source: str = "user") -> bool:
+        """加一个标签。手动加的能覆盖之前删掉的；AI 打的碰到用户删过的就跳过。"""
+        conn = self._connect()
+        if conn is None:
+            return False
+        try:
+            with closing(conn):
+                row = conn.execute("SELECT source FROM tags WHERE video_id = ? AND tag = ?",
+                                   (video_id, tag)).fetchone()
+                if row is None:
+                    conn.execute("INSERT INTO tags (video_id, tag, source, created_at) VALUES (?,?,?,?)",
+                                 (video_id, tag, source, _now()))
+                elif row["source"] == "rejected" and source == "user":
+                    conn.execute("UPDATE tags SET source = 'user', created_at = ? WHERE video_id = ? AND tag = ?",
+                                 (_now(), video_id, tag))
+                else:
+                    return False
+                conn.commit()
+                return True
+        except sqlite3.Error as exc:
+            log.warning("写标签失败：%s", exc)
+            return False
+
+    def remove_tag(self, video_id: str, tag: str) -> bool:
+        """删标签。AI 打的标成 rejected 而不是真删，重新生成时才不会又加回来。"""
+        conn = self._connect()
+        if conn is None:
+            return False
+        try:
+            with closing(conn):
+                row = conn.execute("SELECT source FROM tags WHERE video_id = ? AND tag = ?",
+                                   (video_id, tag)).fetchone()
+                if row is None or row["source"] == "rejected":
+                    return False
+                if row["source"] == "ai":
+                    conn.execute("UPDATE tags SET source = 'rejected' WHERE video_id = ? AND tag = ?",
+                                 (video_id, tag))
+                else:
+                    conn.execute("DELETE FROM tags WHERE video_id = ? AND tag = ?", (video_id, tag))
+                conn.commit()
+                return True
+        except sqlite3.Error as exc:
+            log.warning("删标签失败：%s", exc)
+            return False
+
+    def set_ai_tags(self, video_id: str, tags: list[str]) -> list[str]:
+        """用模型这次给的替换掉上次 AI 打的。用户加的、用户删过的都不动。返回实际写进去的。"""
+        conn = self._connect()
+        if conn is None:
+            return []
+        try:
+            with closing(conn):
+                keep = {r["tag"] for r in conn.execute(
+                    "SELECT tag FROM tags WHERE video_id = ? AND source != 'ai'", (video_id,))}
+                conn.execute("DELETE FROM tags WHERE video_id = ? AND source = 'ai'", (video_id,))
+                written = []
+                now = _now()
+                for t in tags:
+                    if t in keep:
+                        continue
+                    conn.execute("INSERT INTO tags (video_id, tag, source, created_at) VALUES (?,?,'ai',?)",
+                                 (video_id, t, now))
+                    written.append(t)
+                conn.commit()
+                return written
+        except sqlite3.Error as exc:
+            log.warning("写 AI 标签失败：%s", exc)
+            return []
+
+    def videos_with_ai_tags(self) -> set[str]:
+        """模型打过标签的视频（哪怕后来全被用户删了）。补标签时跳过这些。"""
+        conn = self._connect()
+        if conn is None:
+            return set()
+        try:
+            with closing(conn):
+                rows = conn.execute("SELECT DISTINCT video_id FROM tags WHERE source IN ('ai','rejected')").fetchall()
+        except sqlite3.Error:
+            return set()
+        return {r["video_id"] for r in rows}
+
+    # ---------- 回顾 ----------
+
+    def get_digest(self, period: str, key: str) -> DigestEntry | None:
+        conn = self._connect()
+        if conn is None:
+            return None
+        try:
+            with closing(conn):
+                r = conn.execute(
+                    "SELECT period, key, video_ids, content, provider, created_at FROM digests"
+                    " WHERE period = ? AND key = ?", (period, key),
+                ).fetchone()
+        except sqlite3.Error:
+            return None
+        if r is None:
+            return None
+        try:
+            ids = json.loads(r["video_ids"])
+        except ValueError:
+            ids = []
+        return DigestEntry(r["period"], r["key"], ids, r["content"], r["provider"], r["created_at"])
+
+    def put_digest(self, period: str, key: str, video_ids: list[str], content: str, provider: str) -> None:
+        conn = self._connect()
+        if conn is None:
+            return
+        try:
+            with closing(conn):
+                conn.execute(
+                    "INSERT OR REPLACE INTO digests (period, key, video_ids, content, provider, created_at)"
+                    " VALUES (?,?,?,?,?,?)",
+                    (period, key, json.dumps(video_ids), content, provider, _now()),
+                )
+                conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("写回顾失败：%s", exc)
+
+    def digests_for(self, period: str) -> dict[str, DigestEntry]:
+        """某个粒度下所有生成过的回顾，key -> 记录。"""
+        conn = self._connect()
+        if conn is None:
+            return {}
+        try:
+            with closing(conn):
+                rows = conn.execute(
+                    "SELECT period, key, video_ids, content, provider, created_at FROM digests WHERE period = ?",
+                    (period,),
+                ).fetchall()
+        except sqlite3.Error:
+            return {}
+        out = {}
+        for r in rows:
+            try:
+                ids = json.loads(r["video_ids"])
+            except ValueError:
+                ids = []
+            out[r["key"]] = DigestEntry(r["period"], r["key"], ids, r["content"], r["provider"], r["created_at"])
+        return out
+
     # ---------- 花费记账 ----------
 
     def add_usage(
@@ -655,10 +885,13 @@ class Cache:
                     t = conn.execute("DELETE FROM transcripts WHERE video_id = ?", (video_id,))
                     s = conn.execute("DELETE FROM summaries WHERE video_id = ?", (video_id,))
                     conn.execute("DELETE FROM questions WHERE video_id = ?", (video_id,))
+                    conn.execute("DELETE FROM tags WHERE video_id = ?", (video_id,))
                 else:
                     t = conn.execute("DELETE FROM transcripts")
                     s = conn.execute("DELETE FROM summaries")
                     conn.execute("DELETE FROM questions")
+                    conn.execute("DELETE FROM tags")
+                    conn.execute("DELETE FROM digests")
                 conn.commit()
                 counts = (t.rowcount, s.rowcount)
                 conn.execute("VACUUM")

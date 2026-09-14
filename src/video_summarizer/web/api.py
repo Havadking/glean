@@ -36,6 +36,8 @@ from ..errors import VideoSummarizerError
 from ..models import SummaryOptions
 from ..pipeline import plan_transcript_key, run as run_pipeline, write_summary_files
 from .. import cleaning
+from .. import digest as digest_mod
+from .. import tagging as tagging_mod
 from .. import listing as listing_mod
 from .. import qa as qa_mod
 from .. import search as search_mod
@@ -228,6 +230,35 @@ def _summaries_dict(cfg: Config, entry: library_mod.LibraryEntry) -> dict[str, d
         out["mindmap"]["nodes"] = tree.size
         out["mindmap"]["depth"] = tree.depth
     return out
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _in_period(period: str, key: str, entry: library_mod.LibraryEntry) -> bool:
+    start, end = digest_mod.period_range(period, key)
+    return start <= digest_mod.local_date(entry.created_at) <= end
+
+
+def _tags_list(entries) -> list[dict[str, Any]]:
+    return [{"tag": t.tag, "source": t.source} for t in entries]
+
+
+def _tag_video(c: Config, entry: library_mod.LibraryEntry, provider=None) -> list[str]:
+    """让模型给一条视频打标签并写进库。返回这次写进去的 AI 标签。没材料返回空。"""
+    mat = library_mod.material_text(c, entry)
+    if mat is None:
+        return []
+    kind, text = mat
+    cache = Cache(c.cache_db)
+    provider = provider or get_summarizer(c.summarizer)
+    vocab = [t for t, _n in cache.tag_counts()]
+    tags = tagging_mod.suggest(provider, title=entry.title, uploader=entry.uploader, kind=kind, text=text, vocab=vocab)
+    written = cache.set_ai_tags(entry.video_id, tags)
+    _record_usage(c, provider, video_id=entry.video_id, kind="tags", detail=None)
+    return written
 
 
 # ---------- 应用 ----------
@@ -488,10 +519,16 @@ def create_app(cfg: Config):
         n_mindmaps = sum(1 for e in entries for s in e.summaries if s.summary_type == "mindmap")
         cache = Cache(c.cache_db)
         costs = cache.usage_by_video()
+        tags = cache.tags_by_video()
         for g in groups:
             for e in g["entries"]:
                 e["cost"] = costs.get(e["video_id"])
+                e["tags"] = _tags_list(tags.get(e["video_id"], []))
         totals = cache.usage_totals()
+        # 本周回顾的状态，侧栏据此画小红点
+        week_key = digest_mod.period_key("week", digest_mod.local_date(_now_iso()))
+        week_ids = {e.video_id for e in entries if _in_period("week", week_key, e)}
+        week_digest = cache.get_digest("week", week_key) if week_ids else None
         return {
             "stats": {
                 "videos": len(entries),
@@ -503,6 +540,11 @@ def create_app(cfg: Config):
                 "currency": c.summarizer.currency,
             },
             "groups": groups,
+            "review": {
+                "period": "week", "key": week_key, "videos": len(week_ids),
+                "generated": week_digest is not None,
+                "stale": week_digest is not None and set(week_digest.video_ids) != week_ids,
+            },
         }
 
     @app.get("/api/videos/{video_id}")
@@ -525,6 +567,7 @@ def create_app(cfg: Config):
                 for p in paragraphs
             ],
             "summaries": _summaries_dict(c, entry),
+            "tags": _tags_list(Cache(c.cache_db).tags_for_video(video_id)),
         }
 
     @app.get("/api/videos/{video_id}/audio")
@@ -738,7 +781,9 @@ def create_app(cfg: Config):
                 if result.summary_provider is not None:
                     _record_usage(c, result.summary_provider, video_id=result.info.video_id,
                                   kind="summary", detail=summary_type)
+                tags = _auto_tag(c, result.info.video_id, rep, provider=result.summary_provider)
                 return {
+                    "tags": tags,
                     "video_id": result.info.video_id,
                     "title": result.info.title,
                     "segments": len(result.transcript.segments),
@@ -880,6 +925,7 @@ def create_app(cfg: Config):
             write_summary_files(text, transcript, provider.describe(), options, work_dir)
             search_mod.index_one(c, video_id)
             used = _record_usage(c, provider, video_id=video_id, kind="summary", detail=body.type)
+            _auto_tag(c, video_id, rep, provider=provider)
             return {"video_id": video_id, "type": body.type, "content": text,
                     "provider": provider.describe(), "estimate": _estimate_dict(c, est), "used": used}
 
@@ -1003,30 +1049,16 @@ def create_app(cfg: Config):
 
     # ----- 问 UP 主（跨视频） -----
 
-    # 材料优先级：总体摘要最全；没有就退而求其次；什么总结都没有就拿转写开头
-    _MATERIAL_ORDER = ("overall", "key_points", "timeline", "by_speaker", "mindmap")
-    _TRANSCRIPT_FALLBACK_TOKENS = 1500
-
     def _uploader_materials(c: Config, uploader: str) -> tuple[list[qa_mod.Material], list[dict[str, Any]]]:
         entries = [e for e in library_mod.load_library(c) if e.uploader == uploader]
         # 按发布日期升序，模型才好说"先说 X 后来改口 Y"
         entries.sort(key=lambda e: (e.upload_date or "", e.created_at))
         materials, videos = [], []
         for i, e in enumerate(entries, 1):
-            sums = library_mod.load_summaries(c, e)
-            kind = next((k for k in _MATERIAL_ORDER if k in sums), None)
-            if kind:
-                text = sums[kind].content
-            else:
-                t = library_mod.load_transcript(c, e)
-                if t is None or not t.segments:
-                    continue
-                from ..summarizer.tokens import chunk_segments, render_segments
-                chunks = chunk_segments(t.segments, _TRANSCRIPT_FALLBACK_TOKENS, with_time=False)
-                text = render_segments(chunks[0], with_time=False) if chunks else ""
-                if len(chunks) > 1:
-                    text += "\n（以下省略）"
-                kind = "transcript"
+            mat = library_mod.material_text(c, e)
+            if mat is None:
+                continue
+            kind, text = mat
             materials.append(qa_mod.Material(index=i, video_id=e.video_id, title=e.title,
                                              date=_fmt_date(e.upload_date), kind=kind, text=text))
             videos.append({"index": i, "video_id": e.video_id, "title": e.title, "upload_date": _fmt_date(e.upload_date),
@@ -1092,6 +1124,188 @@ def create_app(cfg: Config):
         return {"id": qid, **answer.to_dict(), "used": used,
                 "cost": used["cost"] if used["calls"] else _money(c, answer.input_tokens, 800),
                 "currency": c.summarizer.currency}
+
+    # ----- 标签 -----
+
+    def _auto_tag(c: Config, video_id: str, rep: Reporter, provider=None) -> list[str]:
+        """任务收尾时顺手打标签。只给还没打过的视频打；失败不能拖垮主任务。"""
+        if not c.summarizer.auto_tags or video_id in Cache(c.cache_db).videos_with_ai_tags():
+            return []
+        entry = library_mod.find_entry(c, video_id)
+        if entry is None:
+            return []
+        try:
+            rep.stage("tags", "生成标签")
+            return _tag_video(c, entry, provider=provider)
+        except Exception as exc:  # noqa: BLE001 —— 标签是附赠的，出错只记日志
+            rep.log("warning", f"打标签失败：{exc}")
+            return []
+
+    @app.get("/api/tags")
+    def list_tags():
+        c = state.fresh_config()
+        cache = Cache(c.cache_db)
+        tagged = cache.videos_with_ai_tags()
+        untagged = [e.video_id for e in library_mod.load_library(c) if e.video_id not in tagged]
+        return {"tags": [{"tag": t, "count": n} for t, n in cache.tag_counts()], "untagged": len(untagged)}
+
+    class TagBody(BaseModel):
+        tag: str
+
+    @app.post("/api/videos/{video_id}/tags")
+    def add_tag(video_id: str, body: TagBody):
+        tag = tagging_mod.normalize(body.tag)
+        if not tag:
+            raise HTTPException(400, "标签不能为空，也别超过 20 个字")
+        c = state.fresh_config()
+        if library_mod.find_entry(c, video_id) is None:
+            raise HTTPException(404, "没有这个视频")
+        cache = Cache(c.cache_db)
+        cache.add_tag(video_id, tag, "user")
+        return {"tags": _tags_list(cache.tags_for_video(video_id))}
+
+    @app.delete("/api/videos/{video_id}/tags/{tag}")
+    def remove_tag(video_id: str, tag: str):
+        c = state.fresh_config()
+        cache = Cache(c.cache_db)
+        removed = cache.remove_tag(video_id, tag)
+        return {"removed": removed, "tags": _tags_list(cache.tags_for_video(video_id))}
+
+    @app.post("/api/videos/{video_id}/tags/generate")
+    def generate_tags(video_id: str):
+        """同步调用，一两秒。会替换上次 AI 打的，用户加的和删过的不动。"""
+        c = state.fresh_config()
+        entry = library_mod.find_entry(c, video_id)
+        if entry is None:
+            raise HTTPException(404, "没有这个视频")
+        provider = get_summarizer(c.summarizer)
+        written = _tag_video(c, entry, provider=provider)
+        cache = Cache(c.cache_db)
+        return {"generated": written, "tags": _tags_list(cache.tags_for_video(video_id)),
+                "provider": provider.describe()}
+
+    @app.post("/api/tags/backfill")
+    def backfill_tags():
+        """给库里还没打过标签的视频挨个打一遍。进任务队列，一条一次调用。"""
+        c = state.fresh_config()
+        dup = state.jobs.find_active("tags")
+        if dup is not None:
+            return {"job": dup.to_dict(), "duplicate": True, "count": dup.params.get("count", 0)}
+        tagged = Cache(c.cache_db).videos_with_ai_tags()
+        todo = [e for e in library_mod.load_library(c) if e.video_id not in tagged]
+        if not todo:
+            return {"job": None, "duplicate": False, "count": 0}
+        provider = get_summarizer(c.summarizer)
+
+        def work(rep: Reporter) -> dict[str, Any]:
+            done, failed = 0, 0
+            for i, e in enumerate(todo):
+                if rep.job.status == "cancelled":
+                    break
+                rep.stage("tags", f"{i + 1}/{len(todo)} {e.title}")
+                rep.progress(i / len(todo))
+                try:
+                    _tag_video(c, e, provider=provider)
+                    done += 1
+                except Exception as exc:  # noqa: BLE001 —— 一条失败继续下一条
+                    failed += 1
+                    rep.log("warning", f"「{e.title}」打标签失败：{exc}")
+            return {"tagged": done, "failed": failed}
+
+        job = state.jobs.submit("tags", f"补标签 · {len(todo)} 条视频", {"count": len(todo)}, work)
+        return {"job": job.to_dict(), "duplicate": False, "count": len(todo)}
+
+    # ----- 回顾 -----
+
+    def _review_materials(c: Config, period: str, key: str) -> tuple[list[digest_mod.Material], list[dict[str, Any]]]:
+        entries = [e for e in library_mod.load_library(c) if _in_period(period, key, e)]
+        entries.sort(key=lambda e: e.created_at)
+        tags = Cache(c.cache_db).tags_by_video()
+        materials, videos = [], []
+        for i, e in enumerate(entries, 1):
+            vtags = [t.tag for t in tags.get(e.video_id, [])]
+            mat = library_mod.material_text(c, e)
+            kind, text = mat if mat else ("none", "")
+            if mat:
+                materials.append(digest_mod.Material(
+                    index=i, video_id=e.video_id, title=e.title, uploader=e.uploader,
+                    date=digest_mod.local_date(e.created_at).isoformat(), tags=vtags, kind=kind, text=text))
+            videos.append({"index": i, "video_id": e.video_id, "title": e.title, "uploader": e.uploader,
+                           "thumbnail": e.thumbnail, "duration_sec": e.duration_sec, "created_at": e.created_at,
+                           "tags": vtags, "material": kind, "tokens": qa_mod.estimate_tokens(text)})
+        return materials, videos
+
+    def _digest_dict(d, current_ids: set[str]) -> dict[str, Any]:
+        return {"content": d.content, "provider": d.provider, "created_at": d.created_at,
+                "video_ids": d.video_ids, "stale": set(d.video_ids) != current_ids,
+                "new_count": len(current_ids - set(d.video_ids))}
+
+    @app.get("/api/review")
+    def review(period: str = "week", key: str = ""):
+        if period not in digest_mod.PERIODS:
+            raise HTTPException(400, "period 只能是 week 或 day")
+        c = state.fresh_config()
+        today = digest_mod.local_date(_now_iso())
+        current = digest_mod.period_key(period, today)
+        key = key or current
+        try:
+            start, end = digest_mod.period_range(period, key)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        cache = Cache(c.cache_db)
+        materials, videos = _review_materials(c, period, key)
+        ids = {v["video_id"] for v in videos}
+        d = cache.get_digest(period, key)
+        tokens = digest_mod.plan_tokens(period, key, materials) if materials else 0
+        try:
+            provider_desc = get_summarizer(c.summarizer).describe()
+        except VideoSummarizerError as exc:
+            provider_desc = f"未配置（{exc}）"
+        # 有视频的周期列表（含当前周期），前端据此翻页
+        counts: dict[str, int] = {current: 0}
+        for e in library_mod.load_library(c):
+            k = digest_mod.period_key(period, digest_mod.local_date(e.created_at))
+            counts[k] = counts.get(k, 0) + 1
+        generated = cache.digests_for(period)
+        periods = [{"key": k, "label": digest_mod.period_label(period, k), "videos": n, "generated": k in generated}
+                   for k, n in sorted(counts.items(), reverse=True)]
+        return {
+            "period": period, "key": key, "current": current, "label": digest_mod.period_label(period, key),
+            "range": {"start": start.isoformat(), "end": end.isoformat()},
+            "periods": periods,
+            "videos": videos,
+            "no_material": sum(1 for v in videos if v["material"] == "none"),
+            "digest": _digest_dict(d, ids) if d else None,
+            "estimate": {"input_tokens": tokens, "cost": _money(c, tokens, 800) if materials else None,
+                         "currency": c.summarizer.currency, "provider": provider_desc},
+        }
+
+    class ReviewBody(BaseModel):
+        period: str = "week"
+        key: str = ""
+        force: bool = False
+
+    @app.post("/api/review/generate")
+    def review_generate(body: ReviewBody):
+        """同步调用，几秒。没新视频且已有一份时直接返回旧的，除非 force。"""
+        if body.period not in digest_mod.PERIODS:
+            raise HTTPException(400, "period 只能是 week 或 day")
+        c = state.fresh_config()
+        key = body.key or digest_mod.period_key(body.period, digest_mod.local_date(_now_iso()))
+        cache = Cache(c.cache_db)
+        materials, videos = _review_materials(c, body.period, key)
+        ids = {v["video_id"] for v in videos}
+        existing = cache.get_digest(body.period, key)
+        if existing and not body.force and set(existing.video_ids) == ids:
+            return {"digest": _digest_dict(existing, ids), "cached": True}
+        if not materials:
+            raise HTTPException(404, "这段时间没有可用的材料")
+        provider = get_summarizer(c.summarizer)
+        content, _cited = digest_mod.generate(provider, body.period, key, materials)
+        cache.put_digest(body.period, key, sorted(ids), content, provider.describe())
+        used = _record_usage(c, provider, video_id=f"review:{body.period}:{key}", kind="review", detail=key)
+        d = cache.get_digest(body.period, key)
+        return {"digest": _digest_dict(d, ids), "cached": False, "used": used}
 
     # ----- 搜索 -----
 

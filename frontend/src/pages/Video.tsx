@@ -6,6 +6,7 @@ import { AskPanel, paragraphAt, useCitationJump } from '../components/AskPanel'
 import { AudioBar, type AudioHandle } from '../components/AudioBar'
 import { Markdown } from '../components/Markdown'
 import { Mindmap } from '../components/Mindmap'
+import { TagEditor } from '../components/Tags'
 import { ErrorBox, Highlight, Pill, Seg, countHits } from '../components/ui'
 import { useJob } from '../hooks/useJob'
 import { fmtDuration, fmtMoney, fmtTokens, fmtWhen } from '../lib/format'
@@ -180,6 +181,9 @@ export function Video() {
               <button className="btn ghost danger" onClick={remove} title="删除"><Trash2 /></button>
             </div>
           </div>
+          <TagEditor videoId={video.video_id} tags={video.tags ?? []}
+            hasMaterial={video.paragraphs.length > 0 || Object.keys(video.summaries).length > 0}
+            onChange={(tags) => { setVideo((v) => v ? { ...v, tags } : v); void refreshLibrary() }} />
         </div>
       </div>
 

@@ -1,24 +1,10 @@
-import DOMPurify from 'dompurify'
 import { Trash2 } from 'lucide-react'
-import { marked } from 'marked'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api, type Question, type UploaderInfo } from '../api'
 import { Avatar, ErrorBox, Pill } from '../components/ui'
+import { citeHtml } from '../lib/cite'
 import { fmtDuration, fmtMinutes, fmtMoney, fmtTokens, fmtWhen } from '../lib/format'
-
-const IDX_RE = /【(\d{1,3})】/g
-
-/** 【2】这类引用变成带标题的链接，指到那条视频 */
-function citeHtml(answer: string, byIndex: Map<number, { video_id: string; title: string }>): string {
-  const html = answer.replace(IDX_RE, (_m, n: string) => {
-    const v = byIndex.get(Number(n))
-    if (!v) return `<span class="cite">${n}</span>`
-    const t = v.title.replace(/"/g, '&quot;')
-    return `<a class="cite vcite" href="/video/${encodeURIComponent(v.video_id)}" title="${t}">${n} · ${t.length > 18 ? t.slice(0, 18) + '…' : t}</a>`
-  })
-  return DOMPurify.sanitize(marked.parse(html, { async: false }) as string)
-}
 
 export function Uploader() {
   const { name = '' } = useParams()

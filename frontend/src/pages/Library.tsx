@@ -1,7 +1,8 @@
-import { ArrowUpDown, ChevronDown, ChevronsUpDown, FolderOpen, Plus, Search, Trash2 } from 'lucide-react'
+import { ArrowUpDown, ChevronDown, ChevronsUpDown, FolderOpen, Plus, Search, Sparkles, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, type Entry, type SearchResult } from '../api'
+import { TagChip } from '../components/Tags'
 import { Avatar, ErrorBox, Highlight, Pill, Seg, Stats } from '../components/ui'
 import { fmtDuration, fmtMinutes, fmtMoney, fmtWhen } from '../lib/format'
 import { useStore } from '../store'
@@ -40,9 +41,10 @@ function sortEntries(items: Entry[], sort: SortKey): Entry[] {
 }
 
 export function Library() {
-  const { library, libraryError, refreshLibrary, meta } = useStore()
+  const { library, libraryError, refreshLibrary, meta, queue, refreshQueue } = useStore()
   const [params, setParams] = useSearchParams()
   const [query, setQuery] = useState(() => params.get('q') ?? '')
+  const [showAllTags, setShowAllTags] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
   const [sortBy, setSortBy] = useState<SortKey>(() => {
     const saved = localStorage.getItem('vsum.sortBy')
@@ -64,6 +66,35 @@ export function Library() {
   const [searching, setSearching] = useState(false)
   const nav = useNavigate()
   const up = params.get('up')
+  // 搜索框里打 #xx 等于点标签
+  const hashTag = query.trim().startsWith('#') ? query.trim().slice(1).trim() : ''
+  const tag = hashTag || params.get('tag')
+  const setTag = (t: string | null) => {
+    const next = new URLSearchParams(params)
+    if (t) next.set('tag', t); else next.delete('tag')
+    setParams(next)
+    if (hashTag) setQuery('')
+  }
+
+  // 标签云：从库里数出来，不用再发请求
+  const tagCounts = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const g of library?.groups ?? []) for (const e of g.entries) for (const t of e.tags ?? []) m.set(t.tag, (m.get(t.tag) ?? 0) + 1)
+    return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh-CN'))
+  }, [library])
+  const untagged = useMemo(() => (library?.groups ?? []).flatMap((g) => g.entries).filter((e) => !(e.tags?.length)).length, [library])
+  const tagJob = queue.find((j) => j.kind === 'tags' && (j.status === 'running' || j.status === 'queued'))
+  const [tagJobErr, setTagJobErr] = useState<unknown>(null)
+  const backfill = async () => {
+    setTagJobErr(null)
+    try { await api.backfillTags(); await refreshQueue() } catch (e) { setTagJobErr(e) }
+  }
+  // 补标签任务跑完，库里的标签要刷新
+  const tagJobId = tagJob?.id
+  useEffect(() => {
+    if (!tagJobId) return
+    return () => { void refreshLibrary() }
+  }, [tagJobId, refreshLibrary])
 
   const handleSortChange = (newSort: SortKey) => {
     setSortBy(newSort)
@@ -88,14 +119,14 @@ export function Library() {
   }
 
   const isGroupCollapsed = (key: string) => {
-    if (query.trim()) return false
+    if (query.trim() || tag) return false
     return collapsedGroups.has(key)
   }
 
-  // 全文搜索：停 250ms 再发，上一次没回来的作废
+  // 全文搜索：停 250ms 再发，上一次没回来的作废。# 开头的是标签筛选，不搜正文
   useEffect(() => {
     const q = query.trim()
-    if (!q) { setResult(null); setSearching(false); return }
+    if (!q || q.startsWith('#')) { setResult(null); setSearching(false); return }
     const ctrl = new AbortController()
     setSearching(true)
     const t = setTimeout(() => {
@@ -112,11 +143,12 @@ export function Library() {
 
   const groups = useMemo(() => {
     if (!library) return []
-    const q = query.trim().toLowerCase()
+    const q = hashTag ? '' : query.trim().toLowerCase()
     const processed = library.groups
       .filter((g) => !up || g.uploader === up)
       .map((g) => {
         const filteredEntries = g.entries.filter((e) => {
+          if (tag && !(e.tags ?? []).some((t) => t.tag === tag)) return false
           if (q && !e.title.toLowerCase().includes(q) && !(e.uploader ?? '').toLowerCase().includes(q)) return false
           if (filter === 'mindmap' && !e.summaries.some((s) => s.type === 'mindmap')) return false
           if (filter === 'nosummary' && e.summaries.length > 0) return false
@@ -166,7 +198,7 @@ export function Library() {
           return 0
       }
     })
-  }, [library, query, filter, up, sortBy])
+  }, [library, query, hashTag, tag, filter, up, sortBy])
 
   const allCollapsed = groups.length > 0 && groups.every((g) => isGroupCollapsed(g.uploader ?? '__none'))
 
@@ -222,9 +254,9 @@ export function Library() {
             ))}
           </select>
         </div>
-        {up && <button className="btn sm" onClick={() => setParams({})}>只看 {up} ✕</button>}
+        {up && <button className="btn sm" onClick={() => { const n = new URLSearchParams(params); n.delete('up'); setParams(n) }}>只看 {up} ✕</button>}
         <span className="sp" />
-        {groups.length > 1 && !query.trim() && (
+        {groups.length > 1 && !query.trim() && !tag && (
           <button
             className="btn ghost sm"
             onClick={() => toggleAllGroups(!allCollapsed)}
@@ -236,9 +268,29 @@ export function Library() {
         )}
       </div>
 
-      <ErrorBox error={libraryError ?? err} />
+      {(tagCounts.length > 0 || untagged > 0) && (
+        <div className="tagbar">
+          {(showAllTags ? tagCounts : tagCounts.slice(0, 14)).map(([t, n]) => (
+            <TagChip key={t} tag={t} count={n} active={tag === t} onClick={() => setTag(tag === t ? null : t)} />
+          ))}
+          {tagCounts.length > 14 && (
+            <button className="tagbtn" onClick={() => setShowAllTags((v) => !v)}>{showAllTags ? '收起' : `还有 ${tagCounts.length - 14} 个`}</button>
+          )}
+          {tag && <button className="btn sm" onClick={() => setTag(null)}>只看 #{tag} ✕</button>}
+          <span className="sp" />
+          {tagJob
+            ? <span className="tagjob"><span className="spin" /> {tagJob.status === 'queued' ? '排队中' : `补标签 ${tagJob.progress != null ? Math.round(tagJob.progress * 100) + '%' : ''}`}</span>
+            : untagged > 0 && (
+              <button className="btn ghost sm" onClick={backfill} title="让 AI 从总结里提几个主题词，一条一次调用，几乎不花钱">
+                <Sparkles /> 给 {untagged} 条没标签的补标签
+              </button>
+            )}
+        </div>
+      )}
 
-      {query.trim() && (
+      <ErrorBox error={libraryError ?? err ?? tagJobErr} />
+
+      {query.trim() && !hashTag && (
         <div className="card hit">
           <div className="h">
             {searching && !result ? <span className="spin" /> : null}
@@ -335,6 +387,11 @@ export function Library() {
                         {e.language && <span>{e.language}</span>}
                         {e.cost != null && e.cost > 0 && <span className="mono">{fmtMoney(e.cost, s?.currency)}</span>}
                       </div>
+                      {e.tags?.length > 0 && (
+                        <div className="tags sm">
+                          {e.tags.map((t) => <TagChip key={t.tag} tag={t.tag} source={t.source} active={tag === t.tag} onClick={() => setTag(tag === t.tag ? null : t.tag)} />)}
+                        </div>
+                      )}
                     </div>
                     <div className="badges">
                       {e.summaries.length === 0 && <Pill tone="neutral">没总结</Pill>}

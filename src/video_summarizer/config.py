@@ -95,6 +95,8 @@ class SummarizerConfig:
     currency: str = "¥"
     # 送给模型之前先去口水话（呃、嗯、就是就是）。省 token，但改变原文，默认关
     clean_transcript: bool = False
+    # 处理完一条视频后顺手让模型打 3–5 个主题标签（用总结做输入，几乎不花钱）
+    auto_tags: bool = True
 
     @property
     def api_key(self) -> str | None:

@@ -28,6 +28,10 @@ class FakeSummarizer(BaseSummarizer):
         self._record_usage(1000, 500)      # 假装每次调用花了这么多
         if "视频内容问答助手" in system or "创作者" in system:
             return self._complete_for_qa(user)
+        if "打主题标签" in system:
+            return '["护肤", "成分分析", "防晒"]'
+        if "个人知识库助手" in system:
+            return "## 护肤\n这段时间两条都在讲护肤 【1】【2】。"
         return "# 根\n## 分支\n- 点一\n- 点二\n" if "大纲" in system + user else "## 一句话总结\n假的总结。"
 
     def describe(self) -> str:
@@ -47,7 +51,9 @@ def workspace(tmp_path: Path, monkeypatch):
     cfg_path.write_text(yaml.safe_dump({
         "output_dir": str(out), "cache_db": str(tmp_path / "cache.sqlite"),
         "download": {"batch_delay_sec": 0},   # 测试里别真等
-        "summarizer": {"provider": "openai", "model": "m", "price_input_per_m": 2.0, "price_output_per_m": 3.0},
+        # 自动打标签会多一次模型调用，数调用次数的测试会乱；标签的测试自己开
+        "summarizer": {"provider": "openai", "model": "m", "price_input_per_m": 2.0, "price_output_per_m": 3.0,
+                       "auto_tags": False},
     }, allow_unicode=True), encoding="utf-8")
     cfg = load_config(cfg_path)
 
@@ -643,3 +649,108 @@ def test_llm_and_asr_config_endpoints(client):
     assert d_asr2["diarize"] == "false" or d_asr2["diarize"] is False
 
 
+
+
+# ---------- 标签 ----------
+
+
+def test_tags_generate_add_remove_and_show_in_library(client):
+    assert client.get("/api/tags").json() == {"tags": [], "untagged": 2}
+    r = client.post("/api/videos/BVAAA/tags/generate").json()
+    assert r["generated"] == ["护肤", "成分分析", "防晒"] and r["provider"] == "fake/model"
+    # 词表进了 prompt：第一条时告诉模型库里还没有标签
+    assert "库里还没有标签" in FakeSummarizer.calls[-1]
+    # 用的是总结，不是转写
+    assert "缓存里的总结" in FakeSummarizer.calls[-1]
+
+    # 手动加一个（会归一化），删一个 AI 的
+    r = client.post("/api/videos/BVAAA/tags", json={"tag": " #Skincare "}).json()
+    assert [t["tag"] for t in r["tags"]] == ["skincare", "护肤", "成分分析", "防晒"]
+    assert client.post("/api/videos/BVAAA/tags", json={"tag": "  "}).status_code == 400
+    r = client.delete("/api/videos/BVAAA/tags/防晒").json()
+    assert r["removed"] is True and "防晒" not in [t["tag"] for t in r["tags"]]
+
+    # 再生成：模型又给了防晒，但用户删过，不回来；用户加的也还在
+    r = client.post("/api/videos/BVAAA/tags/generate").json()
+    assert "防晒" not in [t["tag"] for t in r["tags"]] and "skincare" in [t["tag"] for t in r["tags"]]
+    assert "已有标签（优先复用）：" in FakeSummarizer.calls[-1]
+
+    lib = client.get("/api/library").json()
+    a = next(e for g in lib["groups"] for e in g["entries"] if e["video_id"] == "BVAAA")
+    assert [t["tag"] for t in a["tags"]] == ["skincare", "护肤", "成分分析"]
+    assert [t["source"] for t in a["tags"]] == ["user", "ai", "ai"]
+    v = client.get("/api/videos/BVAAA").json()
+    assert [t["tag"] for t in v["tags"]] == ["skincare", "护肤", "成分分析"]
+    tags = client.get("/api/tags").json()
+    assert tags["untagged"] == 1 and {"tag": "护肤", "count": 1} in tags["tags"]
+    # 记了账
+    assert [x["kind"] for x in client.get("/api/usage").json()["recent"]] == ["tags", "tags"]
+
+
+def test_tags_backfill_job_skips_already_tagged(client):
+    client.post("/api/videos/BVAAA/tags/generate")
+    r = client.post("/api/tags/backfill").json()
+    assert r["count"] == 1 and r["job"]["kind"] == "tags"
+    job = _wait_job(client, r["job"]["id"])
+    assert job["status"] == "done" and job["result"] == {"tagged": 1, "failed": 0}
+    assert client.get("/api/tags").json()["untagged"] == 0
+    assert client.post("/api/tags/backfill").json()["job"] is None
+
+
+def test_auto_tags_after_summary_job(client, workspace):
+    # 服务每次任务都重读 config.yaml，所以要改文件
+    cfg_path = workspace["cfg"].source_path
+    data = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    data["summarizer"]["auto_tags"] = True
+    cfg_path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    r = client.post("/api/videos/BVAAA/summaries", json={"type": "key_points"}).json()
+    job = _wait_job(client, r["job"]["id"])
+    assert job["status"] == "done"
+    assert [t["tag"] for t in client.get("/api/videos/BVAAA").json()["tags"]] == ["护肤", "成分分析", "防晒"]
+    assert [s["stage"] for s in job["events"] if s["kind"] == "stage"] == ["summarize", "tags"]
+    # 已经打过的不再打
+    r = client.post("/api/videos/BVAAA/summaries", json={"type": "timeline"}).json()
+    job = _wait_job(client, r["job"]["id"])
+    assert [s["stage"] for s in job["events"] if s["kind"] == "stage"] == ["summarize"]
+
+
+# ---------- 回顾 ----------
+
+
+def test_review_lists_periods_and_generates_on_demand(client):
+    r = client.get("/api/review").json()
+    assert r["period"] == "week" and r["key"] == r["current"]
+    assert r["periods"][0]["key"] == r["current"]
+    # 两条视频都是"现在"处理的，落在本周
+    assert [v["video_id"] for v in r["videos"]] == ["BVAAA", "bbb"]
+    assert r["videos"][0]["material"] == "overall" and r["videos"][1]["material"] == "mindmap"
+    assert r["digest"] is None and r["estimate"]["cost"] is not None
+
+    g = client.post("/api/review/generate", json={"period": "week"}).json()
+    assert g["cached"] is False and "护肤" in g["digest"]["content"] and g["digest"]["stale"] is False
+    assert set(g["digest"]["video_ids"]) == {"BVAAA", "bbb"}
+    assert "收藏的视频数：2" in FakeSummarizer.calls[-1]
+    # 再要一次：没新视频，直接给旧的
+    assert client.post("/api/review/generate", json={"period": "week"}).json()["cached"] is True
+    assert client.post("/api/review/generate", json={"period": "week", "force": True}).json()["cached"] is False
+    r = client.get("/api/review").json()
+    assert r["digest"]["content"] and r["periods"][0]["generated"] is True
+    lib = client.get("/api/library").json()
+    assert lib["review"] == {"period": "week", "key": r["current"], "videos": 2, "generated": True, "stale": False}
+    assert [x["kind"] for x in client.get("/api/usage").json()["recent"]] == ["review", "review"]
+
+    # 删掉一条视频：回顾过期
+    client.delete("/api/videos/bbb")
+    r = client.get("/api/review").json()
+    assert r["digest"]["stale"] is True and r["digest"]["new_count"] == 0
+    assert client.get("/api/library").json()["review"]["stale"] is True
+
+
+def test_review_day_and_empty_period(client):
+    r = client.get("/api/review?period=day").json()
+    assert len(r["videos"]) == 2 and r["key"] == r["current"]
+    r = client.get("/api/review?period=week&key=2020-W01").json()
+    assert r["videos"] == [] and r["digest"] is None and r["estimate"]["cost"] is None
+    assert client.post("/api/review/generate", json={"period": "week", "key": "2020-W01"}).status_code == 404
+    assert client.get("/api/review?period=month").status_code == 400
+    assert client.get("/api/review?key=垃圾").status_code == 400
