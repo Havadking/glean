@@ -1,7 +1,7 @@
 // 全局状态：元信息、库（侧栏要用）、主题。简单的 context，不上状态库。
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { api, type Library, type Meta } from './api'
+import { api, type Job, type Library, type Meta } from './api'
 
 type Theme = 'light' | 'dark' | 'system'
 
@@ -11,6 +11,8 @@ interface Store {
   libraryError: unknown
   refreshLibrary: () => Promise<void>
   refreshMeta: () => Promise<void>
+  queue: Job[]
+  refreshQueue: () => Promise<void>
   theme: Theme
   isDark: boolean
   setTheme: (t: Theme) => void
@@ -30,6 +32,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [meta, setMeta] = useState<Meta | null>(null)
   const [library, setLibrary] = useState<Library | null>(null)
   const [libraryError, setLibraryError] = useState<unknown>(null)
+  const [queue, setQueue] = useState<Job[]>([])
   const [theme, setThemeState] = useState<Theme>(readTheme)
   const [systemDark, setSystemDark] = useState(() => matchMedia('(prefers-color-scheme: dark)').matches)
 
@@ -50,10 +53,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const refreshQueue = useCallback(async () => {
+    try {
+      const res = await api.jobs()
+      setQueue(res.jobs)
+    } catch { /* ignore */ }
+  }, [])
+
   useEffect(() => {
     void refreshMeta()
     void refreshLibrary()
-  }, [refreshMeta, refreshLibrary])
+    void refreshQueue()
+  }, [refreshMeta, refreshLibrary, refreshQueue])
+
+  // 当有正在跑或排队的任务时勤轮询（3秒），否则慢轮询（12秒）
+  useEffect(() => {
+    const hasActive = queue.some((j) => j.status === 'running' || j.status === 'queued')
+    const t = setInterval(refreshQueue, hasActive ? 3000 : 12000)
+    return () => clearInterval(t)
+  }, [refreshQueue, queue])
 
   useEffect(() => {
     const mq = matchMedia('(prefers-color-scheme: dark)')
@@ -78,8 +96,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const isDark = theme === 'dark' || (theme === 'system' && systemDark)
   const value = useMemo(
-    () => ({ meta, library, libraryError, refreshLibrary, refreshMeta, theme, isDark, setTheme }),
-    [meta, library, libraryError, refreshLibrary, refreshMeta, theme, isDark, setTheme],
+    () => ({ meta, library, libraryError, refreshLibrary, refreshMeta, queue, refreshQueue, theme, isDark, setTheme }),
+    [meta, library, libraryError, refreshLibrary, refreshMeta, queue, refreshQueue, theme, isDark, setTheme],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

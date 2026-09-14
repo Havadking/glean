@@ -4,10 +4,25 @@ import { useStore } from '../store'
 import { Avatar } from './ui'
 
 export function Sidebar({ narrow, onHide }: { narrow: boolean; onHide: () => void }) {
-  const { meta, library, isDark, setTheme } = useStore()
+  const { meta, library, isDark, setTheme, queue } = useStore()
   const nav = useNavigate()
   const groups = library?.groups ?? []
   const recent = groups.flatMap((g) => g.entries).sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, 5)
+
+  const runningJob = queue.find((j) => j.status === 'running')
+  const queuedJobs = queue.filter((j) => j.status === 'queued')
+
+  const stageName = (s?: string | null) => {
+    if (!s) return ''
+    const m: Record<string, string> = {
+      probe: '探测',
+      subtitle: '下载字幕',
+      download: '提取音频',
+      transcribe: '语音识别',
+      summarize: 'AI 总结',
+    }
+    return m[s] || s
+  }
 
   return (
     <aside className="side">
@@ -53,6 +68,21 @@ export function Sidebar({ narrow, onHide }: { narrow: boolean; onHide: () => voi
             </NavLink>
           ))}
         </>
+      )}
+
+      {(runningJob || queuedJobs.length > 0) && (
+        <div className="mini-tracker" onClick={() => nav('/')} title="点击查看任务详情与队列">
+          <div className="mt-head">
+            <span className="dot ok" />
+            <span className="mt-stage">{runningJob ? (stageName(runningJob.stage) || '处理中') : '排队中'}</span>
+            {runningJob?.progress != null && <span className="mono mt-pct">{Math.round(runningJob.progress * 100)}%</span>}
+            {queuedJobs.length > 0 && <span className="mt-q">+{queuedJobs.length} 排队</span>}
+          </div>
+          <div className="mt-title">{runningJob?.title || queuedJobs[0]?.title}</div>
+          {runningJob?.progress != null && (
+            <div className="mt-bar"><i style={{ width: `${Math.round(runningJob.progress * 100)}%` }} /></div>
+          )}
+        </div>
       )}
 
       <div className="foot">

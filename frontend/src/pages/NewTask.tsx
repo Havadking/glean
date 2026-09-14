@@ -1,7 +1,7 @@
 import { Link as LinkIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { api, type Job, type Listing, type Probe } from '../api'
+import { api, type Listing, type Probe } from '../api'
 import { ListingPanel } from '../components/ListingPanel'
 import { ErrorBox, Pill } from '../components/ui'
 import { useJob, type JobView } from '../hooks/useJob'
@@ -11,7 +11,7 @@ import { useStore } from '../store'
 const JOB_KEY = 'vsum.currentJob'
 
 export function NewTask() {
-  const { meta, refreshLibrary } = useStore()
+  const { meta, refreshLibrary, queue, refreshQueue } = useStore()
   const nav = useNavigate()
   const [url, setUrl] = useState('')
   const [probe, setProbe] = useState<Probe | null>(null)
@@ -23,7 +23,6 @@ export function NewTask() {
   const [diarize, setDiarize] = useState<string>('auto')
   const [summaryType, setSummaryType] = useState<string>('')
   const [jobId, setJobId] = useState<string | null>(() => sessionStorage.getItem(JOB_KEY))
-  const [queue, setQueue] = useState<Job[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
   const job = useJob(jobId)
 
@@ -35,15 +34,7 @@ export function NewTask() {
     }
   }, [meta])
 
-  // 队列轮询：有任务在跑就勤一点
   const jobActive = job != null && !['done', 'failed', 'cancelled'].includes(job.status)
-  useEffect(() => {
-    let alive = true
-    const tick = () => api.jobs().then((r) => alive && setQueue(r.jobs)).catch(() => {})
-    tick()
-    const t = setInterval(tick, jobActive ? 3000 : 15000)
-    return () => { alive = false; clearInterval(t) }
-  }, [jobActive])
 
   useEffect(() => {
     if (job?.status === 'done') void refreshLibrary()
@@ -76,7 +67,6 @@ export function NewTask() {
   }
 
   const clear = () => { setUrl(''); setProbe(null); setListing(null); setError(null); setNotice(null); inputRef.current?.focus() }
-  const refreshQueue = () => api.jobs().then((r) => setQueue(r.jobs)).catch(() => {})
   const busy = jobActive
   const pending = queue.filter((j) => j.status === 'queued' || j.status === 'running')
 
@@ -174,7 +164,7 @@ export function NewTask() {
                   ? <Pill tone="accent" dot>{j.stage_detail || '进行中'}</Pill>
                   : <Pill tone="neutral">排队</Pill>}
                 {j.status === 'queued'
-                  ? <button className="btn ghost sm" onClick={() => api.cancelJob(j.id).then(() => api.jobs().then((r) => setQueue(r.jobs)))}>移除</button>
+                  ? <button className="btn ghost sm" onClick={() => api.cancelJob(j.id).then(() => void refreshQueue())}>移除</button>
                   : <button className="btn ghost sm" onClick={() => { sessionStorage.setItem(JOB_KEY, j.id); setJobId(j.id) }}>查看</button>}
               </div>
             ))}
