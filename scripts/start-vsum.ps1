@@ -1,4 +1,4 @@
-# 启动视频总结 Web 界面(已在跑就只开浏览器,不重复启动)
+﻿# 启动视频总结 Web 界面(已在跑就只开浏览器,不重复启动)
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectRoot

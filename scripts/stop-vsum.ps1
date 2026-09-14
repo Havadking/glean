@@ -1,4 +1,4 @@
-# 停止视频总结 Web 界面(按监听端口找进程杀掉)
+﻿# 停止视频总结 Web 界面(按监听端口找进程杀掉)
 $Port = 7860
 
 $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
