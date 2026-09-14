@@ -23,7 +23,7 @@ if (Test-ServerUp) {
 $LogDir = Join-Path $ProjectRoot 'logs'
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
-Start-Process -FilePath 'uv' -ArgumentList 'run', 'vsum', 'ui' `
+Start-Process -FilePath 'uv' -ArgumentList 'run', 'vsum', 'ui', '--no-browser' `
     -WorkingDirectory $ProjectRoot `
     -WindowStyle Hidden `
     -RedirectStandardOutput (Join-Path $LogDir 'ui.log') `
