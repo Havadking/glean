@@ -1,5 +1,5 @@
 import { Copy, ExternalLink, FolderOpen, Search, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, type Estimate, type Video as VideoT } from '../api'
 import { AskPanel, useCitationJump } from '../components/AskPanel'
@@ -22,6 +22,44 @@ export function Video() {
   const [copied, setCopied] = useState(false)
   const [focusStart, setFocusStart] = useState<number | null>(null)
   const [clean, setClean] = useState<boolean>(() => { try { return localStorage.getItem('clean') === '1' } catch { return false } })
+
+  // 左右分栏拖拽
+  const splitRef = useRef<HTMLDivElement>(null)
+  const [splitRatio, setSplitRatio] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('vsum.splitRatio')
+      if (saved) {
+        const n = Number(saved)
+        if (!isNaN(n) && n >= 0.25 && n <= 0.75) return n
+      }
+    } catch { /* ignore */ }
+    return 0.5
+  })
+  const [isResizing, setIsResizing] = useState(false)
+
+  const onMouseDownResizer = (e: React.MouseEvent) => {
+    e.preventDefault()
+    setIsResizing(true)
+  }
+
+  useEffect(() => {
+    if (!isResizing) return
+    const onMouseMove = (e: MouseEvent) => {
+      if (!splitRef.current) return
+      const rect = splitRef.current.getBoundingClientRect()
+      const newRatio = (e.clientX - rect.left) / rect.width
+      const clamped = Math.max(0.25, Math.min(0.75, newRatio))
+      setSplitRatio(clamped)
+      try { localStorage.setItem('vsum.splitRatio', String(clamped)) } catch { /* ignore */ }
+    }
+    const onMouseUp = () => setIsResizing(false)
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [isResizing])
 
   const load = useCallback(async () => {
     try {
@@ -112,8 +150,8 @@ export function Video() {
         </div>
       </div>
 
-      <div className="split">
-        <div className="col left">
+      <div className="split" ref={splitRef} style={{ userSelect: isResizing ? 'none' : undefined }}>
+        <div className="col left" style={{ width: `${(splitRatio * 100).toFixed(1)}%` }}>
           <div className="colhead">
             <h2>转写 <span style={{ color: 'var(--faint)', fontWeight: 400 }}>{video.paragraphs.length} 段 · {video.segment_count} 句</span></h2>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -137,6 +175,12 @@ export function Video() {
             </div>
           ))}
         </div>
+
+        <div
+          className={`resizer${isResizing ? ' dragging' : ''}`}
+          onMouseDown={onMouseDownResizer}
+          title="左右拖拽调整分栏宽度"
+        />
 
         <div className="col right">
           <div className="colhead">
@@ -197,7 +241,7 @@ function SummaryView({ video, type, onRegenerated }: { video: VideoT; type: stri
       {job?.status === 'failed' && <div className="errbox" style={{ marginBottom: 12 }}>{job.error}</div>}
       <ErrorBox error={err} />
       {s.type === 'mindmap' && s.tree
-        ? <Mindmap tree={s.tree} title={video.title} />
+        ? <Mindmap tree={s.tree} title={video.title} markdown={s.content} />
         : <article className="sum">
             <Markdown text={s.content} />
             <div className="prov">
