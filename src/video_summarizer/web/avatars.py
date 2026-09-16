@@ -28,6 +28,7 @@ log = logging.getLogger(__name__)
 
 NEGATIVE_TTL_SEC = 3600
 MAX_BYTES = 2 * 1024 * 1024
+MAX_ENTRIES = 3
 
 _lock = threading.Lock()
 _failed_at: dict[str, float] = {}
@@ -51,8 +52,12 @@ def cached(cfg: Config, name: str) -> Path | None:
     return None
 
 
-def fetch(cfg: Config, name: str, entry: LibraryEntry) -> Path | None:
-    """去站点拿一次头像并存到本地。拿不到返回 None，并在一小时内不再重试。"""
+def fetch(cfg: Config, name: str, entries: list[LibraryEntry]) -> Path | None:
+    """去站点拿一次头像并存到本地。拿不到返回 None，并在一小时内不再重试。
+
+    头像挂在视频详情里，所以要借这位 UP 主库里的某个视频去问。一个视频问不到
+    （作者后来设成仅自己可见、删了）就换下一个，最多试 MAX_ENTRIES 个 —— 抖音每次都要拉浏览器，不能无限试。
+    """
     with _lock:
         hit = cached(cfg, name)
         if hit is not None:
@@ -60,11 +65,15 @@ def fetch(cfg: Config, name: str, entry: LibraryEntry) -> Path | None:
         failed = _failed_at.get(name)
         if failed is not None and time.monotonic() - failed < NEGATIVE_TTL_SEC:
             return None
-        try:
-            path = _fetch_locked(cfg, name, entry)
-        except Exception as exc:  # noqa: BLE001 —— 头像拿不到不算错，界面退回首字母
-            log.info("拿不到 %s 的头像：%s", name, str(exc).splitlines()[0][:200])
-            path = None
+        path = None
+        for entry in entries[:MAX_ENTRIES]:
+            try:
+                path = _fetch_locked(cfg, name, entry)
+            except Exception as exc:  # noqa: BLE001 —— 头像拿不到不算错，界面退回首字母
+                log.info("拿不到 %s 的头像（借视频 %s）：%s", name, entry.video_id, str(exc).splitlines()[0][:200])
+                path = None
+            if path is not None:
+                break
         if path is None:
             _failed_at[name] = time.monotonic()
         return path
@@ -113,17 +122,26 @@ def _bilibili_face(ydl: YoutubeDL, entry: LibraryEntry) -> str | None:
 
 
 def _douyin_face(ydl: YoutubeDL, cfg: Config, entry: LibraryEntry) -> str | None:
-    """走 yt-dlp 抖音 extractor 用的同一个详情接口；被风控拦下（403）就和探测一样换本机浏览器去拿。"""
+    """走 yt-dlp 抖音 extractor 用的同一个详情接口；打不通就和探测一样换本机浏览器去拿。
+
+    "打不通"有三种样子：403、"Fresh cookies"，以及 cookie 新鲜但没签名时的 **200 空响应**
+    （yt-dlp 会报 Failed to parse JSON）。yt-dlp 自己的 extractor 用 fatal=False 把这三种都归到
+    "要新 cookie"，这里照做，别只认前两种。
+    """
     ie = ydl.get_info_extractor("Douyin")
+    payload: dict = {}
     try:
         data = ie._download_json(  # noqa: SLF001
             "https://www.douyin.com/aweme/v1/web/aweme/detail/", entry.video_id,
-            query={"aweme_id": entry.video_id}, note="拿作者头像",
+            query={"aweme_id": entry.video_id}, note="拿作者头像", fatal=False,
         )
-        detail = (data or {}).get("aweme_detail") or {}
-    except ExtractorError as exc:
-        if not (douyin.enabled(cfg.download) and douyin.needs_browser(exc)):
-            raise
+        payload = data if isinstance(data, dict) else {}
+        detail = payload.get("aweme_detail")
+    except ExtractorError:
+        detail = None
+    if not isinstance(detail, dict):
+        if not douyin.enabled(cfg.download):
+            raise ExtractorError(f"抖音详情接口没返回 aweme_detail（{douyin.filter_reason(payload)}）")
         detail = douyin.fetch_detail_via_browser(entry.video_id, cfg.download)
     author = detail.get("author") or {}
     for key in ("avatar_larger", "avatar_medium", "avatar_thumb"):

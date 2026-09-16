@@ -161,10 +161,22 @@ def _fetch_detail(video_id: str, cfg: DownloadConfig) -> dict[str, Any]:
     if status != 200 or not body.strip():
         raise DownloadError(f"浏览器也没拿到抖音详情（HTTP {status}）：{body[:120]!r}")
 
-    detail = (json.loads(body) or {}).get("aweme_detail")
+    payload = json.loads(body) or {}
+    detail = payload.get("aweme_detail")
     if not isinstance(detail, dict):
-        raise DownloadError(f"抖音详情接口没返回 aweme_detail，视频可能已删除或需要登录: {video_id}")
+        raise DownloadError(f"抖音详情接口没返回 aweme_detail（{filter_reason(payload)}）: {video_id}")
     return detail
+
+
+def filter_reason(payload: dict[str, Any]) -> str:
+    """详情接口拿不到作品时会在 filter_detail 里说原因：作者设成仅自己可见（status_self_see）、
+    已删除、需要登录……把它带进报错里，比笼统的"可能已删除"有用。"""
+    fd = payload.get("filter_detail") or {}
+    msg = str(fd.get("detail_msg") or "").strip()
+    reason = str(fd.get("filter_reason") or "").strip()
+    if msg and reason:
+        return f"{msg}，{reason}"
+    return msg or reason or "视频可能已删除或需要登录"
 
 
 def _launch(p, cfg: DownloadConfig):

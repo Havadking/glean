@@ -148,3 +148,11 @@ def test_web_probe_path_also_hands_douyin_over_to_browser(monkeypatch):
     monkeypatch.setattr(douyin, "probe_via_browser", lambda url, cfg: browser_info)
     result = listing.probe_any("https://v.douyin.com/0VCny7Gq2xI/", DownloadConfig())
     assert isinstance(result, VideoInfo) and result.title == "来自浏览器" and result.duration_sec == 341
+
+
+def test_filter_reason_explains_why_detail_is_missing():
+    # 作者把作品设成仅自己可见后详情接口就长这样：aweme_detail 为 null，理由在 filter_detail 里
+    payload = {"aweme_detail": None, "filter_detail": {
+        "aweme_id": "1", "detail_msg": "作品权限或已被删除，无法观看", "filter_reason": "status_self_see"}}
+    assert douyin.filter_reason(payload) == "作品权限或已被删除，无法观看，status_self_see"
+    assert douyin.filter_reason({}) == "视频可能已删除或需要登录"
