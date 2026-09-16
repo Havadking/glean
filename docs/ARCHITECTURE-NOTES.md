@@ -284,7 +284,28 @@ UA 只在**最后一次**重试时才覆盖（`_download_audio`，`:48-75`），
 然后把句子级的碎分句合并成"一轮发言"：同一说话人 + 间隔 ≤ 1.5s + 总长 ≤ 45s
 （`_merge_turns`，`:308-327`）。
 
-### 3.5 whisper 兜底（`whisper_provider.py`）
+### 3.5 ASR 跑在子进程里（`asr/worker.py`）
+
+`pipeline.py` 不直接构造 provider，而是调 `asr_worker.transcribe()`：起一个
+`python -m video_summarizer.asr.worker` 子进程，stdin 送一行 JSON 请求，stdout 逐行收
+日志和最终结果，子进程送完结果就 `os._exit`。原因是内存：`import torch` 就是 1.4GB 提交内存，
+加 funasr 和 CUDA context 到 2.5GB，一条任务跑完后 torch 的缓存分配器、cuDNN/cuBLAS 工作区
+留在进程里收不回（实测 `vsum ui` 跑完一条 5 分钟视频常驻 5.6GB）。子进程退出，系统一次收走，
+主进程稳定在几十 MB。代价是每条任务多付一次 import（磁盘缓存热着约 10 秒）。
+
+几个实现细节：
+- **子进程把 fd 1 让给协议流，fd 2 覆盖到 fd 1**，funasr/modelscope 的 `print` 和进度条全进
+  stderr（也就是 `ui.err.log`），不会污染 JSON 协议。
+- **日志转发在调用方线程上重放**（`_pump`），因为 `jobs.py` 的任务日志按线程号过滤；
+  "转写进度 xx%" 这行也因此照常驱动界面进度条。
+- **父进程死了子进程跟着退**，Windows 上是等父进程句柄（`WaitForSingleObject`）。
+  不能用"阻塞读 stdin 等 EOF"：有线程卡在 stdin 的 `ReadFile` 时 numpy 的扩展模块一加载就死锁
+  （实测复现）。
+- `VSUM_ASR_INPROCESS=1` 退回主进程内跑，调试用。
+- 服务启动时的预热（`api.py:_warm_up_asr`）也改成起一个只 import 就退的子进程，
+  目的只是把 3GB DLL 读进操作系统文件缓存。
+
+### 3.6 whisper 兜底（`whisper_provider.py`）
 
 - **Windows cublas 修复**（`:30-57`）：`add_dll_directory` **和** 前置 `PATH` **两个都做**。
   注释解释了为什么：ctranslate2 第一次矩阵乘时用裸 `LoadLibrary` 解析 cublas，

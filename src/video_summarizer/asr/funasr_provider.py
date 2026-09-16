@@ -85,9 +85,9 @@ _LATIN_RE = re.compile(r"[A-Za-z]")
 def warm_up() -> None:
     """把 funasr/torch 这两个大包先 import 进来，让第一个任务不用等。
 
-    服务启动后在后台线程调。真正耗时的是 import 本身（冷启动读 DLL + 杀毒扫描），
-    模型构建只要几秒，而且每个任务用完就 close() 释放显存，所以这里不预建模型。
-    任务撞上正在预热的话，Python 的 import 锁会让它等到 import 完，不会重复干活。
+    真正耗时的是 import 本身（冷启动读 DLL + 杀毒扫描），模型构建只要几秒，所以不预建模型。
+    正常情况下 ASR 跑在子进程里（asr/worker.py），预热也是子进程里 import 完就退，
+    这个函数只在 VSUM_ASR_INPROCESS=1 时才在主进程里调。
     """
     started = time.monotonic()
     try:
@@ -144,8 +144,8 @@ class FunASRProvider(BaseASRProvider):
             return
 
         # 日志打在 import 之前：`import funasr` 会把 torch（含几 GB 的 CUDA DLL）、
-        # transformers 一起拖进来，进程里第一次要几十秒，不提前说一声看起来像卡死了。
-        # 服务启动时 warm_up() 会在后台先把这步做掉，之后再走到这里就是秒过。
+        # transformers 一起拖进来，冷启动要几十秒，不提前说一声看起来像卡死了。
+        # 服务启动时 warm_up() 会先把这些 DLL 读进磁盘缓存，之后再走到这里只要几秒。
         what = "说话人分离 pipeline" if self.diarize else "模型"
         log.info("加载 FunASR %s（首次要先导入 torch/funasr，可能要几十秒）...", what)
         try:

@@ -15,6 +15,7 @@ __all__ = [
     "BaseASRProvider",
     "FallbackASRProvider",
     "get_provider",
+    "describe",
     "AVAILABLE_PROVIDERS",
 ]
 
@@ -81,3 +82,10 @@ def get_provider(cfg: ASRConfig, diarize: bool = False,
     if diarize and not fallback.supports_diarization:
         log.info("兜底 provider %s 不支持说话人分离，真走到兜底时转写不会带说话人标签", fallback_name)
     return FallbackASRProvider(primary, fallback, cfg.language)
+
+
+def describe(cfg: ASRConfig) -> str:
+    """日志里用的 provider 名，和 get_provider 返回对象的 .name 一致，但不构造 provider。"""
+    primary = (cfg.provider or "").strip().lower()
+    fallback = (cfg.fallback or "").strip().lower()
+    return f"{primary}+{fallback}" if fallback and fallback != primary else primary

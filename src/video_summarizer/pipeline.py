@@ -14,6 +14,7 @@ from . import cache as cache_mod
 from . import cleaning
 from . import correction
 from . import summarizer as summarizer_registry
+from .asr import worker as asr_worker
 from .audio import extractor
 from .config import Config
 from .errors import SubtitleNotFoundError
@@ -291,17 +292,20 @@ def _get_transcript(
     # 词表里的正确写法当热词喂给 ASR：支持热词的模型（Fun-ASR-Nano、Paraformer）
     # 会在声学层面就倾向这些写法，比事后替换靠谱；不支持的（SenseVoice、whisper）忽略
     hotwords = cache.hotwords(info.uploader) if cache is not None else []
-    provider = asr_registry.get_provider(cfg.asr, diarize=diarize, hotwords=hotwords)
     stage("transcribe", f"{cfg.asr.diarize_model if diarize else cfg.asr.model}"
                         f"{'，带说话人分离' if diarize else ''}")
     log.info(
-        "开始语音识别（provider=%s%s%s）...", provider.name, "，带说话人分离" if diarize else "",
-        f"，{len(hotwords)} 个热词" if hotwords else "",
+        "开始语音识别（provider=%s%s%s）...", asr_registry.describe(cfg.asr),
+        "，带说话人分离" if diarize else "", f"，{len(hotwords)} 个热词" if hotwords else "",
     )
-    try:
-        asr_result = provider.transcribe(audio_path)
-    finally:
-        provider.close()
+    # 在子进程里跑：torch + CUDA 一进主进程就是 2GB 起步，跑完还回收不掉（见 asr/worker.py）
+    asr_result = asr_worker.transcribe(cfg.asr, audio_path, diarize=diarize, hotwords=hotwords)
+    if diarize and not asr_result.meta.get("diarization"):
+        # 兜底 provider 接手了（whisper 不会分说话人），别让"带说话人分离"的进度条骗人
+        log.warning(
+            "要的是说话人分离，但这次是 %s 兜底跑的，没有说话人标签：%s",
+            asr_result.meta.get("asr_provider"), asr_result.meta.get("fallback_reason", "原因不明"),
+        )
 
     return Transcript(
         source_url=info.url,

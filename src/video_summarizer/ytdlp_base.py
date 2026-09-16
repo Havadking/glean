@@ -28,6 +28,7 @@ from .config import DownloadConfig
 from .errors import DownloadError
 
 log = logging.getLogger(__name__)
+_ydl_log = logging.getLogger("yt_dlp")
 
 # 这些不是真的字幕轨：B 站弹幕、YouTube 直播聊天记录
 PSEUDO_SUBTITLE_LANGS = {"danmaku", "live_chat", "rechat"}
@@ -73,6 +74,9 @@ def build_ydl_opts(
 ) -> dict[str, Any]:
     """构造 yt-dlp 选项。默认不动 header，交给 yt-dlp 的站点适配。"""
     opts: dict[str, Any] = {
+        # 报错走 logging，别让 yt-dlp 直写 sys.stderr——常驻服务的 stderr 管道断了（比如面板重启）
+        # 直写会抛 OSError，把本该是 DownloadError 的失败变成 500
+        "logger": _ydl_log,
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
