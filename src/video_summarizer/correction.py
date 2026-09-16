@@ -11,6 +11,10 @@ prompt 约束、下面的校验规则（比 prompt 可靠）、界面上逐条�
 
 原文永远不动。替换表存在 transcript.meta["corrections"] 里，读的时候再应用
 （和 cleaning 一样是读时变换），时间轴和分句数都不变。
+
+词表（cache.terms）是这一步的记忆：每条视频确认过的替换按 UP 主（同分组共享）攒起来，
+下一条视频先按表确定性地套一遍（source="table"），模型只负责发现表里没有的新词，
+新发现的再回填进表。同一个词不用每条视频都让模型重新发现一次。
 """
 
 from __future__ import annotations
@@ -56,6 +60,9 @@ MAX_KNOWN = 80
 STATE_APPLIED = "applied"
 STATE_REJECTED = "rejected"
 
+SOURCE_MODEL = "model"   # 这条视频上模型发现的
+SOURCE_TABLE = "table"   # 从词表套过来的
+
 # 先按最外层的中括号抓（数组里是对象，本身不含中括号）；模型在前后废话里带了中括号就退回到不含嵌套的那种
 _JSON_ARRAY_RES = (re.compile(r"\[.*\]", re.S), re.compile(r"\[[^\[\]]*\]", re.S))
 # 替换不许带句末标点和换行：分段是按标点切的，动了会改变段落数
@@ -69,13 +76,15 @@ class Correction:
     why: str = ""
     hits: int = 0
     state: str = STATE_APPLIED
+    source: str = SOURCE_MODEL
 
     @property
     def applied(self) -> bool:
         return self.state == STATE_APPLIED
 
     def to_dict(self) -> dict[str, Any]:
-        return {"from": self.src, "to": self.dst, "why": self.why, "hits": self.hits, "state": self.state}
+        return {"from": self.src, "to": self.dst, "why": self.why, "hits": self.hits,
+                "state": self.state, "source": self.source}
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "Correction":
@@ -83,6 +92,7 @@ class Correction:
             src=str(raw.get("from", "")), dst=str(raw.get("to", "")), why=str(raw.get("why", "") or ""),
             hits=int(raw.get("hits", 0) or 0),
             state=STATE_REJECTED if raw.get("state") == STATE_REJECTED else STATE_APPLIED,
+            source=SOURCE_TABLE if raw.get("source") == SOURCE_TABLE else SOURCE_MODEL,
         )
 
 
@@ -157,11 +167,38 @@ def validate(items: list[dict[str, str]], full_text: str) -> list[Correction]:
             continue
         picked.append(Correction(src=src, dst=dst, why=whys.get((src, dst), ""), hits=hits))
 
+    return _finish(picked)
+
+
+def _finish(picked: list[Correction]) -> list[Correction]:
     # V6：一条的 from 出现在另一条的 to 里，会链式替换，丢掉前者
     picked = [c for c in picked if not any(c.src in other.dst for other in picked if other is not c)]
-
     picked.sort(key=lambda c: (-c.hits, c.src))
     return picked[:MAX_ITEMS]
+
+
+# ---------- 词表 ----------
+
+
+def from_table(terms: list[Any], full_text: str) -> list[Correction]:
+    """把词表里在这篇转写中命中的条目变成替换。terms 是 cache.TermEntry。
+
+    否决过的不套；没命中的不列（列了也没意义，还占界面）。
+    条目入表时就过了 validate，这里只重做 V1（得原样出现）和 V6（链式）。
+    """
+    picked = [
+        Correction(src=t.src, dst=t.dst, why=t.why, hits=hits, source=SOURCE_TABLE)
+        for t in terms
+        if t.applied and t.src != t.dst and (hits := full_text.count(t.src)) > 0
+    ]
+    return _finish(picked)
+
+
+def merge(table_items: list[Correction], model_items: list[Correction]) -> list[Correction]:
+    """词表的优先：模型对同一个 from 给了别的写法也不采纳 —— 表里的是人确认过的。"""
+    taken = {c.src for c in table_items}
+    extra = [c for c in model_items if c.src not in taken]
+    return _finish([*table_items, *extra])
 
 
 # ---------- 应用 ----------
@@ -219,6 +256,7 @@ def set_items(transcript: Transcript, items: list[Correction], *, provider_desc:
     merged = [replace(c, state=STATE_REJECTED) if (c.src, c.dst) in rejected else c for c in items]
     block = {
         "provider": provider_desc,
+        "table_hits": sum(c.hits for c in merged if c.source == SOURCE_TABLE),
         "prompt_version": PROMPT_VERSION,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "items": [c.to_dict() for c in merged],
@@ -259,8 +297,29 @@ def suggest(provider: BaseSummarizer, transcript: Transcript, *, title: str | No
 
 
 def polish(provider: BaseSummarizer, transcript: Transcript, *, title: str | None,
-           uploader: str | None, known: list[str] | None = None) -> Transcript:
-    """跑一遍纠错并把表写进 meta。返回的仍是原文转写（表在 meta 里）。"""
-    items = suggest(provider, transcript, title=title, uploader=uploader, known=known)
-    log.info("纠错：模型给出 %d 条替换，%d 处命中", len(items), sum(c.hits for c in items))
+           uploader: str | None, terms: list[Any] | None = None) -> Transcript:
+    """先套词表，再让模型找表里没有的，合并后写进 meta。返回的仍是原文转写（表在 meta 里）。
+
+    词表的正确写法也作为"已知术语"给模型，它给近音写法对齐时有个锚。
+    """
+    table_items = from_table(terms or [], transcript.full_text)
+    known = [c.dst for c in table_items]
+    known += [t.dst for t in (terms or []) if t.applied and t.dst not in known]
+    model_items = suggest(provider, transcript, title=title, uploader=uploader, known=known)
+    items = merge(table_items, model_items)
+    log.info(
+        "纠错：词表套上 %d 条（%d 处），模型新发现 %d 条（%d 处）",
+        len(table_items), sum(c.hits for c in table_items),
+        len(items) - len(table_items), sum(c.hits for c in items if c.source == SOURCE_MODEL),
+    )
     return set_items(transcript, items, provider_desc=provider.describe())
+
+
+def apply_table(transcript: Transcript, terms: list[Any]) -> Transcript:
+    """不调模型，只按词表套。纠错关着、或者模型不可用时走这条。"""
+    items = from_table(terms, transcript.full_text)
+    if not items:
+        # 不写空表：留着"没纠过"的状态，之后开了纠错还能补跑
+        return transcript
+    log.info("按词表套上 %d 条替换，%d 处命中", len(items), sum(c.hits for c in items))
+    return set_items(transcript, items, provider_desc="词表")

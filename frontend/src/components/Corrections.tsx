@@ -9,6 +9,8 @@ import { ErrorBox } from './ui'
  *
  * 只对语音识别来源显示。没跑过的给一个按钮；跑过的显示"已修正 N 处"，
  * 展开能看每一条（原文 → 改后 · 命中次数 · 模型的依据）并逐条否决 / 恢复。
+ * 标了"词表"的是这个 UP 主（同组共享）之前确认过的替换，直接套的，没花模型；
+ * 否决一条会同步进词表，之后同组的视频不再自动套。
  * 否决即时生效：阅读视图、搜索索引、总结缓存 key 都跟着变，所以每次都让父组件重读。
  *
  * chip 和表在页面上不挨着（chip 在按钮排里，表要占整栏宽），所以做成 hook 返回两块 JSX。
@@ -71,7 +73,10 @@ export function useCorrections(video: Video | null, onChange: () => Promise<void
       {open && (
         <div className="corrections">
           <div className="ch">
-            <span>模型 {c.provider ?? '?'} 给出的替换表。原文没动，去掉勾的那条就不再应用。</span>
+            <span>
+              {c.provider === '词表' ? '按这个 UP 主攒下的词表套的替换' : `模型 ${c.provider ?? '?'} 给出的替换表`}
+              {c.table_hits ? `（其中词表直接套上 ${c.table_hits} 处）` : ''}。原文没动，去掉勾的那条就不再应用，同组的视频以后也不再套。
+            </span>
             {runBtn('重新纠错')}
           </div>
           {c.items.length === 0 && <div className="none">模型没找到要改的专有名词。</div>}
@@ -83,6 +88,7 @@ export function useCorrections(video: Video | null, onChange: () => Promise<void
                   onChange={() => setState(it.index, on ? 'rejected' : 'applied')} />
                 <span className="pair"><del>{it.from}</del><span className="arr">→</span><ins>{it.to}</ins></span>
                 <span className="n mono">×{it.hits}</span>
+                {it.source === 'table' && <span className="src" title="这个 UP 主（或同组）之前确认过的替换，直接套上，没花模型">词表</span>}
                 {it.why && <span className="why">{it.why}</span>}
                 {!on && <span className="why" title="点勾恢复"><RotateCcw /> 已否决</span>}
               </label>

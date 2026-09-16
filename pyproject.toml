@@ -1,7 +1,7 @@
 [project]
 name = "video-summarizer"
 version = "0.1.0"
-description = "视频转写总结工具：URL -> 字幕/ASR -> 结构化转写 -> LLM 总结"
+description = "拾光笺 / Glean：视频链接 -> 字幕或本地 ASR -> 结构化转写 -> LLM 总结、思维导图、可追问的本地视频库"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

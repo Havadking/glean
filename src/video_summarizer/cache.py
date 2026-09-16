@@ -27,7 +27,8 @@ from .models import Transcript
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4
+# v5：加 terms 表，并把库里已有的纠错表一次性灌进去
+SCHEMA_VERSION = 5
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS transcripts (
@@ -126,6 +127,24 @@ CREATE TABLE IF NOT EXISTS uploader_groups (
     created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_uploader_groups_group ON uploader_groups(group_name);
+
+-- 词表：纠错阶段确认过的专名替换，按 UP 主累积。
+-- 同一分组里的 UP 主共享（查的时候按分组合并，不在这里存分组名，分组变了自动跟着走）。
+-- 下一个视频先按这张表确定性地套一遍，再把 dst 当热词喂给 ASR、当已知术语喂给纠错模型。
+-- state=rejected 是用户在某条视频上否决过的，之后同一范围内不再自动套用。
+CREATE TABLE IF NOT EXISTS terms (
+    uploader    TEXT NOT NULL,
+    src         TEXT NOT NULL,
+    dst         TEXT NOT NULL,
+    why         TEXT NOT NULL DEFAULT '',
+    hits        INTEGER NOT NULL DEFAULT 0,
+    videos      INTEGER NOT NULL DEFAULT 0,
+    last_video  TEXT,
+    state       TEXT NOT NULL DEFAULT 'applied',
+    updated_at  TEXT NOT NULL,
+    PRIMARY KEY (uploader, src, dst)
+);
+CREATE INDEX IF NOT EXISTS idx_terms_uploader ON terms(uploader);
 """
 
 
@@ -250,6 +269,25 @@ class TagEntry:
 
 
 @dataclass
+class TermEntry:
+    uploader: str
+    src: str
+    dst: str
+    why: str
+    hits: int
+    videos: int
+    state: str
+
+    @property
+    def applied(self) -> bool:
+        return self.state == "applied"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"uploader": self.uploader, "from": self.src, "to": self.dst, "why": self.why,
+                "hits": self.hits, "videos": self.videos, "state": self.state}
+
+
+@dataclass
 class DigestEntry:
     period: str          # week | day
     key: str             # 2026-W37 / 2026-09-14
@@ -293,16 +331,39 @@ class Cache:
             conn = sqlite3.connect(self.path, timeout=10.0)
             conn.row_factory = sqlite3.Row
             if not self._ready:
+                was = conn.execute("PRAGMA user_version").fetchone()[0]
                 conn.executescript(_SCHEMA)
                 _migrate(conn)
                 conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 conn.commit()
                 self._ready = True
+                if 0 < was < 5:
+                    self._backfill_terms(conn)
             return conn
         except sqlite3.Error as exc:
             log.warning("打不开缓存库 %s，这次不走缓存：%s", self.path, exc)
             self.path = None  # 别每次调用都重试同一个坏文件
             return None
+
+    def _backfill_terms(self, conn: sqlite3.Connection) -> None:
+        """升到 v5 时把每条转写 meta 里已有的纠错表灌进 terms。只跑一次。"""
+        from .correction import items_of
+
+        n = 0
+        try:
+            rows = conn.execute("SELECT video_id, uploader, payload FROM transcripts").fetchall()
+        except sqlite3.Error as exc:
+            log.warning("回填词表时读不了转写：%s", exc)
+            return
+        for r in rows:
+            try:
+                items = items_of(Transcript.from_dict(json.loads(r["payload"])))
+            except (ValueError, TypeError, KeyError):
+                continue
+            if items:
+                n += self.learn_terms(r["uploader"], items, video_id=r["video_id"])
+        if n:
+            log.info("词表：从已有的纠错表回填了 %d 条", n)
 
     # ---------- 转写 ----------
 
@@ -756,6 +817,142 @@ class Cache:
         except sqlite3.Error as exc:
             log.warning("删除 UP 主分组失败：%s", exc)
             return 0
+
+    # ---------- 词表 ----------
+
+    def term_scope(self, uploader: str | None) -> list[str]:
+        """一个 UP 主的词表范围：自己 + 同分组的其他 UP 主。没分组就只有自己。
+
+        没有 UP 主信息的视频用空串做 key，它们之间互相共享 —— 总比没有强。
+        """
+        me = (uploader or "").strip()
+        if not me:
+            return [""]
+        group = self.get_uploader_group(me)
+        if not group:
+            return [me]
+        conn = self._connect()
+        if conn is None:
+            return [me]
+        try:
+            with closing(conn):
+                rows = conn.execute("SELECT uploader FROM uploader_groups WHERE group_name = ?", (group,)).fetchall()
+        except sqlite3.Error:
+            return [me]
+        return sorted({me, *(r["uploader"] for r in rows)})
+
+    def get_terms(self, uploader: str | None) -> list[TermEntry]:
+        """范围内的词表。同一条 (src, dst) 多个 UP 主都有时合并计数；任一处否决过就算否决。"""
+        scope = self.term_scope(uploader)
+        conn = self._connect()
+        if conn is None:
+            return []
+        try:
+            with closing(conn):
+                marks = ",".join("?" * len(scope))
+                rows = conn.execute(
+                    f"SELECT uploader, src, dst, why, hits, videos, state FROM terms WHERE uploader IN ({marks})",
+                    scope,
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        merged: dict[tuple[str, str], TermEntry] = {}
+        me = (uploader or "").strip()
+        for r in rows:
+            key = (r["src"], r["dst"])
+            cur = merged.get(key)
+            if cur is None:
+                merged[key] = TermEntry(r["uploader"], r["src"], r["dst"], r["why"], r["hits"], r["videos"], r["state"])
+                continue
+            cur.hits += r["hits"]
+            cur.videos += r["videos"]
+            if r["state"] == "rejected":
+                cur.state = "rejected"
+            if r["uploader"] == me:
+                cur.uploader = me
+                cur.why = r["why"] or cur.why
+        return sorted(merged.values(), key=lambda t: (-t.hits, t.src))
+
+    def learn_terms(self, uploader: str | None, items: list[Any], video_id: str | None = None) -> int:
+        """把一条视频最终生效的替换表记进词表。items 是 correction.Correction。
+
+        命中数累加；同一条视频重跑纠错不重复算视频数。用户否决的写成 rejected，
+        之后这个范围内不再自动套用；恢复了再改回 applied。
+        """
+        conn = self._connect()
+        if conn is None or not items:
+            return 0
+        me = (uploader or "").strip()
+        now = _now()
+        try:
+            with closing(conn):
+                for c in items:
+                    row = conn.execute(
+                        "SELECT hits, videos, last_video FROM terms WHERE uploader = ? AND src = ? AND dst = ?",
+                        (me, c.src, c.dst),
+                    ).fetchone()
+                    state = "applied" if c.applied else "rejected"
+                    if row is None:
+                        conn.execute(
+                            "INSERT INTO terms (uploader, src, dst, why, hits, videos, last_video, state, updated_at)"
+                            " VALUES (?,?,?,?,?,?,?,?,?)",
+                            (me, c.src, c.dst, c.why or "", c.hits, 1, video_id, state, now),
+                        )
+                        continue
+                    same_video = video_id is not None and row["last_video"] == video_id
+                    conn.execute(
+                        "UPDATE terms SET hits = ?, videos = ?, last_video = ?, state = ?, updated_at = ?"
+                        " WHERE uploader = ? AND src = ? AND dst = ?",
+                        (row["hits"] + (0 if same_video else c.hits),
+                         row["videos"] + (0 if same_video else 1),
+                         video_id, state, now, me, c.src, c.dst),
+                    )
+                conn.commit()
+                return len(items)
+        except sqlite3.Error as exc:
+            log.warning("写词表失败：%s", exc)
+            return 0
+
+    def set_term_state(self, uploader: str | None, src: str, dst: str, state: str) -> None:
+        """用户在某条视频上否决/恢复一条替换时同步到词表。没有这条就建一条（只记状态）。"""
+        conn = self._connect()
+        if conn is None:
+            return
+        me = (uploader or "").strip()
+        try:
+            with closing(conn):
+                conn.execute(
+                    "INSERT INTO terms (uploader, src, dst, why, hits, videos, state, updated_at)"
+                    " VALUES (?,?,?,'',0,0,?,?)"
+                    " ON CONFLICT(uploader, src, dst) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at",
+                    (me, src, dst, state, _now()),
+                )
+                conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("更新词表状态失败：%s", exc)
+
+    def delete_term(self, uploader: str | None, src: str, dst: str) -> bool:
+        conn = self._connect()
+        if conn is None:
+            return False
+        try:
+            with closing(conn):
+                res = conn.execute("DELETE FROM terms WHERE uploader = ? AND src = ? AND dst = ?",
+                                   ((uploader or "").strip(), src, dst))
+                conn.commit()
+                return res.rowcount > 0
+        except sqlite3.Error:
+            return False
+
+    def hotwords(self, uploader: str | None, limit: int = 100) -> list[str]:
+        """范围内生效的正确写法，命中多的在前。喂给 ASR 当热词。"""
+        seen: list[str] = []
+        for t in self.get_terms(uploader):
+            if t.applied and t.dst not in seen:
+                seen.append(t.dst)
+            if len(seen) >= limit:
+                break
+        return seen
 
     # ---------- 回顾 ----------
 

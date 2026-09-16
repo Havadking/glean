@@ -64,11 +64,11 @@ def workspace(tmp_path: Path, monkeypatch):
         source_url="https://www.bilibili.com/video/BVAAA", source_type="asr", language="zh",
         duration_sec=120.0, title="A 视频", video_id="BVAAA",
         segments=[Segment(0.0, 4.0, "第一句。"), Segment(4.0, 9.0, "第二句。")],
-        meta={"extractor": "BiliBili", "asr_model": "sensevoice-small", "uploader": "某 UP",
+        meta={"extractor": "BiliBili", "asr_model": "fun-asr-nano", "uploader": "某 UP",
               "upload_date": "20240102", "thumbnail": "http://x/a.jpg"},
     )
     key_a = transcript_key(video_id="BVAAA", extractor="BiliBili", source_type="asr",
-                           asr_provider="funasr", asr_model="sensevoice-small", asr_language=None, diarize=False)
+                           asr_provider="funasr", asr_model="fun-asr-nano", asr_language=None, diarize=False)
     a.meta["cache_key"] = key_a
     dir_a = out / "A 视频-BVAAA"
     a.save(dir_a / "transcript.json")

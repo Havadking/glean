@@ -133,12 +133,60 @@ def test_polish_chunks_long_transcripts_and_merges():
     cfg = SummarizerConfig(max_context_tokens=3000, max_output_tokens=500, chunk_tokens=400)
     fake = Fake(cfg, '[{"from": "语数科技", "to": "宇树科技", "why": "w"}, {"from": "梁文峰", "to": "梁文锋", "why": ""}]')
     long_t = _t("。".join([TEXT.strip("。")] * 12) + "。", uploader="某 UP")
-    out = correction.polish(fake, long_t, title="标题", uploader="某 UP", known=["宇树科技"])
+    out = correction.polish(fake, long_t, title="标题", uploader="某 UP",
+                            terms=[_term("哈哈哈", "宇树科技")])   # 没命中的词表条目只当已知术语用
     assert len(fake.prompts) > 1
     assert "视频标题：标题" in fake.prompts[0] and "UP 主：某 UP" in fake.prompts[0] and "已知术语" in fake.prompts[0]
     block = out.meta["corrections"]
     assert block["provider"] == "fake/deepseek-chat" and block["prompt_version"] == correction.PROMPT_VERSION
     assert [(i["from"], i["to"], i["hits"]) for i in block["items"]] == [("语数科技", "宇树科技", 24), ("梁文峰", "梁文锋", 12)]
+
+
+# ---------- 词表 ----------
+
+
+def _term(src, dst, state="applied", why="表里的"):
+    from video_summarizer.cache import TermEntry
+    return TermEntry("某 UP", src, dst, why, 3, 1, state)
+
+
+def test_from_table_only_lists_hits_and_skips_rejected():
+    items = correction.from_table([_term("语数科技", "宇树科技"), _term("一焕方", "幻方", state="rejected"),
+                                   _term("没出现", "也没出现")], TEXT)
+    assert [(c.src, c.dst, c.hits, c.source, c.why) for c in items] == [("语数科技", "宇树科技", 2, "table", "表里的")]
+
+
+def test_merge_table_wins_over_model_for_same_source():
+    table = correction.from_table([_term("语数科技", "宇树科技")], TEXT)
+    model = correction.validate([{"from": "语数科技", "to": "御树科技", "why": ""},
+                                 {"from": "一焕方", "to": "幻方", "why": "量化"}], TEXT)
+    out = correction.merge(table, model)
+    assert [(c.src, c.dst, c.source) for c in out] == [("语数科技", "宇树科技", "table"), ("一焕方", "幻方", "model")]
+
+
+def test_polish_applies_table_first_and_tells_model_the_known_terms():
+    cfg = SummarizerConfig(max_context_tokens=3000, max_output_tokens=500, chunk_tokens=4000)
+    fake = Fake(cfg, '[{"from": "一焕方", "to": "幻方", "why": "量化"}]')
+    out = correction.polish(fake, _t(), title="t", uploader="某 UP",
+                            terms=[_term("语数科技", "宇树科技"), _term("没出现", "九坤")])
+    assert "已知术语" in fake.prompts[0] and "宇树科技" in fake.prompts[0] and "九坤" in fake.prompts[0]
+    block = out.meta["corrections"]
+    assert [(i["from"], i["to"], i["source"]) for i in block["items"]] == [("语数科技", "宇树科技", "table"), ("一焕方", "幻方", "model")]
+    assert block["table_hits"] == 2
+
+
+def test_apply_table_without_model_and_leaves_no_empty_block():
+    out = correction.apply_table(_t(), [_term("语数科技", "宇树科技")])
+    assert out.meta["corrections"]["provider"] == "词表"
+    assert correction.apply(out).segments[0].text.startswith("再看宇树科技")
+    untouched = correction.apply_table(_t(), [_term("没出现", "x")])
+    assert "corrections" not in untouched.meta
+
+
+def test_source_survives_round_trip():
+    c = correction.Correction("a", "b", source="table")
+    assert correction.Correction.from_dict(c.to_dict()).source == "table"
+    assert correction.Correction.from_dict({"from": "a", "to": "b"}).source == "model"
 
 
 # ---------- 流水线里的 polish 阶段 ----------
@@ -206,6 +254,40 @@ def test_pipeline_skips_subtitle_sources_ollama_and_failures(monkeypatch, tmp_pa
     monkeypatch.setattr(pipeline.summarizer_registry, "get_provider", lambda scfg: Boom(cfg.summarizer, ""))
     res = pipeline.run("u", cfg, options=SummaryOptions(), info=info, skip_summary=True)
     assert res.transcript_path.is_file() and "corrections" not in res.transcript.meta and res.correction_usage is None
+
+
+def test_pipeline_learns_terms_and_reuses_them_for_the_next_video(monkeypatch, tmp_path):
+    from video_summarizer.cache import Cache
+    from video_summarizer.models import SummaryOptions
+
+    # 第一条视频：模型发现"语数科技→宇树科技"，回填进词表
+    pipeline, cfg, fake, info = _pipeline(monkeypatch, tmp_path, _t(), '[{"from": "语数科技", "to": "宇树科技", "why": "w"}]')
+    pipeline.run("u", cfg, options=SummaryOptions(), info=info, skip_summary=True)
+    terms = Cache(cfg.cache_db).get_terms("某 UP")
+    assert [(t.src, t.dst, t.hits, t.videos) for t in terms] == [("语数科技", "宇树科技", 2, 1)]
+
+    # 第二条视频（同一 UP）：模型什么都没说，词表照样套上，且提示词里带了已知术语
+    t2 = _t(); t2.video_id = "v2"
+    pipeline, cfg, fake, info = _pipeline(monkeypatch, tmp_path, t2, "[]")
+    info.video_id = "v2"
+    res = pipeline.run("u", cfg, options=SummaryOptions(), info=info, skip_summary=True)
+    assert "宇树科技" in fake.prompts[0]
+    assert [(i["from"], i["source"]) for i in res.transcript.meta["corrections"]["items"]] == [("语数科技", "table")]
+    assert Cache(cfg.cache_db).get_terms("某 UP")[0].videos == 2
+
+    # 纠错关掉也套词表，不调模型
+    t3 = _t(); t3.video_id = "v3"
+    pipeline, cfg, fake, info = _pipeline(monkeypatch, tmp_path, t3, "[]")
+    cfg.summarizer.correct_terms = False
+    res = pipeline.run("u", cfg, options=SummaryOptions(), info=info, skip_summary=True)
+    assert fake.prompts == [] and res.transcript.meta["corrections"]["provider"] == "词表"
+
+    # 别的 UP 主看不到这张表
+    pipeline, cfg, fake, info = _pipeline(monkeypatch, tmp_path, _t(), "[]")
+    info.uploader = "路人"
+    res = pipeline.run("u", cfg, options=SummaryOptions(), info=info, skip_summary=True)
+    assert "已知术语" not in fake.prompts[0] and "corrections" in res.transcript.meta
+    assert res.transcript.meta["corrections"]["items"] == []
 
 
 def test_pipeline_does_not_rerun_when_table_exists(monkeypatch, tmp_path):

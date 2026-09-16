@@ -169,3 +169,50 @@ def test_broken_cache_file_degrades_to_miss(tmp_path, transcript, caplog):
     with caplog.at_level("WARNING"):
         assert cache.get_transcript("k1") is None
         cache.put_transcript("k1", transcript)
+
+
+# ---------- 词表 ----------
+
+
+def _c(src, dst, hits=2, state="applied"):
+    from video_summarizer.correction import Correction
+    return Correction(src, dst, "why", hits, state)
+
+
+def test_terms_accumulate_per_uploader_and_share_within_group(cache):
+    cache.learn_terms("A", [_c("英派", "鹰派"), _c("哥派", "鸽派", state="rejected")], video_id="v1")
+    cache.learn_terms("A", [_c("英派", "鹰派", hits=5)], video_id="v2")
+    cache.learn_terms("A", [_c("英派", "鹰派", hits=9)], video_id="v2")   # 同一条视频重跑不重复算
+    cache.learn_terms("B", [_c("英派", "鹰派", hits=1), _c("一息", "议息")], video_id="v3")
+
+    a = {(t.src, t.dst): (t.hits, t.videos, t.state) for t in cache.get_terms("A")}
+    assert a == {("英派", "鹰派"): (7, 2, "applied"), ("哥派", "鸽派"): (2, 1, "rejected")}
+    assert cache.hotwords("A") == ["鹰派"]
+    assert cache.term_scope("A") == ["A"]
+
+    # 分到同一组后互相看得见，命中数合并；A 否决过的在 B 那边也算否决
+    cache.set_uploader_group("A", "财经")
+    cache.set_uploader_group("B", "财经")
+    assert cache.term_scope("B") == ["A", "B"]
+    b = {(t.src, t.dst): (t.hits, t.state) for t in cache.get_terms("B")}
+    assert b == {("英派", "鹰派"): (8, "applied"), ("一息", "议息"): (2, "applied"), ("哥派", "鸽派"): (2, "rejected")}
+    assert cache.hotwords("B") == ["鹰派", "议息"]
+
+    # 否决/恢复/删除
+    cache.set_term_state("B", "一息", "议息", "rejected")
+    assert cache.hotwords("B") == ["鹰派"]
+    cache.set_term_state("B", "一息", "议息", "applied")
+    assert cache.delete_term("B", "一息", "议息") and cache.hotwords("B") == ["鹰派"]
+
+
+def test_terms_without_uploader_share_one_bucket(cache):
+    cache.learn_terms(None, [_c("a1", "b1")])
+    assert cache.term_scope(None) == [""] and cache.hotwords("") == ["b1"]
+    assert cache.get_terms("某人") == []
+
+
+def test_terms_survive_clear(cache, transcript):
+    cache.put_transcript("k", transcript)
+    cache.learn_terms("A", [_c("英派", "鹰派")])
+    cache.clear()
+    assert cache.hotwords("A") == ["鹰派"]

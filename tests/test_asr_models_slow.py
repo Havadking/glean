@@ -49,6 +49,23 @@ def test_funasr_produces_timestamped_segments():
     assert result.meta["diarization"] is False
 
 
+def test_nano_transcribes_with_hotwords_and_guesses_language():
+    _require_funasr()
+    from video_summarizer.asr.funasr_provider import FunASRProvider
+
+    provider = FunASRProvider(ASRConfig(provider="funasr", model="fun-asr-nano"), hotwords=["鹰派", "鸽派"])
+    try:
+        result = provider.transcribe(_some_audio())
+    finally:
+        provider.close()
+
+    assert result.segments and all(s.text.strip() for s in result.segments)
+    assert result.language in {"zh", "en", "ja"}
+    assert result.meta["asr_model"] == "fun-asr-nano" and result.meta["hotwords"] == 2
+    # 字母缩写不该被拆成 "P C E"
+    assert not any(" ".join(list("PCE")) in s.text for s in result.segments)
+
+
 def test_vad_caps_segment_length():
     """SenseVoice 按 30 秒以内短段训练，超长段落识别质量会掉。"""
     _require_funasr()

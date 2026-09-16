@@ -140,7 +140,7 @@ def main() -> None:
               help="临时切换总结 provider（会一并套用该 provider 的默认 key 变量和接口地址）")
 @click.option("--model", default=None, help="临时覆盖总结模型")
 @click.option("--base-url", default=None, help="临时覆盖 OpenAI 兼容接口地址")
-@click.option("--asr-model", default=None, help="临时覆盖 ASR 模型，如 sensevoice-small / large-v3")
+@click.option("--asr-model", default=None, help="临时覆盖 ASR 模型，如 fun-asr-nano / sensevoice-small / large-v3")
 @click.option("--device", type=click.Choice(["auto", "cuda", "cpu"]), default=None, help="ASR 设备")
 @click.option("--diarize/--no-diarize", default=None,
               help="是否做说话人分离（默认 auto：只在选分说话人摘要时开）")

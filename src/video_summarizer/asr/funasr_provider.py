@@ -12,6 +12,10 @@ v0.2 起的默认 ASR：中文内容的准确率和速度都比 whisper 好，�
 
 另外 SenseVoice 是按 30 秒以内的短段训练的，整段长音频直接喂进去输出是乱的，
 VAD 切分不是可选优化而是必需步骤。
+
+Fun-ASR-Nano（v0.9 起的默认）走同一条 VAD + 批量识别的路。它是 SenseVoice 编码器 + Qwen3-0.6B
+解码器，有语言模型撑着，"英派/鹰派""一息/议息"这类同音错基本不犯，还吃热词（词表里的正确写法）。
+代价是慢 4 倍左右（20x 实时 vs 70x）、多占 2GB 显存。它不吐语言标签，语言按字符集猜。
 """
 
 from __future__ import annotations
@@ -32,12 +36,18 @@ log = logging.getLogger(__name__)
 
 # SenseVoice 覆盖的语言。超出这个范围要走 whisper 兜底。
 SENSEVOICE_LANGUAGES = frozenset({"zh", "en", "yue", "ja", "ko"})
+# Fun-ASR-Nano 官方说明覆盖中英日（外加中文方言）
+NANO_LANGUAGES = frozenset({"zh", "en", "ja"})
 
 # 配置里的短名 -> ModelScope 上的模型 id。FunASR 自己也认这些短名，
-# 这里只把 sensevoice 映射过去，其余交给 FunASR 解析。
+# 这里只把 sensevoice / nano 映射过去，其余交给 FunASR 解析。
+NANO_MODEL = "fun-asr-nano"
 MODEL_IDS = {
     "sensevoice-small": "iic/SenseVoiceSmall",
+    NANO_MODEL: "FunAudioLLM/Fun-ASR-Nano-2512",
 }
+# 热词最多喂这么多。Nano 是把它们写进 prompt 的，太长反而稀释注意力
+MAX_HOTWORDS = 100
 VAD_MODEL_ID = "fsmn-vad"
 PUNC_MODEL_ID = "ct-punc"   # 标点恢复，说话人分离那条路径要用
 SPK_MODEL_ID = "cam++"      # 说话人嵌入 + 聚类
@@ -63,23 +73,57 @@ EXPECTED_SAMPLE_RATE = 16000
 _TAG_RE = re.compile(r"<\|([^|]*)\|>")
 # 标点模型把小数点当句号："49。5 块" -> "49.5 块"。两边都是数字时才是小数点
 _DECIMAL_RE = re.compile(r"(?<=\d)。(?=\d)")
+# Nano 把字母缩写按字母念出来时会写成 "P C E"、"Q T"，并回去
+_SPACED_ABBR_RE = re.compile(r"(?<![A-Za-z])[A-Z](?: [A-Z])+(?![A-Za-z])")
+# 猜语言用的字符集
+_HAN_RE = re.compile(r"[\u4e00-\u9fff]")
+_KANA_RE = re.compile(r"[\u3040-\u30ff]")
+_HANGUL_RE = re.compile(r"[\uac00-\ud7af]")
+_LATIN_RE = re.compile(r"[A-Za-z]")
+
+
+def warm_up() -> None:
+    """把 funasr/torch 这两个大包先 import 进来，让第一个任务不用等。
+
+    服务启动后在后台线程调。真正耗时的是 import 本身（冷启动读 DLL + 杀毒扫描），
+    模型构建只要几秒，而且每个任务用完就 close() 释放显存，所以这里不预建模型。
+    任务撞上正在预热的话，Python 的 import 锁会让它等到 import 完，不会重复干活。
+    """
+    started = time.monotonic()
+    try:
+        import funasr  # noqa: F401
+        import torch
+
+        gpu = torch.cuda.is_available()
+    except ImportError as exc:
+        log.debug("FunASR 预热跳过：%s", exc)
+        return
+    log.info("FunASR 运行时预热完成，耗时 %.1f 秒（cuda=%s）", time.monotonic() - started, gpu)
 
 
 class FunASRProvider(BaseASRProvider):
     name = "funasr"
     supports_diarization = True
 
-    def __init__(self, cfg: ASRConfig, diarize: bool = False) -> None:
+    def __init__(self, cfg: ASRConfig, diarize: bool = False,
+                 hotwords: list[str] | None = None) -> None:
         self.cfg = cfg
         self.diarize = diarize
+        self.hotwords = [w for w in (hotwords or []) if w.strip()][:MAX_HOTWORDS]
         self._asr = None
         self._vad = None
         self._device: str | None = None
 
     @property
+    def is_nano(self) -> bool:
+        return self.cfg.model.strip().lower() == NANO_MODEL
+
+    @property
     def supported_languages(self) -> frozenset[str]:  # type: ignore[override]
         # 分离那条路径用的是 paraformer-zh，只做中文
-        return frozenset({"zh"}) if self.diarize else SENSEVOICE_LANGUAGES
+        if self.diarize:
+            return frozenset({"zh"})
+        return NANO_LANGUAGES if self.is_nano else SENSEVOICE_LANGUAGES
 
     # ---------- 模型加载 ----------
 
@@ -99,6 +143,11 @@ class FunASRProvider(BaseASRProvider):
         if self._asr is not None:
             return
 
+        # 日志打在 import 之前：`import funasr` 会把 torch（含几 GB 的 CUDA DLL）、
+        # transformers 一起拖进来，进程里第一次要几十秒，不提前说一声看起来像卡死了。
+        # 服务启动时 warm_up() 会在后台先把这步做掉，之后再走到这里就是秒过。
+        what = "说话人分离 pipeline" if self.diarize else "模型"
+        log.info("加载 FunASR %s（首次要先导入 torch/funasr，可能要几十秒）...", what)
         try:
             from funasr import AutoModel
         except ImportError as exc:
@@ -121,7 +170,7 @@ class FunASRProvider(BaseASRProvider):
                 # SenseVoice 那条路径根本不吐时间戳，没法给聚类结果对齐时间轴。
                 model_id = self.cfg.diarize_model
                 log.info(
-                    "加载 FunASR 说话人分离 pipeline：%s + %s + %s + %s（device=%s，首次会从 ModelScope 下载）",
+                    "构建 FunASR 说话人分离 pipeline：%s + %s + %s + %s（device=%s，首次会从 ModelScope 下载）",
                     model_id, VAD_MODEL_ID, PUNC_MODEL_ID, SPK_MODEL_ID, self._device,
                 )
                 self._asr = AutoModel(
@@ -134,13 +183,19 @@ class FunASRProvider(BaseASRProvider):
                 return
 
             model_id = MODEL_IDS.get(self.cfg.model.lower(), self.cfg.model)
-            log.info("加载 FunASR 模型 %s（device=%s，首次会从 ModelScope 下载）", model_id, self._device)
+            log.info("构建 FunASR 模型 %s（device=%s，首次会从 ModelScope 下载）", model_id, self._device)
             # max_single_segment_time 是建模型时的配置项，不是 generate() 的参数，
             # 传错地方不会报错，只会静默用默认的 60000ms —— 那对 SenseVoice 太长了
             self._vad = AutoModel(
                 model=VAD_MODEL_ID, max_single_segment_time=MAX_SEGMENT_MS, **common
             )
-            self._asr = AutoModel(model=model_id, **common)
+            if self.is_nano:
+                # ctc_decoder=None：不建 CTC 头。它只用来出字级时间戳，而带着它 funasr
+                # 会退回逐段解码（慢 5 倍以上）；时间轴我们有 VAD 的段边界就够了。
+                # trust_remote_code=False：权重目录里的 model.py 不用，走 funasr 内置的实现。
+                self._asr = AutoModel(model=model_id, trust_remote_code=False, ctc_decoder=None, **common)
+            else:
+                self._asr = AutoModel(model=model_id, **common)
         except Exception as exc:  # noqa: BLE001 - funasr 抛的类型不固定
             raise ASRError(f"FunASR 模型加载失败: {exc}") from exc
 
@@ -155,8 +210,10 @@ class FunASRProvider(BaseASRProvider):
     def _transcribe_diarized(self, audio_path: Path) -> ASRResult:
         """paraformer + VAD + 标点 + CAM++ 一步出带 speaker 的句级结果。"""
         started = time.monotonic()
+        # paraformer-zh 实际是 SeACo-Paraformer，热词是它的原生能力（空格分隔的一个字符串）
+        extra = {"hotword": " ".join(self.hotwords)} if self.hotwords else {}
         try:
-            raw = self._asr.generate(input=str(audio_path), batch_size_s=300)
+            raw = self._asr.generate(input=str(audio_path), batch_size_s=300, **extra)
         except Exception as exc:  # noqa: BLE001
             raise ASRError(f"FunASR 说话人分离失败: {exc}") from exc
 
@@ -228,6 +285,9 @@ class FunASRProvider(BaseASRProvider):
             ]
             for (start_ms, end_ms), raw_text in zip(group, self._recognize(chunks, sample_rate)):
                 text, lang = _strip_tags(raw_text)
+                if self.is_nano:
+                    text = join_spaced_abbr(text)
+                    lang = guess_language(text)
                 if lang:
                     languages[lang] += 1
                 if text:
@@ -257,6 +317,7 @@ class FunASRProvider(BaseASRProvider):
                 "device": self._device,
                 "diarization": False,
                 "vad_model": VAD_MODEL_ID,
+                "hotwords": len(self.hotwords) if self.is_nano else 0,
                 "speech_sec": round(speech_sec, 1),
                 "detected_languages": dict(languages),
                 "elapsed_sec": round(elapsed, 1),
@@ -283,13 +344,26 @@ class FunASRProvider(BaseASRProvider):
         if not chunks:
             return []
         try:
-            out = self._asr.generate(
-                input=chunks,
-                fs=sample_rate,
-                language=self.cfg.language or "auto",
-                use_itn=True,  # 顺带做逆文本正则化，数字和标点会规范一些
-                batch_size=BATCH_SIZE,
-            )
+            if self.is_nano:
+                import torch
+
+                # Nano 的 data_load 只认 torch.Tensor 或路径；也不能传 fs（它内部已经按
+                # frontend.fs 传了一次，再传会撞参数），音频必须已经是 16k —— 上游保证了
+                out = self._asr.generate(
+                    input=[torch.from_numpy(c) for c in chunks],
+                    hotwords=self.hotwords,
+                    itn=True,
+                    batch_size=BATCH_SIZE,
+                    llm_dtype="bf16",
+                )
+            else:
+                out = self._asr.generate(
+                    input=chunks,
+                    fs=sample_rate,
+                    language=self.cfg.language or "auto",
+                    use_itn=True,  # 顺带做逆文本正则化，数字和标点会规范一些
+                    batch_size=BATCH_SIZE,
+                )
         except Exception as exc:  # noqa: BLE001
             raise ASRError(f"FunASR 识别失败: {exc}") from exc
 
@@ -365,6 +439,25 @@ def _strip_tags(raw: str) -> tuple[str, str | None]:
 
 def fix_decimal_point(text: str) -> str:
     return _DECIMAL_RE.sub(".", text)
+
+
+def join_spaced_abbr(text: str) -> str:
+    """"P C E" -> "PCE"。只并大写单字母串，不碰正常英文单词。"""
+    return _SPACED_ABBR_RE.sub(lambda m: m.group(0).replace(" ", ""), text)
+
+
+def guess_language(text: str) -> str | None:
+    """按字符集猜语言，给不吐语言标签的模型用。假名优先于汉字（日文里也有汉字）。"""
+    if not text:
+        return None
+    if _KANA_RE.search(text):
+        return "ja"
+    if _HANGUL_RE.search(text):
+        return "ko"
+    han, latin = len(_HAN_RE.findall(text)), len(_LATIN_RE.findall(text))
+    if han == 0 and latin == 0:
+        return None
+    return "zh" if han >= latin / 4 else "en"
 
 
 def _hms(seconds: float) -> str:

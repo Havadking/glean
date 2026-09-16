@@ -68,6 +68,7 @@ TYPE_HINTS = {
 }
 
 ASR_CHOICES = [
+    {"value": "fun-asr-nano", "label": "Fun-ASR-Nano", "note": "准，专名少错，吃词表热词"},
     {"value": "sensevoice-small", "label": "SenseVoice-Small", "note": "快，中英日韩"},
     {"value": "paraformer-zh", "label": "Paraformer-zh", "note": "分说话人，仅中文"},
     {"value": "whisper", "label": "Whisper large-v3", "note": "兜底，多语种"},
@@ -112,6 +113,15 @@ class State:
         self._touch_lock = threading.Lock()
         # 列表页缓存：(url, page, keyword) -> (时间, 页)。空间接口限流很紧，翻回上一页不该再打一次
         self._listings: dict[tuple[str, int, str], tuple[float, Any]] = {}
+        self._warm_up_asr()
+
+    def _warm_up_asr(self) -> None:
+        """后台把 funasr/torch 先 import 进来。冷启动这步要一分多钟，别让第一个任务扛。"""
+        if (self.cfg.asr.provider or "").strip().lower() != "funasr":
+            return
+        from ..asr.funasr_provider import warm_up
+
+        threading.Thread(target=warm_up, name="vsum-asr-warmup", daemon=True).start()
 
     LISTING_TTL_SEC = 600
 
@@ -1055,8 +1065,11 @@ def create_app(cfg: Config):
 
         def work(rep: Reporter) -> dict[str, Any]:
             rep.stage("polish", f"调用 {provider.describe()} 纠专有名词")
-            fixed = correction_mod.polish(provider, transcript, title=entry.title, uploader=entry.uploader)
+            cache = Cache(c.cache_db)
+            fixed = correction_mod.polish(provider, transcript, title=entry.title, uploader=entry.uploader,
+                                          terms=cache.get_terms(entry.uploader))
             library_mod.save_transcript(c, entry, fixed)
+            cache.learn_terms(entry.uploader, correction_mod.items_of(fixed), video_id=video_id)
             search_mod.index_one(c, video_id)
             used = _record_usage(c, provider, video_id=video_id, kind="polish", detail=None)
             return {**_corrections_response(c, entry), "used": used}
@@ -1082,8 +1095,34 @@ def create_app(cfg: Config):
         except IndexError:
             raise HTTPException(404, "没有这一条")
         library_mod.save_transcript(c, entry, fixed)
+        # 否决/恢复同步到词表：这个 UP 主（及同组）之后的视频跟着变
+        item = correction_mod.items_of(fixed)[index]
+        Cache(c.cache_db).set_term_state(entry.uploader, item.src, item.dst, item.state)
         search_mod.index_one(c, video_id)
         return _corrections_response(c, entry)
+
+    # ----- 词表 -----
+
+    @app.get("/api/terms")
+    def list_terms(uploader: str = ""):
+        """某个 UP 主（含同组）攒下的专名词表。不传 uploader 是"没有 UP 主信息"那一堆的。"""
+        c = state.fresh_config()
+        cache = Cache(c.cache_db)
+        return {
+            "uploader": uploader,
+            "scope": cache.term_scope(uploader),
+            "terms": [t.to_dict() for t in cache.get_terms(uploader)],
+        }
+
+    class TermBody(BaseModel):
+        uploader: str = ""
+        src: str
+        dst: str
+
+    @app.delete("/api/terms")
+    def delete_term(body: TermBody):
+        c = state.fresh_config()
+        return {"deleted": Cache(c.cache_db).delete_term(body.uploader, body.src, body.dst)}
 
     # ----- 问视频 -----
 

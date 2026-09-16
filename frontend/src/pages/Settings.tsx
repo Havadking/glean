@@ -96,7 +96,7 @@ export function Settings() {
   // ASR 状态
   const [asrConfig, setAsrConfig] = useState<AsrConfig | null>(null)
   const [asrProvider, setAsrProvider] = useState<string>('funasr')
-  const [asrModel, setAsrModel] = useState<string>('sensevoice-small')
+  const [asrModel, setAsrModel] = useState<string>('fun-asr-nano')
   const [asrDevice, setAsrDevice] = useState<string>('auto')
   const [asrDiarize, setAsrDiarize] = useState<string>('auto')
   const [savingAsr, setSavingAsr] = useState(false)
@@ -668,7 +668,7 @@ export function Settings() {
               onChange={(e) => {
                 const p = e.target.value
                 setAsrProvider(p)
-                if (p === 'funasr') setAsrModel('sensevoice-small')
+                if (p === 'funasr') setAsrModel('fun-asr-nano')
                 else if (p === 'whisper') setAsrModel('large-v3')
               }}
             >
@@ -681,7 +681,8 @@ export function Settings() {
             <label>识别模型 (Model)</label>
             {asrProvider === 'funasr' ? (
               <select value={asrModel} onChange={(e) => setAsrModel(e.target.value)}>
-                <option value="sensevoice-small">sensevoice-small (极速多语言，默认推荐)</option>
+                <option value="fun-asr-nano">fun-asr-nano (准，专名少错，吃词表热词，默认推荐)</option>
+                <option value="sensevoice-small">sensevoice-small (极速多语言)</option>
                 <option value="paraformer-zh">paraformer-zh (中文精调，支持说话人分离)</option>
               </select>
             ) : (

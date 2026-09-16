@@ -107,23 +107,32 @@ def run(
     )
 
     # 纠专有名词：只对 ASR 来源，且这份转写还没有表（缓存命中的老转写也补）。
+    # 先套这个 UP 主（同分组共享）攒下的词表，再让模型找新的；模型不可用就只套词表。
     # 出错不阻塞主流程 —— 转写照常落盘，只是没有替换表。
     provider = None
-    if cfg.summarizer.correct_terms and transcript.source_type == "asr"             and "corrections" not in transcript.meta:
-        if cfg.summarizer.provider == "ollama":
-            log.warning("summarizer.correct_terms 开着，但本地小模型纠专有名词不靠谱，跳过")
-        else:
-            try:
+    if transcript.source_type == "asr" and "corrections" not in transcript.meta:
+        terms = cache.get_terms(info.uploader)
+        use_model = cfg.summarizer.correct_terms
+        if use_model and cfg.summarizer.provider == "ollama":
+            log.warning("summarizer.correct_terms 开着，但本地小模型纠专有名词不靠谱，只套词表")
+            use_model = False
+        try:
+            if use_model:
                 provider = summarizer_registry.get_provider(cfg.summarizer)
                 stage("polish", f"调用 {provider.describe()} 纠专有名词")
                 transcript = correction.polish(
-                    provider, transcript, title=info.title, uploader=info.uploader,
+                    provider, transcript, title=info.title, uploader=info.uploader, terms=terms,
                 )
-                result.transcript = transcript
                 result.correction_usage = provider.take_usage()
                 result.correction_provider_desc = provider.describe()
-            except Exception as exc:  # noqa: BLE001 —— 纠错是锦上添花，不能把转写搭进去
-                log.warning("纠专有名词失败，跳过：%s", exc)
+            elif terms:
+                stage("polish", "按词表纠专有名词")
+                transcript = correction.apply_table(transcript, terms)
+            result.transcript = transcript
+        except Exception as exc:  # noqa: BLE001 —— 纠错是锦上添花，不能把转写搭进去
+            log.warning("纠专有名词失败，跳过：%s", exc)
+        # 这条视频上生效的替换回填进词表，下一条视频直接用
+        cache.learn_terms(info.uploader, correction.items_of(transcript), video_id=info.video_id)
 
     # 记下指纹，下次缓存万一没了还能靠它认领这份产物
     transcript.meta["cache_key"] = cache_key
@@ -279,11 +288,15 @@ def _get_transcript(
     log.info("提取音频 ...")
     audio_path = extractor.extract(info, cfg, work_dir / "audio", force=force)
 
-    provider = asr_registry.get_provider(cfg.asr, diarize=diarize)
+    # 词表里的正确写法当热词喂给 ASR：支持热词的模型（Fun-ASR-Nano、Paraformer）
+    # 会在声学层面就倾向这些写法，比事后替换靠谱；不支持的（SenseVoice、whisper）忽略
+    hotwords = cache.hotwords(info.uploader) if cache is not None else []
+    provider = asr_registry.get_provider(cfg.asr, diarize=diarize, hotwords=hotwords)
     stage("transcribe", f"{cfg.asr.diarize_model if diarize else cfg.asr.model}"
                         f"{'，带说话人分离' if diarize else ''}")
     log.info(
-        "开始语音识别（provider=%s%s）...", provider.name, "，带说话人分离" if diarize else "",
+        "开始语音识别（provider=%s%s%s）...", provider.name, "，带说话人分离" if diarize else "",
+        f"，{len(hotwords)} 个热词" if hotwords else "",
     )
     try:
         asr_result = provider.transcribe(audio_path)

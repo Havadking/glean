@@ -2,6 +2,7 @@ import { ArrowUpDown, ChevronDown, ChevronsUpDown, Folder, FolderOpen, Plus, Sea
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, type Entry, type SearchResult } from '../api'
+import { useUploaderGroups } from '../components/GroupMenu'
 import { TagChip } from '../components/Tags'
 import { Avatar, ErrorBox, Highlight, Pill, Seg, Stats } from '../components/ui'
 import { fmtDuration, fmtMinutes, fmtMoney, fmtWhen } from '../lib/format'
@@ -42,6 +43,7 @@ function sortEntries(items: Entry[], sort: SortKey): Entry[] {
 
 export function Library() {
   const { library, libraryError, refreshLibrary, meta, queue, refreshQueue } = useStore()
+  const { groups: upGroups } = useUploaderGroups()
   const [params, setParams] = useSearchParams()
   const [query, setQuery] = useState(() => params.get('q') ?? '')
   const [showAllTags, setShowAllTags] = useState(false)
@@ -66,7 +68,17 @@ export function Library() {
   const [searching, setSearching] = useState(false)
   const nav = useNavigate()
   const up = params.get('up')
+  // 按 UP 主分组筛：组名，或 __none 表示没分组的
   const groupFilter = params.get('group')
+  const setGroupFilter = (g: string | null) => {
+    const next = new URLSearchParams(params)
+    if (g) next.set('group', g); else next.delete('group')
+    setParams(next)
+  }
+  // 组被改名 / 解散了，URL 里还留着旧名字：清掉，别对着一页空白
+  useEffect(() => {
+    if (library && groupFilter && groupFilter !== '__none' && !upGroups.some((g) => g.name === groupFilter)) setGroupFilter(null)
+  })
   // 搜索框里打 #xx 等于点标签
   const hashTag = query.trim().startsWith('#') ? query.trim().slice(1).trim() : ''
   const tag = hashTag || params.get('tag')
@@ -147,7 +159,7 @@ export function Library() {
     const q = hashTag ? '' : query.trim().toLowerCase()
     const processed = library.groups
       .filter((g) => !up || g.uploader === up)
-      .filter((g) => !groupFilter || (groupFilter === '未分组' ? !g.group : g.group === groupFilter))
+      .filter((g) => !groupFilter || (groupFilter === '__none' ? !g.group : g.group === groupFilter))
       .map((g) => {
         const filteredEntries = g.entries.filter((e) => {
           if (tag && !(e.tags ?? []).some((t) => t.tag === tag)) return false
@@ -257,7 +269,6 @@ export function Library() {
           </select>
         </div>
         {up && <button className="btn sm" onClick={() => { const n = new URLSearchParams(params); n.delete('up'); setParams(n) }}>只看 {up} ✕</button>}
-        {groupFilter && <button className="btn sm" onClick={() => { const n = new URLSearchParams(params); n.delete('group'); setParams(n) }}>只看分组: {groupFilter} ✕</button>}
         <span className="sp" />
         {groups.length > 1 && !query.trim() && !tag && (
           <button
@@ -270,6 +281,30 @@ export function Library() {
           </button>
         )}
       </div>
+
+      {upGroups.length > 0 && (() => {
+        const ungrouped = library?.groups.filter((g) => g.uploader && !g.group).reduce((n, g) => n + g.entries.length, 0) ?? 0
+        const chip = (key: string | null, label: string, n?: number) => {
+          const on = groupFilter === key
+          return (
+            <span className={`tag click${on ? ' on' : ''}`} key={key ?? '*'}>
+              <button type="button" onClick={() => setGroupFilter(on ? null : key)}>
+                {key && (key === '__none' ? <FolderOpen className="ic" /> : <Folder className="ic" />)}
+                {label}
+                {n != null && <span className="c">{n}</span>}
+              </button>
+            </span>
+          )
+        }
+        return (
+          <div className="gbar">
+            <span className="lbl">分组</span>
+            {chip(null, '全部')}
+            {upGroups.map((g) => chip(g.name, g.name, g.videos))}
+            {ungrouped > 0 && chip('__none', '未分组', ungrouped)}
+          </div>
+        )
+      })()}
 
       {(tagCounts.length > 0 || untagged > 0) && (
         <div className="tagbar">
@@ -357,19 +392,14 @@ export function Library() {
                 <ChevronDown className={`gh-chevron ${isCollapsed ? 'collapsed' : ''}`} />
                 <Avatar name={g.uploader} grey={!g.uploader} />
                 <span>{g.uploader ?? '其他'}</span>
-                {g.group && (
+                {g.group && !groupFilter && (
                   <span
-                    className="gh-badge"
-                    style={{ color: 'var(--accent)', borderColor: 'var(--accent-line)', display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'pointer' }}
-                    onClick={(ev) => {
-                      ev.stopPropagation()
-                      const n = new URLSearchParams(params)
-                      n.set('group', g.group!)
-                      setParams(n)
-                    }}
-                    title={`只看「${g.group}」分组`}
+                    className="gh-badge click"
+                    role="button"
+                    onClick={(ev) => { ev.stopPropagation(); setGroupFilter(g.group!) }}
+                    title={`只看「${g.group}」这组`}
                   >
-                    <Folder size={11} /> {g.group}
+                    <Folder /> {g.group}
                   </span>
                 )}
                 <span className="c">

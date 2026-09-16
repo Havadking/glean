@@ -26,7 +26,7 @@ download:
 
 asr:
   provider: funasr   # funasr | whisper
-  model: sensevoice-small   # funasr: sensevoice-small | paraformer-zh
+  model: fun-asr-nano       # funasr: fun-asr-nano（准，吃词表热词）| sensevoice-small（快）| paraformer-zh
                               # whisper: tiny | base | small | medium | large-v3
   device: cuda   # auto | cuda | cpu
   language: null              # null = 自动检测；也可写 "zh" / "en" 强制
@@ -49,7 +49,7 @@ asr:
 
 summarizer:
   name: "deepseek-flash"
-  provider: openai            # openai（含所有 OpenAI 兼容接口） | claude | ollama
+  provider: openai   # openai（含所有 OpenAI 兼容接口） | claude | ollama
   model: deepseek-chat
   base_url: "https://api.deepseek.com/v1"
   api_key_env: DEEPSEEK_API_KEY   # 从 .env 的这个变量读 key

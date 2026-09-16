@@ -83,8 +83,8 @@ export interface Library { stats: LibraryStats; groups: LibraryGroup[]; review: 
 
 export interface Paragraph { start: number; end: number; text: string; speaker: string | null }
 /** 纠专有名词的替换表里的一条。index 是在表里的位置，否决/恢复按它定位 */
-export interface CorrectionItem { index: number; from: string; to: string; why: string; hits: number; state: 'applied' | 'rejected' }
-export interface Corrections { provider: string | null; created_at: string | null; items: CorrectionItem[]; applied_hits: number }
+export interface CorrectionItem { index: number; from: string; to: string; why: string; hits: number; state: 'applied' | 'rejected'; source: 'model' | 'table' }
+export interface Corrections { provider: string | null; created_at: string | null; items: CorrectionItem[]; applied_hits: number; table_hits?: number }
 export interface MindmapNode { content: string; children: MindmapNode[] }
 export interface Summary {
   type: string

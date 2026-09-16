@@ -45,7 +45,7 @@ class DownloadConfig:
 @dataclass
 class ASRConfig:
     provider: str = "funasr"
-    model: str = "sensevoice-small"
+    model: str = "fun-asr-nano"
     device: str = "auto"
     compute_type: str = "auto"
     language: str | None = None

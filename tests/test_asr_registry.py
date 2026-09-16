@@ -86,10 +86,29 @@ def test_supported_language_uses_primary():
     ("zh", True), ("zh-Hans", True), ("en", True), ("ja", True),
     ("ko", True), ("yue", True), ("de", False), ("fr", False), (None, True),
 ])
-def test_funasr_language_coverage(lang, supported):
+def test_sensevoice_language_coverage(lang, supported):
     from video_summarizer.asr.funasr_provider import FunASRProvider
 
-    assert FunASRProvider(ASRConfig()).supports_language(lang) is supported
+    assert FunASRProvider(ASRConfig(model="sensevoice-small")).supports_language(lang) is supported
+
+
+@pytest.mark.parametrize("lang,supported", [
+    ("zh", True), ("en", True), ("ja", True), ("ko", False), ("yue", False), ("de", False), (None, True),
+])
+def test_nano_language_coverage(lang, supported):
+    """Nano 官方只说中英日；粤语和韩语走 whisper 兜底。默认模型就是它。"""
+    from video_summarizer.asr.funasr_provider import FunASRProvider
+
+    provider = FunASRProvider(ASRConfig())
+    assert provider.is_nano and provider.supports_language(lang) is supported
+
+
+def test_hotwords_are_trimmed_and_capped():
+    from video_summarizer.asr.funasr_provider import MAX_HOTWORDS, FunASRProvider
+
+    provider = FunASRProvider(ASRConfig(), hotwords=["", " ", *[f"w{i}" for i in range(MAX_HOTWORDS + 5)]])
+    assert len(provider.hotwords) == MAX_HOTWORDS and provider.hotwords[0] == "w0"
+    assert get_provider(ASRConfig(fallback=None), hotwords=["鹰派"]).hotwords == ["鹰派"]
 
 
 def test_whisper_has_no_language_limit():
