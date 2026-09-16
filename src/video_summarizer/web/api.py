@@ -116,10 +116,10 @@ class State:
         self._warm_up_asr()
 
     def _warm_up_asr(self) -> None:
-        """后台把 funasr/torch 先 import 进来。冷启动这步要一分多钟，别让第一个任务扛。"""
+        """后台起个子进程把 funasr/torch import 一遍，让磁盘缓存热起来。冷启动这步要一分多钟，别让第一个任务扛。"""
         if (self.cfg.asr.provider or "").strip().lower() != "funasr":
             return
-        from ..asr.funasr_provider import warm_up
+        from ..asr.worker import warm_up
 
         threading.Thread(target=warm_up, name="vsum-asr-warmup", daemon=True).start()
 
@@ -176,6 +176,7 @@ def _entry_dict(e: library_mod.LibraryEntry) -> dict[str, Any]:
     return {
         "video_id": e.video_id,
         "title": e.title,
+        "remark": e.remark,
         "source_url": e.source_url,
         "extractor": e.meta.get("extractor"),
         "uploader": e.uploader,
@@ -668,6 +669,17 @@ def create_app(cfg: Config):
             transcript = cleaning.clean_transcript(transcript)
         est = provider.plan(transcript, SummaryOptions(summary_type=type, language=language))
         return {"provider": provider.describe(), **_estimate_dict(c, est)}
+
+    class RemarkBody(BaseModel):
+        remark: str | None = None
+
+    @app.post("/api/videos/{video_id}/remark")
+    def update_remark(video_id: str, body: RemarkBody):
+        c = state.fresh_config()
+        if library_mod.find_entry(c, video_id) is None:
+            raise HTTPException(404, "没有这个视频")
+        clean = library_mod.set_video_remark(c, video_id, body.remark)
+        return {"video_id": video_id, "remark": clean}
 
     @app.delete("/api/videos/{video_id}")
     def delete_video(video_id: str):
@@ -1197,7 +1209,8 @@ def create_app(cfg: Config):
             kind, text = mat
             materials.append(qa_mod.Material(index=i, video_id=e.video_id, title=e.title,
                                              date=_fmt_date(e.upload_date), kind=kind, text=text))
-            videos.append({"index": i, "video_id": e.video_id, "title": e.title, "upload_date": _fmt_date(e.upload_date),
+            videos.append({"index": i, "video_id": e.video_id, "title": e.title, "remark": e.remark,
+                           "upload_date": _fmt_date(e.upload_date),
                            "duration_sec": e.duration_sec, "material": kind,
                            "tokens": qa_mod.estimate_tokens(text)})
         return materials, videos
@@ -1277,10 +1290,10 @@ def create_app(cfg: Config):
         c = state.fresh_config()
         path = avatars_mod.cached(c, name)
         if path is None:
-            entry = next((e for e in library_mod.load_library(c) if e.uploader == name), None)
-            if entry is None:
+            entries = [e for e in library_mod.load_library(c) if e.uploader == name]
+            if not entries:
                 raise HTTPException(404, "库里没有这位创作者")
-            path = avatars_mod.fetch(c, name, entry)
+            path = avatars_mod.fetch(c, name, entries)
         if path is None:
             raise HTTPException(404, "拿不到头像")
         return FileResponse(path, headers={"Cache-Control": "private, max-age=604800"})
@@ -1410,8 +1423,9 @@ def create_app(cfg: Config):
                 materials.append(digest_mod.Material(
                     index=i, video_id=e.video_id, title=e.title, uploader=e.uploader,
                     date=digest_mod.local_date(e.created_at).isoformat(), tags=vtags, kind=kind, text=text))
-            videos.append({"index": i, "video_id": e.video_id, "title": e.title, "uploader": e.uploader,
-                           "thumbnail": e.thumbnail, "duration_sec": e.duration_sec, "created_at": e.created_at,
+            videos.append({"index": i, "video_id": e.video_id, "title": e.title, "remark": e.remark,
+                           "uploader": e.uploader, "thumbnail": e.thumbnail,
+                           "duration_sec": e.duration_sec, "created_at": e.created_at,
                            "tags": vtags, "material": kind, "tokens": qa_mod.estimate_tokens(text)})
         return materials, videos
 
@@ -1507,7 +1521,7 @@ def create_app(cfg: Config):
             if entry is None:
                 continue
             videos.append({
-                "video_id": vid, "title": entry.title, "uploader": entry.uploader,
+                "video_id": vid, "title": entry.title, "remark": entry.remark, "uploader": entry.uploader,
                 "thumbnail": entry.thumbnail, "duration_sec": entry.duration_sec,
                 "hits": [h.to_dict() for h in group],
             })

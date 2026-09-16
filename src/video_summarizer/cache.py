@@ -27,8 +27,8 @@ from .models import Transcript
 
 log = logging.getLogger(__name__)
 
-# v5：加 terms 表，并把库里已有的纠错表一次性灌进去
-SCHEMA_VERSION = 5
+# v6：加 video_remarks 表，支持给视频添加备注名称
+SCHEMA_VERSION = 6
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS transcripts (
@@ -145,6 +145,14 @@ CREATE TABLE IF NOT EXISTS terms (
     PRIMARY KEY (uploader, src, dst)
 );
 CREATE INDEX IF NOT EXISTS idx_terms_uploader ON terms(uploader);
+
+-- 视频备注：用户自定义视频名称。没有备注时回退原名称
+CREATE TABLE IF NOT EXISTS video_remarks (
+    video_id    TEXT PRIMARY KEY,
+    remark      TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_video_remarks_video ON video_remarks(video_id);
 """
 
 
@@ -1181,6 +1189,52 @@ class Cache:
             "size_bytes": size,
         }
 
+    def get_remark(self, video_id: str) -> str | None:
+        """获取视频的用户备注名称。"""
+        conn = self._connect()
+        if conn is None:
+            return None
+        try:
+            with closing(conn):
+                row = conn.execute("SELECT remark FROM video_remarks WHERE video_id = ?", (video_id,)).fetchone()
+                return row["remark"] if row else None
+        except sqlite3.Error as exc:
+            log.warning("查视频备注失败：%s", exc)
+            return None
+
+    def get_all_remarks(self) -> dict[str, str]:
+        """批量获取所有视频的备注名称映射 {video_id: remark}。"""
+        conn = self._connect()
+        if conn is None:
+            return {}
+        try:
+            with closing(conn):
+                rows = conn.execute("SELECT video_id, remark FROM video_remarks").fetchall()
+                return {r["video_id"]: r["remark"] for r in rows if r["remark"]}
+        except sqlite3.Error as exc:
+            log.warning("批量查视频备注失败：%s", exc)
+            return {}
+
+    def set_remark(self, video_id: str, remark: str | None) -> None:
+        """设置或清空视频备注。非空字符串则保存，None 或空字符串则删除恢复原名。"""
+        conn = self._connect()
+        if conn is None:
+            return
+        clean_remark = (remark or "").strip()
+        try:
+            with closing(conn):
+                if clean_remark:
+                    conn.execute(
+                        "INSERT INTO video_remarks (video_id, remark, updated_at) VALUES (?, ?, ?)"
+                        " ON CONFLICT(video_id) DO UPDATE SET remark = excluded.remark, updated_at = excluded.updated_at",
+                        (video_id, clean_remark, _now()),
+                    )
+                else:
+                    conn.execute("DELETE FROM video_remarks WHERE video_id = ?", (video_id,))
+                conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("保存视频备注失败：%s", exc)
+
     def clear(self, video_id: str | None = None) -> tuple[int, int]:
         """清缓存。给了 video_id 就只清那个视频的。返回 (转写数, 总结数)。"""
         conn = self._connect()
@@ -1193,12 +1247,14 @@ class Cache:
                     s = conn.execute("DELETE FROM summaries WHERE video_id = ?", (video_id,))
                     conn.execute("DELETE FROM questions WHERE video_id = ?", (video_id,))
                     conn.execute("DELETE FROM tags WHERE video_id = ?", (video_id,))
+                    conn.execute("DELETE FROM video_remarks WHERE video_id = ?", (video_id,))
                 else:
                     t = conn.execute("DELETE FROM transcripts")
                     s = conn.execute("DELETE FROM summaries")
                     conn.execute("DELETE FROM questions")
                     conn.execute("DELETE FROM tags")
                     conn.execute("DELETE FROM digests")
+                    conn.execute("DELETE FROM video_remarks")
                 conn.commit()
                 counts = (t.rowcount, s.rowcount)
                 conn.execute("VACUUM")

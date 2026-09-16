@@ -62,6 +62,11 @@ class LibraryEntry:
     upload_date: str | None = None   # YYYYMMDD
     thumbnail: str | None = None
     cache_key: str | None = None
+    remark: str | None = None
+
+    @property
+    def display_title(self) -> str:
+        return (self.remark or "").strip() or self.title
 
     @property
     def work_dir(self) -> Path | None:
@@ -91,6 +96,13 @@ def load_library(cfg: Config) -> list[LibraryEntry]:
             entries[entry.video_id] = entry
         else:
             _merge(existing, entry)
+
+    remarks = Cache(cfg.cache_db).get_all_remarks()
+    for e in entries.values():
+        if e.video_id in remarks:
+            e.remark = remarks[e.video_id]
+        elif not e.remark and e.meta.get("remark"):
+            e.remark = str(e.meta["remark"])
 
     result = list(entries.values())
     result.sort(key=lambda e: e.created_at, reverse=True)
@@ -214,6 +226,33 @@ def find_entry(cfg: Config, video_id: str) -> LibraryEntry | None:
     return None
 
 
+def set_video_remark(cfg: Config, video_id: str, remark: str | None) -> str | None:
+    """设置或清空视频备注，返回规范化后的备注（或 None）。
+
+    双写：
+    1. SQLite video_remarks 表
+    2. 若有 transcript.json，同步更新 meta["remark"] 并写盘
+    """
+    clean_remark = (remark or "").strip() or None
+    Cache(cfg.cache_db).set_remark(video_id, clean_remark)
+
+    entry = find_entry(cfg, video_id)
+    if entry:
+        entry.remark = clean_remark
+        if entry.transcript_path and entry.transcript_path.is_file():
+            try:
+                raw_transcript = _load_raw_transcript(cfg, entry)
+                if raw_transcript:
+                    if clean_remark:
+                        raw_transcript.meta["remark"] = clean_remark
+                    else:
+                        raw_transcript.meta.pop("remark", None)
+                    save_transcript(cfg, entry, raw_transcript)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("更新产物 transcript.json 备注失败：%s", exc)
+    return clean_remark
+
+
 def _from_cache(cfg: Config) -> list[LibraryEntry]:
     cache = Cache(cfg.cache_db)
     if not cache.enabled:
@@ -287,6 +326,7 @@ def _from_output_dir(cfg: Config) -> list[LibraryEntry]:
             upload_date=meta.get("upload_date"),
             thumbnail=meta.get("thumbnail"),
             cache_key=meta.get("cache_key"),
+            remark=meta.get("remark"),
             summaries=[_summary_from_file(summary_path)] if summary_path.is_file() else [],
         ))
     return entries
@@ -320,6 +360,7 @@ def _merge(base: LibraryEntry, extra: LibraryEntry) -> None:
     base.upload_date = base.upload_date or extra.upload_date
     base.thumbnail = base.thumbnail or extra.thumbnail
     base.cache_key = base.cache_key or extra.cache_key
+    base.remark = base.remark or extra.remark
     if not base.speaker_count and extra.speaker_count:
         base.speaker_count = extra.speaker_count
     if not base.source_url:

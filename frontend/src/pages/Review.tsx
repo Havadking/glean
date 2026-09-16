@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, RefreshCw, Sparkles } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { api, type Review as ReviewT, type ReviewPeriod } from '../api'
+import { api, displayTitle, type Review as ReviewT, type ReviewPeriod } from '../api'
 import { TagChip } from '../components/Tags'
 import { Avatar, ErrorBox, Pill, Seg } from '../components/ui'
 import { citeHtml } from '../lib/cite'
@@ -110,7 +110,7 @@ export function Review() {
                   <span className="mono" style={{ color: 'var(--faint)', fontSize: 12 }}>{v.index}</span>
                   <div className="th">{v.thumbnail && <img src={v.thumbnail} alt="" referrerPolicy="no-referrer" loading="lazy" />}</div>
                   <div className="ti">
-                    <div className="t" title={v.title}>{v.title}</div>
+                    <div className="t" title={v.remark ? `${v.remark} (原名: ${v.title})` : v.title}>{displayTitle(v)}</div>
                     <div className="s">
                       {v.uploader && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Avatar name={v.uploader} size={14} />{v.uploader}</span>}
                       <span className="mono">{fmtDuration(v.duration_sec)}</span>

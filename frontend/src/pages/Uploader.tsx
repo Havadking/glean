@@ -1,7 +1,7 @@
 import { ChevronDown, Folder, FolderPlus, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { api, type Question, type UploaderInfo } from '../api'
+import { api, displayTitle, type Question, type UploaderInfo } from '../api'
 import { GroupMenu, useUploaderGroups } from '../components/GroupMenu'
 import { Avatar, ErrorBox, Pill } from '../components/ui'
 import { citeHtml } from '../lib/cite'
@@ -86,7 +86,7 @@ export function Uploader() {
               <Link className="item" to={`/video/${encodeURIComponent(v.video_id)}`} key={v.video_id} style={{ gridTemplateColumns: '28px 1fr auto' }}>
                 <span className="mono" style={{ color: 'var(--faint)', fontSize: 12 }}>{v.index}</span>
                 <div className="ti">
-                  <div className="t" title={v.title}>{v.title}</div>
+                  <div className="t" title={v.remark ? `${v.remark} (原名: ${v.title})` : v.title}>{displayTitle(v)}</div>
                   <div className="s">
                     {v.upload_date && <span>{v.upload_date}</span>}
                     <span className="mono">{fmtDuration(v.duration_sec)}</span>

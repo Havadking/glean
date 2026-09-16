@@ -1,7 +1,7 @@
 import { ArrowUpDown, ChevronDown, ChevronsUpDown, Folder, FolderOpen, Plus, Search, Sparkles, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { api, type Entry, type SearchResult } from '../api'
+import { api, displayTitle, type Entry, type SearchResult } from '../api'
 import { useUploaderGroups } from '../components/GroupMenu'
 import { TagChip } from '../components/Tags'
 import { Avatar, ErrorBox, Highlight, Pill, Seg, Stats } from '../components/ui'
@@ -34,7 +34,7 @@ function sortEntries(items: Entry[], sort: SortKey): Entry[] {
       case 'cost_desc':
         return (b.cost ?? 0) - (a.cost ?? 0)
       case 'title_asc':
-        return (a.title || '').localeCompare(b.title || '', 'zh-CN')
+        return displayTitle(a).localeCompare(displayTitle(b), 'zh-CN')
       default:
         return 0
     }
@@ -163,7 +163,7 @@ export function Library() {
       .map((g) => {
         const filteredEntries = g.entries.filter((e) => {
           if (tag && !(e.tags ?? []).some((t) => t.tag === tag)) return false
-          if (q && !e.title.toLowerCase().includes(q) && !(e.uploader ?? '').toLowerCase().includes(q)) return false
+          if (q && !e.title.toLowerCase().includes(q) && !(e.remark ?? '').toLowerCase().includes(q) && !(e.uploader ?? '').toLowerCase().includes(q)) return false
           if (filter === 'mindmap' && !e.summaries.some((s) => s.type === 'mindmap')) return false
           if (filter === 'nosummary' && e.summaries.length > 0) return false
           return true
@@ -227,7 +227,7 @@ export function Library() {
   }
 
   const remove = async (e: Entry) => {
-    if (!confirm(`删除「${e.title}」的转写、总结和产物目录？不可恢复。`)) return
+    if (!confirm(`删除「${displayTitle(e)}」的转写、总结和产物目录？不可恢复。`)) return
     try { await api.deleteVideo(e.video_id); await refreshLibrary() } catch (x) { setErr(x) }
   }
 
@@ -340,7 +340,7 @@ export function Library() {
           {result?.videos.map((v) => (
             <div className="hv" key={v.video_id}>
               <div className="hvt">
-                <Link to={`/video/${encodeURIComponent(v.video_id)}?q=${encodeURIComponent(query.trim())}`}>{v.title}</Link>
+                <Link to={`/video/${encodeURIComponent(v.video_id)}?q=${encodeURIComponent(query.trim())}`}>{displayTitle(v)}</Link>
                 {v.uploader && <span className="c">{v.uploader}</span>}
                 <span className="c mono">{fmtDuration(v.duration_sec)}</span>
                 <span className="c">{v.hits.length} 处</span>
@@ -428,7 +428,14 @@ export function Library() {
                     style={{ cursor: 'pointer' }}>
                     <div className="th">{e.thumbnail && <img src={e.thumbnail} alt="" referrerPolicy="no-referrer" loading="lazy" />}</div>
                     <div className="ti">
-                      <div className="t" title={e.title}>{e.title}</div>
+                      <div className="t" title={e.remark ? `${e.remark} (原名: ${e.title})` : e.title}>
+                        {displayTitle(e)}
+                        {e.remark?.trim() ? (
+                          <span style={{ fontSize: '0.8rem', color: 'var(--mute, #888)', marginLeft: 8, fontWeight: 400 }}>
+                            原: {e.title}
+                          </span>
+                        ) : null}
+                      </div>
                       <div className="s">
                         <span className="mono">{fmtDuration(e.duration_sec)}</span>
                         <span>{e.source_label}{e.diarized ? ' · 分说话人' : ''}</span>

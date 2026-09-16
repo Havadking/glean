@@ -2,6 +2,7 @@ import { Check, Loader2, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import {
   api,
+  displayTitle,
   type AsrConfig,
   type Storage,
   type TestLlmResult,
@@ -357,7 +358,7 @@ export function Settings() {
     } catch { setCleared('删除失败') } finally { setClearing(false) }
   }
 
-  const titles = new Map((library?.groups ?? []).flatMap((g) => g.entries).map((e) => [e.video_id, e.title]))
+  const titles = new Map((library?.groups ?? []).flatMap((g) => g.entries).map((e) => [e.video_id, displayTitle(e)]))
   const kindLabel = (k: string) => ({ summary: '总结', qa: '问视频', uploader_qa: '问 UP 主' }[k] ?? k)
 
   return (

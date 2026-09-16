@@ -50,6 +50,7 @@ export interface TagCount { tag: string; count: number }
 export interface Entry {
   video_id: string
   title: string
+  remark?: string | null
   source_url: string
   extractor: string | null
   uploader: string | null
@@ -199,7 +200,7 @@ export interface QuestionsResponse {
   questions: Question[]
 }
 
-export interface UploaderVideo { index: number; video_id: string; title: string; upload_date: string | null; duration_sec: number; material: string; tokens: number }
+export interface UploaderVideo { index: number; video_id: string; title: string; remark?: string | null; upload_date: string | null; duration_sec: number; material: string; tokens: number }
 export interface UploaderInfo {
   uploader: string
   group?: string | null
@@ -214,6 +215,7 @@ export interface ReviewVideo {
   index: number
   video_id: string
   title: string
+  remark?: string | null
   uploader: string | null
   thumbnail: string | null
   duration_sec: number
@@ -306,6 +308,8 @@ export const api = {
     const q = [clean && 'clean=1', raw && 'raw=1'].filter(Boolean).join('&')
     return call<Video>(`/videos/${encodeURIComponent(id)}${q ? `?${q}` : ''}`)
   },
+  updateRemark: (id: string, remark: string | null) =>
+    post<{ video_id: string; remark: string | null }>(`/videos/${encodeURIComponent(id)}/remark`, { remark }),
   runCorrections: (id: string) => post<{ job: Job; duplicate: boolean }>(`/videos/${encodeURIComponent(id)}/corrections`, {}),
   setCorrectionState: (id: string, index: number, state: 'applied' | 'rejected') =>
     call<{ video_id: string; corrections: Corrections }>(`/videos/${encodeURIComponent(id)}/corrections/${index}`,
@@ -387,3 +391,10 @@ export function subscribeJob(
   es.onerror = () => { /* 浏览器会自动重连，带 Last-Event-ID */ }
   return () => es.close()
 }
+
+/** 获取视频显示名称：优先使用备注，没有备注时返回原名称 */
+export function displayTitle(v?: { title: string; remark?: string | null } | null): string {
+  if (!v) return ''
+  return (v.remark && v.remark.trim()) ? v.remark.trim() : v.title
+}
+

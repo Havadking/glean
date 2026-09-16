@@ -1,7 +1,7 @@
-import { Copy, Download, ExternalLink, FolderOpen, Search, Trash2 } from 'lucide-react'
+import { Check, Copy, Download, ExternalLink, FolderOpen, Pencil, Search, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { api, type Estimate, type Video as VideoT } from '../api'
+import { api, displayTitle, type Estimate, type Video as VideoT } from '../api'
 import { AskPanel, paragraphAt, useCitationJump } from '../components/AskPanel'
 import { AudioBar, type AudioHandle } from '../components/AudioBar'
 import { useCorrections } from '../components/Corrections'
@@ -27,6 +27,11 @@ export function Video() {
   const [clean, setClean] = useState<boolean>(() => { try { return localStorage.getItem('clean') === '1' } catch { return false } })
   // 看没应用纠错表的原文。只是临时看一眼，不记住
   const [raw, setRaw] = useState(false)
+
+  // 视频备注行内编辑
+  const [editingRemark, setEditingRemark] = useState(false)
+  const [remarkInput, setRemarkInput] = useState('')
+  const [savingRemark, setSavingRemark] = useState(false)
 
   // 本地音频：播放器句柄、正在播到的那一段、下载音频的任务
   const audioRef = useRef<AudioHandle>(null)
@@ -141,7 +146,7 @@ export function Video() {
     } catch (e) { setError(e) }
   }
   const remove = async () => {
-    if (!confirm(`删除「${video.title}」的转写、总结和产物目录？不可恢复。`)) return
+    if (!confirm(`删除「${displayTitle(video)}」的转写、总结和产物目录？不可恢复。`)) return
     try {
       await api.deleteVideo(video.video_id)
       await refreshLibrary()
@@ -152,6 +157,34 @@ export function Video() {
     try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* ignore */ }
   }
 
+  const startEditRemark = () => {
+    setRemarkInput(video.remark ?? '')
+    setEditingRemark(true)
+  }
+  const saveRemark = async (val?: string) => {
+    const nextRemark = (val !== undefined ? val : remarkInput).trim()
+    setSavingRemark(true)
+    try {
+      const res = await api.updateRemark(video.video_id, nextRemark)
+      setVideo((v) => v ? { ...v, remark: res.remark } : v)
+      setEditingRemark(false)
+      void refreshLibrary()
+    } catch (e) {
+      setError(e)
+    } finally {
+      setSavingRemark(false)
+    }
+  }
+  const onRemarkKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      void saveRemark()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setEditingRemark(false)
+    }
+  }
+
   return (
     <div className="detail">
       <div className="dhead">
@@ -160,7 +193,78 @@ export function Video() {
             <Link to="/library">库</Link>
             {video.uploader && <><span>›</span><Link to={`/library?up=${encodeURIComponent(video.uploader)}`}>{video.uploader}</Link></>}
           </div>
-          <h1>{video.title}</h1>
+          {editingRemark ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '6px 0 10px', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                autoFocus
+                value={remarkInput}
+                onChange={(e) => setRemarkInput(e.target.value)}
+                onKeyDown={onRemarkKeyDown}
+                placeholder={video.title}
+                disabled={savingRemark}
+                style={{
+                  fontSize: '1.25rem',
+                  fontWeight: 600,
+                  padding: '6px 10px',
+                  borderRadius: 6,
+                  border: '1px solid var(--accent, #3b82f6)',
+                  background: 'var(--card, #fff)',
+                  color: 'inherit',
+                  flex: '1 1 300px',
+                  maxWidth: 600,
+                  outline: 'none',
+                }}
+              />
+              <button
+                className="btn primary sm"
+                onClick={() => void saveRemark()}
+                disabled={savingRemark}
+                title="保存备注 (Enter)"
+              >
+                <Check size={15} /> 保存
+              </button>
+              {video.remark && (
+                <button
+                  className="btn ghost sm"
+                  onClick={() => void saveRemark('')}
+                  disabled={savingRemark}
+                  title="清空备注，恢复原名称"
+                >
+                  恢复原名
+                </button>
+              )}
+              <button
+                className="btn ghost sm"
+                onClick={() => setEditingRemark(false)}
+                disabled={savingRemark}
+                title="取消 (Esc)"
+              >
+                <X size={15} /> 取消
+              </button>
+            </div>
+          ) : (
+            <div style={{ margin: '4px 0 6px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <h1 style={{ margin: 0, wordBreak: 'break-word', display: 'inline' }}>
+                  {displayTitle(video)}
+                </h1>
+                <button
+                  className="iconbtn sm"
+                  onClick={startEditRemark}
+                  title={video.remark ? '修改备注' : '添加备注名称'}
+                  style={{ opacity: 0.65, padding: 4 }}
+                >
+                  <Pencil size={15} />
+                </button>
+              </div>
+              {video.remark?.trim() ? (
+                <div style={{ fontSize: '0.85rem', color: 'var(--mute, #888)', marginTop: 4 }}>
+                  原名称：{video.title}
+                </div>
+              ) : null}
+            </div>
+          )}
           {audioJob?.status === 'failed' && <div className="errbox" style={{ marginTop: 10 }}>下载音频失败：{audioJob.error}</div>}
           <div className="row">
             <div className="meta">
@@ -294,7 +398,7 @@ function SummaryView({ video, type, onRegenerated }: { video: VideoT; type: stri
       {job?.status === 'failed' && <div className="errbox" style={{ marginBottom: 12 }}>{job.error}</div>}
       <ErrorBox error={err} />
       {s.type === 'mindmap' && s.tree
-        ? <Mindmap tree={s.tree} title={video.title} markdown={s.content} />
+        ? <Mindmap tree={s.tree} title={displayTitle(video)} markdown={s.content} />
         : <article className="sum">
             <Markdown text={s.content} />
             <div className="prov">

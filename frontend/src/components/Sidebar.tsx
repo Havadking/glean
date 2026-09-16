@@ -1,5 +1,6 @@
 import { Plus, List, Settings, PanelLeftClose, X, CalendarDays } from 'lucide-react'
 import { NavLink, useNavigate } from 'react-router-dom'
+import { displayTitle } from '../api'
 import { useStore } from '../store'
 import { UploaderTree } from './UploaderTree'
 
@@ -15,18 +16,17 @@ export function Sidebar({ narrow, onHide }: { narrow: boolean; onHide: () => voi
   const reviewDot = !!rv && rv.videos > 0 && (!rv.generated || rv.stale)
   const queuedJobs = queue.filter((j) => j.status === 'queued')
 
-  const stageName = (s?: string | null) => {
-    if (!s) return ''
-    const m: Record<string, string> = {
-      probe: '探测',
-      subtitle: '下载字幕',
-      download: '提取音频',
-      transcribe: '语音识别',
-      polish: '纠专有名词',
-      summarize: 'AI 总结',
-      tags: '打标签',
+  const stageName = (st?: string | null) => {
+    switch (st) {
+      case 'probe': return '探测视频信息'
+      case 'subtitle': return '抓取字幕'
+      case 'download': return '下载音频'
+      case 'transcribe': return '语音识别'
+      case 'polish': return '纠专有名词'
+      case 'summarize': return '生成总结'
+      case 'done': return '处理完成'
+      default: return st
     }
-    return m[s] || s
   }
 
   return (
@@ -39,14 +39,15 @@ export function Sidebar({ narrow, onHide }: { narrow: boolean; onHide: () => voi
           {narrow ? <X /> : <PanelLeftClose />}
         </button>
       </div>
+
       <nav className="nav">
         <NavLink to="/" end className={({ isActive }) => (isActive ? 'on' : '')}>
-          <Plus /> 新任务 <span className="kbd">N</span>
+          <Plus /> 新任务<span className="kbd">N</span>
         </NavLink>
         <NavLink to="/library" className={({ isActive }) => (isActive ? 'on' : '')}>
-          <List /> 库 <span className="kbd">L</span>
+          <List /> 库<span className="kbd">L</span>
         </NavLink>
-        <NavLink to="/review" className={({ isActive }) => (isActive ? 'on' : '')} title={reviewDot ? (rv?.generated ? '本周又收藏了新东西，回顾可以更新了' : `本周收藏了 ${rv?.videos} 条，还没生成回顾`) : undefined}>
+        <NavLink to="/review" className={({ isActive }) => (isActive ? 'on' : '')}>
           <CalendarDays /> 回顾 {reviewDot && <span className="ndot" />}<span className="kbd">R</span>
         </NavLink>
         <NavLink to="/settings" className={({ isActive }) => (isActive ? 'on' : '')}>
@@ -60,8 +61,8 @@ export function Sidebar({ narrow, onHide }: { narrow: boolean; onHide: () => voi
         <>
           <div className="sec">最近</div>
           {recent.map((e) => (
-            <NavLink className={({ isActive }) => `up${isActive ? ' on' : ''}`} to={`/video/${encodeURIComponent(e.video_id)}`} key={e.video_id} title={e.title}>
-              <span className="n" style={{ paddingLeft: 2 }}>{e.title}</span>
+            <NavLink className={({ isActive }) => `up${isActive ? ' on' : ''}`} to={`/video/${encodeURIComponent(e.video_id)}`} key={e.video_id} title={e.remark ? `${e.remark} (原名: ${e.title})` : e.title}>
+              <span className="n" style={{ paddingLeft: 2 }}>{displayTitle(e)}</span>
             </NavLink>
           ))}
         </>
