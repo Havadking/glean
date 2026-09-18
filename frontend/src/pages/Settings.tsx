@@ -103,6 +103,12 @@ export function Settings() {
   const [savingAsr, setSavingAsr] = useState(false)
   const [asrNotice, setAsrNotice] = useState<string | null>(null)
 
+  // 任务默认设置（总结类型与纠专有名词）
+  const [defaultSummaryType, setDefaultSummaryType] = useState<string>('overall')
+  const [defaultCorrectTerms, setDefaultCorrectTerms] = useState<boolean>(false)
+  const [savingDefaults, setSavingDefaults] = useState(false)
+  const [defaultsNotice, setDefaultsNotice] = useState<string | null>(null)
+
   // 当前激活模型匹配
   const activeModel = useMemo(() => {
     const currentName = meta?.model || ''
@@ -148,7 +154,24 @@ export function Settings() {
       setAsrDevice(cfg.device)
       setAsrDiarize(String(cfg.diarize ?? 'auto'))
     }).catch(() => {})
+
+    api.getTaskDefaults().then((cfg) => {
+      setDefaultSummaryType(cfg.summary_type || 'overall')
+      setDefaultCorrectTerms(cfg.correct_terms)
+    }).catch(() => {
+      if (meta) {
+        setDefaultSummaryType(meta.default_summary_type || 'overall')
+        setDefaultCorrectTerms(meta.correct_terms_default)
+      }
+    })
   }, [])
+
+  useEffect(() => {
+    if (meta) {
+      setDefaultSummaryType((prev) => meta.default_summary_type || prev)
+      setDefaultCorrectTerms(meta.correct_terms_default)
+    }
+  }, [meta?.default_summary_type, meta?.correct_terms_default])
 
   // 自由一键切换模型
   const selectModel = async (target: SavedModel) => {
@@ -348,6 +371,28 @@ export function Settings() {
     }
   }
 
+  // 保存任务与总结默认设置
+  const saveTaskDefaults = async () => {
+    setSavingDefaults(true)
+    setDefaultsNotice(null)
+    try {
+      const updated = await api.updateTaskDefaults({
+        summary_type: defaultSummaryType,
+        correct_terms: defaultCorrectTerms,
+      })
+      setDefaultSummaryType(updated.summary_type)
+      setDefaultCorrectTerms(updated.correct_terms)
+      setDefaultsNotice('任务处理默认设置已保存！')
+      await refreshMeta()
+      setTimeout(() => setDefaultsNotice(null), 3000)
+    } catch (e: unknown) {
+      const err = e as { message?: string }
+      setDefaultsNotice(`保存失败: ${err.message || String(e)}`)
+    } finally {
+      setSavingDefaults(false)
+    }
+  }
+
   const clearAudio = async () => {
     if (!storage || !confirm(`删掉 ${storage.audio_dirs} 个视频的音频缓存（${fmtBytes(storage.audio_bytes)}）？转写和总结都在，只有强制重跑识别时才需要重新下载。`)) return
     setClearing(true)
@@ -391,7 +436,19 @@ export function Settings() {
           <dt>当前识别模型</dt>
           <dd>{meta?.asr_default ?? '—'}{meta ? `（说话人分离：${String(meta.diarize_default)}）` : ''}</dd>
           <dt>默认总结类型</dt>
-          <dd>{meta?.summary_types.find((t) => t.key === meta.default_summary_type)?.label ?? meta?.default_summary_type ?? '—'}</dd>
+          <dd>
+            {meta?.default_summary_type === 'none'
+              ? '不自动总结'
+              : (meta?.summary_types.find((t) => t.key === meta.default_summary_type)?.label ?? meta?.default_summary_type ?? '—')}
+          </dd>
+          <dt>默认纠专有名词</dt>
+          <dd>
+            {meta?.correct_terms_default ? (
+              <span style={{ color: 'var(--ok)', fontWeight: 500 }}>已开启</span>
+            ) : (
+              <span style={{ color: 'var(--mute)' }}>已关闭</span>
+            )}
+          </dd>
           <dt>产物目录</dt>
           <dd className="mono">{meta?.output_dir ?? '—'}</dd>
           <dt>软件版本</dt>
@@ -723,6 +780,58 @@ export function Settings() {
           {asrNotice && (
             <span style={{ fontSize: 13, color: asrNotice.includes('失败') ? 'var(--bad)' : 'var(--ok)' }}>
               {asrNotice}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* 任务处理默认设置（总结与纠专有名词） */}
+      <h2 style={{ fontSize: 16, fontWeight: 600, margin: '28px 0 10px' }}>任务处理默认设置</h2>
+      <div className="card" style={{ padding: '20px 24px' }}>
+        <div style={{ fontSize: 13, color: 'var(--mute)', marginBottom: 14 }}>
+          配置新建转写任务与合集排队时的默认选项。保存后自动写入配置文件，全站即时生效。
+        </div>
+        <div className="cfg-form">
+          <div className="cfg-field">
+            <label>
+              默认总结类型
+              <span className="hint">视频转写完成后默认生成的总结形式，或选择不自动总结</span>
+            </label>
+            <select
+              value={defaultSummaryType}
+              onChange={(e) => setDefaultSummaryType(e.target.value)}
+            >
+              {meta?.summary_types.map((t) => (
+                <option key={t.key} value={t.key}>
+                  {t.label}（{t.key}）
+                </option>
+              ))}
+              <option value="none">不自动总结（仅转写，不调用大模型）</option>
+            </select>
+          </div>
+
+          <div className="cfg-field">
+            <label>
+              默认纠专有名词
+              <span className="hint">走语音识别的视频识别完让模型生成专名替换表（1小时约3分钱），纠错后用于后续总结</span>
+            </label>
+            <select
+              value={defaultCorrectTerms ? 'true' : 'false'}
+              onChange={(e) => setDefaultCorrectTerms(e.target.value === 'true')}
+            >
+              <option value="true">默认开启（推荐，模型自动校准同音专有名词，提升专业性）</option>
+              <option value="false">默认关闭（省 token 与处理时间）</option>
+            </select>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14 }}>
+          <button className="btn primary" onClick={saveTaskDefaults} disabled={savingDefaults}>
+            {savingDefaults ? '保存中…' : '保存默认设置'}
+          </button>
+          {defaultsNotice && (
+            <span style={{ fontSize: 13, color: defaultsNotice.includes('失败') ? 'var(--bad)' : 'var(--ok)' }}>
+              {defaultsNotice}
             </span>
           )}
         </div>

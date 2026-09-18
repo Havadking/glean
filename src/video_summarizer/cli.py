@@ -73,6 +73,8 @@ def _load(config_path: Path | None, overrides: dict) -> Config:
         cfg.asr.device = overrides["device"]
     if overrides.get("diarize") is not None:
         cfg.asr.diarize = overrides["diarize"]
+    if overrides.get("correct_terms") is not None:
+        cfg.summarizer.correct_terms = overrides["correct_terms"]
     if overrides.get("output_dir"):
         cfg.output_dir = Path(overrides["output_dir"]).expanduser().resolve()
     return cfg
@@ -144,6 +146,8 @@ def main() -> None:
 @click.option("--device", type=click.Choice(["auto", "cuda", "cpu"]), default=None, help="ASR 设备")
 @click.option("--diarize/--no-diarize", default=None,
               help="是否做说话人分离（默认 auto：只在选分说话人摘要时开）")
+@click.option("--correct-terms/--no-correct-terms", default=None,
+              help="是否让模型纠专有名词（默认读 config.yaml）")
 @click.option("--output-dir", default=None, help="临时覆盖输出目录")
 @click.option("--force", is_flag=True, help="忽略已有的转写和音频缓存，全部重跑")
 @click.option("--force-asr", is_flag=True, help="即使有字幕也强制走语音识别")
@@ -153,15 +157,20 @@ def main() -> None:
 @_config_option
 @_verbose_option
 def run(url: str, summary_type, lang, extra, provider, model, base_url, asr_model, device, diarize,
-        output_dir, force, force_asr, no_summary, no_cache, yes, config_path, verbose) -> None:
+        correct_terms, output_dir, force, force_asr, no_summary, no_cache, yes, config_path, verbose) -> None:
     """处理一个视频链接：URL -> 转写 -> 总结。"""
     _setup_logging(verbose)
     cfg = _load(config_path, {
         "provider": provider, "model": model, "base_url": base_url, "asr_model": asr_model,
-        "device": device, "output_dir": output_dir, "diarize": diarize,
+        "device": device, "output_dir": output_dir, "diarize": diarize, "correct_terms": correct_terms,
     })
+    eff_summary_type = summary_type or cfg.summarizer.summary_type
+    skip_summary = no_summary
+    if not eff_summary_type or str(eff_summary_type).strip().lower() in ("none", ""):
+        skip_summary = True
+        eff_summary_type = "overall"
     options = SummaryOptions(
-        summary_type=summary_type or cfg.summarizer.summary_type,
+        summary_type=eff_summary_type,
         language=lang,
         extra_instructions=extra,
     )
@@ -170,7 +179,7 @@ def run(url: str, summary_type, lang, extra, provider, model, base_url, asr_mode
         options=options,
         force=force,
         force_asr=force_asr,
-        skip_summary=no_summary,
+        skip_summary=skip_summary,
         use_cache=not no_cache,
         confirm=_make_confirm(yes),
     )

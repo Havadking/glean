@@ -31,6 +31,7 @@ from ..config import (
     update_env_key,
     update_pricing,
     update_summarizer_config,
+    update_task_defaults,
 )
 from ..errors import VideoSummarizerError
 from ..models import SummaryOptions
@@ -335,17 +336,20 @@ def create_app(cfg: Config):
             provider_desc = get_summarizer(c.summarizer).describe()
         except VideoSummarizerError as exc:
             provider_desc = f"未配置（{exc}）"
+        def_summary = c.summarizer.summary_type
+        if not def_summary or str(def_summary).strip().lower() in ("none", ""):
+            def_summary = "none"
         return {
             "app": APP_NAME, "version": __version__,
             "summary_types": [
                 {"key": k, "label": t.label, "hint": TYPE_HINTS.get(k, "")}
                 for k, t in TEMPLATES.items()
             ],
-            "default_summary_type": c.summarizer.summary_type,
+            "default_summary_type": def_summary,
             "asr_choices": ASR_CHOICES,
             "asr_default": c.asr.model,
             "diarize_default": c.asr.diarize,
-            "correct_terms_default": c.summarizer.correct_terms,
+            "correct_terms_default": bool(c.summarizer.correct_terms),
             "provider": provider_desc,
             "model": c.summarizer.name or c.summarizer.model,
             "currency": c.summarizer.currency,
@@ -373,6 +377,12 @@ def create_app(cfg: Config):
         price_input_per_m: float | None = None
         price_output_per_m: float | None = None
         currency: str | None = "¥"
+        summary_type: str | None = None
+        correct_terms: bool | None = None
+
+    class TaskDefaultsBody(BaseModel):
+        summary_type: str | None = None
+        correct_terms: bool | None = None
 
     class AsrConfigBody(BaseModel):
         provider: str | None = None
@@ -469,10 +479,49 @@ def create_app(cfg: Config):
             price_input_per_m=body.price_input_per_m,
             price_output_per_m=body.price_output_per_m,
             currency=body.currency,
+            summary_type=body.summary_type,
+            correct_terms=body.correct_terms,
         )
         refreshed = state.fresh_config()
         state.cfg.summarizer = refreshed.summarizer
         return get_llm_config()
+
+    @app.get("/api/config/task-defaults")
+    def get_task_defaults():
+        c = state.fresh_config()
+        st = c.summarizer.summary_type
+        if not st or str(st).strip().lower() in ("none", ""):
+            st = "none"
+        return {
+            "summary_type": st,
+            "correct_terms": bool(c.summarizer.correct_terms),
+        }
+
+    @app.post("/api/config/task-defaults")
+    def set_task_defaults(body: TaskDefaultsBody):
+        c = state.fresh_config()
+        st = None
+        if body.summary_type is not None:
+            raw_st = body.summary_type.strip()
+            if raw_st and raw_st.lower() != "none" and raw_st not in TEMPLATES:
+                raise HTTPException(400, f"不认识的总结类型 {raw_st}")
+            st = "none" if (not raw_st or raw_st.lower() == "none") else raw_st
+
+        update_task_defaults(
+            c.source_path,
+            summary_type=st,
+            correct_terms=body.correct_terms,
+        )
+        refreshed = state.fresh_config()
+        state.cfg.summarizer.summary_type = refreshed.summarizer.summary_type
+        state.cfg.summarizer.correct_terms = refreshed.summarizer.correct_terms
+        res_st = refreshed.summarizer.summary_type
+        if not res_st or str(res_st).strip().lower() in ("none", ""):
+            res_st = "none"
+        return {
+            "summary_type": res_st,
+            "correct_terms": bool(refreshed.summarizer.correct_terms),
+        }
 
     @app.get("/api/config/asr")
     def get_asr_config():
@@ -842,10 +891,11 @@ def create_app(cfg: Config):
                 if batch or info is None:
                     state.throttle(c.download.batch_delay_sec)
                 state.touched()
-                options = SummaryOptions(summary_type=summary_type or c.summarizer.summary_type)
+                eff_summary_type = summary_type or (c.summarizer.summary_type if c.summarizer.summary_type in TEMPLATES else "overall")
+                options = SummaryOptions(summary_type=eff_summary_type)
                 result = run_pipeline(
                     url, c, options=options, force=force, force_asr=force_asr,
-                    skip_summary=summary_type is None, on_stage=rep.stage, info=info,
+                    skip_summary=summary_type is None or summary_type == "none", on_stage=rep.stage, info=info,
                 )
                 search_mod.index_one(c, result.info.video_id)
                 _record_usage_raw(c, result.correction_usage, result.correction_provider_desc,
@@ -899,6 +949,8 @@ def create_app(cfg: Config):
         if not url:
             raise HTTPException(400, "先填一个视频链接")
         summary_type = (body.summary_type or "").strip() or None
+        if summary_type and summary_type.lower() == "none":
+            summary_type = None
         if summary_type and summary_type not in TEMPLATES:
             raise HTTPException(400, f"不认识的总结类型 {summary_type}")
         job, dup = _submit_process(url, summary_type=summary_type, asr_model=body.asr_model,
@@ -917,6 +969,8 @@ def create_app(cfg: Config):
     def create_batch(body: BatchBody):
         """一批视频排队。串行跑、相邻隔 batch_delay_sec，排队的记进库，重启续跑。"""
         summary_type = (body.summary_type or "").strip() or None
+        if summary_type and summary_type.lower() == "none":
+            summary_type = None
         if summary_type and summary_type not in TEMPLATES:
             raise HTTPException(400, f"不认识的总结类型 {summary_type}")
         urls = [(extract_url(str(it.get("url") or "")), str(it.get("title") or "").strip() or None)

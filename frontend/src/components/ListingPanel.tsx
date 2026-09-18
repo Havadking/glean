@@ -1,5 +1,5 @@
 import { Search } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, type Listing, type ListingEntry } from '../api'
 import { fmtDuration, fmtMinutes, fmtMoney } from '../lib/format'
 import { useStore } from '../store'
@@ -25,9 +25,12 @@ export function ListingPanel({ listing, url, onSubmitted }: {
   const [correctTerms, setCorrectTerms] = useState<boolean>(false)
   const [submitting, setSubmitting] = useState(false)
 
+  const initializedRef = useRef(false)
   useEffect(() => {
-    if (meta) {
-      setSummaryType((t) => t || meta.default_summary_type); setAsr((a) => a || meta.asr_default)
+    if (meta && !initializedRef.current) {
+      initializedRef.current = true
+      setSummaryType(meta.default_summary_type === 'none' ? '' : (meta.default_summary_type || ''))
+      setAsr(meta.asr_default)
       setCorrectTerms(meta.correct_terms_default)
     }
   }, [meta])

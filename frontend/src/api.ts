@@ -43,6 +43,11 @@ export interface AsrConfig {
   diarize: string | boolean
 }
 
+export interface TaskDefaults {
+  summary_type: string
+  correct_terms: boolean
+}
+
 export interface SummaryRef { type: string; label: string; provider: string; created_at: string }
 export interface Tag { tag: string; source: 'ai' | 'user' }
 export interface TagCount { tag: string; count: number }
@@ -367,6 +372,8 @@ export const api = {
   updateLlmConfig: (body: Partial<LlmConfig> & { api_key?: string }) => post<LlmConfig>('/config/llm', body),
   getAsrConfig: () => call<AsrConfig>('/config/asr'),
   updateAsrConfig: (body: Partial<AsrConfig>) => post<AsrConfig>('/config/asr', body),
+  getTaskDefaults: () => call<TaskDefaults>('/config/task-defaults'),
+  updateTaskDefaults: (body: Partial<TaskDefaults>) => post<TaskDefaults>('/config/task-defaults', body),
   testLlm: (body?: { provider?: string; model?: string; base_url?: string | null; api_key?: string; api_key_env?: string }) =>
     post<TestLlmResult>('/config/test-llm', body ?? {}),
 }

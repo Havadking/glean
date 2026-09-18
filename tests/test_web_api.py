@@ -888,3 +888,43 @@ def test_uploader_group_crud(client):
     client.put("/api/uploaders/某 UP/group", json={"group": None})
     assert client.get("/api/uploaders/某 UP").json()["group"] is None
 
+
+def test_task_defaults_endpoints(client):
+    # 获取默认配置
+    r = client.get("/api/config/task-defaults").json()
+    assert "summary_type" in r
+    assert "correct_terms" in r
+
+    # 更新为思维导图 + 开启纠专有名词
+    set_res = client.post("/api/config/task-defaults", json={
+        "summary_type": "mindmap",
+        "correct_terms": True,
+    })
+    assert set_res.status_code == 200
+    data = set_res.json()
+    assert data["summary_type"] == "mindmap"
+    assert data["correct_terms"] is True
+
+    # 验证 /api/meta 同步更新
+    meta = client.get("/api/meta").json()
+    assert meta["default_summary_type"] == "mindmap"
+    assert meta["correct_terms_default"] is True
+
+    # 更新为不自动总结 (none) + 关闭纠专有名词
+    set_res2 = client.post("/api/config/task-defaults", json={
+        "summary_type": "none",
+        "correct_terms": False,
+    })
+    assert set_res2.status_code == 200
+    data2 = set_res2.json()
+    assert data2["summary_type"] == "none"
+    assert data2["correct_terms"] is False
+
+    meta2 = client.get("/api/meta").json()
+    assert meta2["default_summary_type"] == "none"
+    assert meta2["correct_terms_default"] is False
+
+    # 非法类型校验
+    bad = client.post("/api/config/task-defaults", json={"summary_type": "invalid_type"})
+    assert bad.status_code == 400
+

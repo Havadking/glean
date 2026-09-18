@@ -121,6 +121,14 @@ class SummarizerConfig:
     # 要把全文喂一遍模型，1 小时视频约 ¥0.03、十几秒，所以默认关；界面上每次处理可单独勾
     correct_terms: bool = False
 
+    def __post_init__(self) -> None:
+        if self.summary_type is None or not str(self.summary_type).strip():
+            self.summary_type = "none"
+        elif str(self.summary_type).strip().lower() == "none":
+            self.summary_type = "none"
+        if isinstance(self.correct_terms, str):
+            self.correct_terms = str(self.correct_terms).strip().lower() in ("true", "1", "yes", "on")
+
     @property
     def api_key(self) -> str | None:
         return os.environ.get(self.api_key_env) or None
@@ -262,6 +270,8 @@ def update_summarizer_config(
     price_input_per_m: float | None = _UNSET,
     price_output_per_m: float | None = _UNSET,
     currency: str | None = _UNSET,
+    summary_type: str | None = _UNSET,
+    correct_terms: bool | None = _UNSET,
 ) -> None:
     """在线更新 config.yaml 中的总结大模型配置，保持文件注释和排版不变。"""
     if config_path is None or not config_path.is_file():
@@ -295,8 +305,27 @@ def update_summarizer_config(
         text = _update_section_key(text, "summarizer", "price_output_per_m", out_val)
     if currency is not _UNSET and currency is not None:
         text = _update_section_key(text, "summarizer", "currency", f'"{currency.strip()}"')
+    if summary_type is not _UNSET and summary_type is not None:
+        st_val = summary_type.strip()
+        text = _update_section_key(text, "summarizer", "summary_type", st_val)
+    if correct_terms is not _UNSET and correct_terms is not None:
+        ct_val = "true" if correct_terms else "false"
+        text = _update_section_key(text, "summarizer", "correct_terms", ct_val)
 
     config_path.write_text(text, encoding="utf-8")
+
+
+def update_task_defaults(
+    config_path: Path | None,
+    summary_type: str | None = _UNSET,
+    correct_terms: bool | None = _UNSET,
+) -> None:
+    """在线更新任务与总结默认设置（默认总结类型与默认是否纠专有名词）。"""
+    update_summarizer_config(
+        config_path,
+        summary_type=summary_type,
+        correct_terms=correct_terms,
+    )
 
 
 def update_asr_config(

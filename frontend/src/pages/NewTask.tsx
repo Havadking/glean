@@ -27,10 +27,12 @@ export function NewTask() {
   const inputRef = useRef<HTMLInputElement>(null)
   const job = useJob(jobId)
 
+  const initializedRef = useRef(false)
   useEffect(() => {
-    if (meta) {
-      setAsr((a) => a || meta.asr_default)
-      setSummaryType((t) => t || meta.default_summary_type)
+    if (meta && !initializedRef.current) {
+      initializedRef.current = true
+      setAsr(meta.asr_default)
+      setSummaryType(meta.default_summary_type === 'none' ? '' : (meta.default_summary_type || ''))
       setDiarize(String(meta.diarize_default))
       setCorrectTerms(meta.correct_terms_default)
     }

@@ -169,6 +169,8 @@ def test_update_summarizer_and_asr_config(tmp_path):
         update_asr_config,
         update_env_key,
         update_summarizer_config,
+        update_task_defaults,
+        load_config,
     )
 
     cfg_file = tmp_path / "config.yaml"
@@ -194,6 +196,23 @@ def test_update_summarizer_and_asr_config(tmp_path):
     assert "model: large-v3" in content
     assert "device: cuda" in content
     assert "diarize: true" in content
+
+    # Test task defaults update
+    update_task_defaults(cfg_file, summary_type="mindmap", correct_terms=True)
+    content = cfg_file.read_text(encoding="utf-8")
+    assert "summary_type: mindmap" in content
+    assert "correct_terms: true" in content
+    cfg = load_config(cfg_file)
+    assert cfg.summarizer.summary_type == "mindmap"
+    assert cfg.summarizer.correct_terms is True
+
+    update_task_defaults(cfg_file, summary_type="none", correct_terms=False)
+    content = cfg_file.read_text(encoding="utf-8")
+    assert "summary_type: none" in content
+    assert "correct_terms: false" in content
+    cfg = load_config(cfg_file)
+    assert cfg.summarizer.summary_type == "none"
+    assert cfg.summarizer.correct_terms is False
 
     # Test env update
     env_file = tmp_path / ".env"
