@@ -70,7 +70,7 @@ summarizer:
   effort: null                    # 只对 claude 生效：low | medium | high | xhigh | max
   chunk_strategy: auto            # auto | always | never
   chunk_tokens: 20000             # map-reduce 时每块的目标 token 数
-  summary_type: overall           # overall | by_speaker | timeline | key_points | mindmap | none（none=不自动总结）
+  summary_type: none   # overall | by_speaker | timeline | key_points | mindmap | none（none=不自动总结）
   # 每百万 token 单价，界面上把 token 换算成钱用。DeepSeek V3 标准价：输入 ¥2 / 输出 ¥3。
   # 留空只显示 token 数。
   price_input_per_m: null
@@ -83,7 +83,7 @@ summarizer:
   # 语音识别完让模型纠专有名词（"语数科技"→"宇树科技"）：只出替换表叠在原文上，原文不动，
   # 界面上能逐条否决。要把全文喂一遍，1 小时视频约 ¥0.03、十几秒，所以默认关；处理时可单独勾选。
   # 官方字幕不跑；ollama 本地小模型干这个不靠谱，也跳过。
-  correct_terms: false
+  correct_terms: true
 
 # 换 provider 只改上面这一段，主流程不动。三种写法：
 #

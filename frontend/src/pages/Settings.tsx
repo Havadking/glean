@@ -793,10 +793,7 @@ export function Settings() {
         </div>
         <div className="cfg-form">
           <div className="cfg-field">
-            <label>
-              默认总结类型
-              <span className="hint">视频转写完成后默认生成的总结形式，或选择不自动总结</span>
-            </label>
+            <label>默认总结类型</label>
             <select
               value={defaultSummaryType}
               onChange={(e) => setDefaultSummaryType(e.target.value)}
@@ -808,13 +805,11 @@ export function Settings() {
               ))}
               <option value="none">不自动总结（仅转写，不调用大模型）</option>
             </select>
+            <span className="hint">视频转写完成后默认生成的总结形式，或选择不自动总结</span>
           </div>
 
           <div className="cfg-field">
-            <label>
-              默认纠专有名词
-              <span className="hint">走语音识别的视频识别完让模型生成专名替换表（1小时约3分钱），纠错后用于后续总结</span>
-            </label>
+            <label>默认纠专有名词</label>
             <select
               value={defaultCorrectTerms ? 'true' : 'false'}
               onChange={(e) => setDefaultCorrectTerms(e.target.value === 'true')}
@@ -822,6 +817,7 @@ export function Settings() {
               <option value="true">默认开启（推荐，模型自动校准同音专有名词，提升专业性）</option>
               <option value="false">默认关闭（省 token 与处理时间）</option>
             </select>
+            <span className="hint">走语音识别的视频识别完由模型校正专名并用于后续总结</span>
           </div>
         </div>
 
