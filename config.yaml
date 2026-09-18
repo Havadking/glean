@@ -23,6 +23,17 @@ download:
   # 拦下时无头拉起本机浏览器替它请求，顺手把新 cookie 写回 cookies_file，不用再手动导出。
   # 需要 `uv sync --extra cookies`。默认 auto = 依次试 chrome / msedge / chromium；也可指定一个；off = 关掉
   # douyin_browser: auto
+  # 「存视频」（给随拾 local-video-browser 用）：整条视频合流成 mp4 存到这个目录，旁边写 .suishi.json 来源信息。
+  # 留空 / 注释掉 = 关闭 /api/downloads。目录里按 <站点>/<作者>/ 分层；随拾那边把同一个目录加进抽屉就能看
+  video_dir: "E:/download/随拾下载"
+  # 清晰度上限：best | 1080 | 720 | 480
+  video_quality: 1080
+  # 优先 H.264（avc1）视频轨，Chrome 原生能播；关掉可能拿到 HEVC/AV1 的更高码率
+  prefer_h264: true
+
+web:
+  # 允许跨域调接口的本机页面。随拾默认跑在 8964 端口（npm run dev）。只接受 localhost / 127.0.0.1
+  cors_origins: ["http://localhost:8964", "http://127.0.0.1:8964"]
 
 asr:
   provider: funasr   # funasr | whisper

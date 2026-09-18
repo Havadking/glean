@@ -14,6 +14,12 @@ from dotenv import load_dotenv
 from .errors import ConfigError
 
 DEFAULT_CONFIG_NAME = "config.yaml"
+VIDEO_QUALITIES = ("best", "1080", "720", "480")
+_LOCAL_ORIGIN_RE = re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$", re.IGNORECASE)
+
+
+def _is_local_origin(origin: str) -> bool:
+    return bool(_LOCAL_ORIGIN_RE.match((origin or "").strip()))
 
 
 @dataclass
@@ -40,6 +46,20 @@ class DownloadConfig:
     douyin_browser: str = "auto"
     # 批量处理时两个视频之间至少隔这么久再去碰站点。B 站 412 是按 IP 的频率风控
     batch_delay_sec: float = 5.0
+    # 「存视频」功能（给随拾用）：整条视频合流成 mp4 落到这个目录。留空 = 关闭 /api/downloads
+    # 相对路径按 config.yaml 所在目录解析。目录里会按 <站点>/<作者>/ 再分一层
+    video_dir: str | None = None
+    # 存视频时的清晰度上限：best | 1080 | 720 | 480
+    video_quality: str | int = 1080
+    # 优先挑 H.264（avc1）的视频轨——B 站高码率是 HEVC/AV1，Chrome 不一定能原生播
+    prefer_h264: bool = True
+
+
+@dataclass
+class WebConfig:
+    # 允许跨域调接口的来源，给随拾（http://localhost:8964）这类本机页面用。
+    # 只接受 localhost / 127.0.0.1 的地址，填别的启动时报错——这是一台机器上的私有服务
+    cors_origins: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -112,6 +132,7 @@ class Config:
     download: DownloadConfig = field(default_factory=DownloadConfig)
     asr: ASRConfig = field(default_factory=ASRConfig)
     summarizer: SummarizerConfig = field(default_factory=SummarizerConfig)
+    web: WebConfig = field(default_factory=WebConfig)
     output_dir: Path = Path("./output")
     cache_db: Path = Path("./cache.sqlite")
     source_path: Path | None = None
@@ -172,11 +193,25 @@ def load_config(path: Path | None = None) -> Config:
     output_dir = Path(raw.get("output_dir") or "./output")
     cache_db = Path(raw.get("cache_db") or "./cache.sqlite")
 
+    download = _build(DownloadConfig, _section(raw, "download"), "download")
+    if download.video_dir:
+        vd = Path(str(download.video_dir)).expanduser()
+        download.video_dir = str(vd if vd.is_absolute() else base_dir / vd)
+    if str(download.video_quality) not in VIDEO_QUALITIES:
+        raise ConfigError(
+            f"配置项 `download.video_quality` 只能是 {' | '.join(VIDEO_QUALITIES)}，实际是 {download.video_quality!r}"
+        )
+    web = _build(WebConfig, _section(raw, "web"), "web")
+    for origin in web.cors_origins:
+        if not _is_local_origin(origin):
+            raise ConfigError(f"配置项 `web.cors_origins` 只接受本机地址（localhost / 127.0.0.1），实际有 {origin!r}")
+
     return Config(
         subtitle=_build(SubtitleConfig, _section(raw, "subtitle"), "subtitle"),
-        download=_build(DownloadConfig, _section(raw, "download"), "download"),
+        download=download,
         asr=_build(ASRConfig, _section(raw, "asr"), "asr"),
         summarizer=_build(SummarizerConfig, _section(raw, "summarizer"), "summarizer"),
+        web=web,
         output_dir=output_dir if output_dir.is_absolute() else base_dir / output_dir,
         cache_db=cache_db if cache_db.is_absolute() else base_dir / cache_db,
         source_path=config_path,

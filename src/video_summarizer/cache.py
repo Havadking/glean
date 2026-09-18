@@ -28,7 +28,8 @@ from .models import Transcript
 log = logging.getLogger(__name__)
 
 # v6：加 video_remarks 表，支持给视频添加备注名称
-SCHEMA_VERSION = 6
+# v7：加 downloads 表，「存视频」的记录（给随拾看的那份 mp4 落在哪、下到哪一步）
+SCHEMA_VERSION = 7
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS transcripts (
@@ -153,6 +154,20 @@ CREATE TABLE IF NOT EXISTS video_remarks (
     updated_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_video_remarks_video ON video_remarks(video_id);
+
+-- 存视频的记录。video_id 唯一：同一条视频只留一份 mp4。payload 是 DownloadJob.to_dict() 的 JSON，
+-- 单独抽出来的列只为了查重和排序；服务重启时 queued / downloading 的行会重新入队
+CREATE TABLE IF NOT EXISTS downloads (
+    id          TEXT PRIMARY KEY,
+    video_id    TEXT NOT NULL UNIQUE,
+    url         TEXT NOT NULL,
+    status      TEXT NOT NULL,
+    file_path   TEXT,
+    payload     TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_downloads_created ON downloads(created_at);
 """
 
 
@@ -1262,3 +1277,70 @@ class Cache:
         except sqlite3.Error as exc:
             log.warning("清缓存失败：%s", exc)
             return (0, 0)
+
+    # ---------- 存视频的记录 ----------
+
+    def upsert_download(self, row: dict[str, Any]) -> None:
+        """写入或覆盖一条下载记录。row 是 DownloadJob.to_dict()。同一 video_id 的旧记录（哪怕 id 不同）被替换。"""
+        conn = self._connect()
+        if conn is None:
+            return
+        try:
+            with closing(conn):
+                conn.execute("DELETE FROM downloads WHERE video_id = ? AND id != ?", (row["video_id"], row["id"]))
+                conn.execute(
+                    "INSERT OR REPLACE INTO downloads (id, video_id, url, status, file_path, payload, created_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    (row["id"], row["video_id"], row["url"], row["status"], row.get("file_path"),
+                     json.dumps(row, ensure_ascii=False), row.get("created_at") or _now(), _now()),
+                )
+                conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("记录下载任务失败：%s", exc)
+
+    def remove_download(self, job_id: str) -> None:
+        conn = self._connect()
+        if conn is None:
+            return
+        try:
+            with closing(conn):
+                conn.execute("DELETE FROM downloads WHERE id = ?", (job_id,))
+                conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("删除下载记录失败：%s", exc)
+
+    def downloads(self, limit: int = 200) -> list[dict[str, Any]]:
+        """最近的下载记录，新的在前。"""
+        conn = self._connect()
+        if conn is None:
+            return []
+        try:
+            with closing(conn):
+                rows = conn.execute(
+                    "SELECT payload FROM downloads ORDER BY created_at DESC, rowid DESC LIMIT ?", (int(limit),)
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        out = []
+        for r in rows:
+            try:
+                out.append(json.loads(r["payload"]))
+            except ValueError:
+                continue
+        return out
+
+    def find_download(self, video_id: str) -> dict[str, Any] | None:
+        conn = self._connect()
+        if conn is None:
+            return None
+        try:
+            with closing(conn):
+                r = conn.execute("SELECT payload FROM downloads WHERE video_id = ?", (video_id,)).fetchone()
+        except sqlite3.Error:
+            return None
+        if r is None:
+            return None
+        try:
+            return json.loads(r["payload"])
+        except ValueError:
+            return None

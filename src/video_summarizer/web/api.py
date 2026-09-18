@@ -37,6 +37,7 @@ from ..models import SummaryOptions
 from ..pipeline import plan_transcript_key, run as run_pipeline, write_summary_files
 from .. import cleaning
 from .. import correction as correction_mod
+from .. import downloads as downloads_mod
 from .. import digest as digest_mod
 from .. import tagging as tagging_mod
 from .. import listing as listing_mod
@@ -48,6 +49,8 @@ from ..summarizer.base import CostEstimate
 from ..summarizer.prompts import TEMPLATES
 from ..audio import extractor as audio_extractor
 from ..ytdlp_base import VideoInfo, extract_url, probe
+from urllib.parse import urlparse
+from urllib.request import Request as UrlRequest, urlopen
 from . import avatars as avatars_mod
 from . import library as library_mod
 from . import mindmap as mindmap_mod
@@ -99,6 +102,8 @@ class State:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         self.jobs = JobManager()
+        # 存视频的队列，create_app 里装上（它的完成回调要用到 _submit_process）
+        self.downloads: Any = None
         # url -> VideoInfo。探测过的直接复用给任务，少发一次请求（B 站 412 的主要来源）
         self._probed: dict[str, VideoInfo] = {}
         # 搜索索引是 v0.7 加的，老库第一次启动补建；平时靠任务完成时增量更新
@@ -308,6 +313,14 @@ def create_app(cfg: Config):
 
     state = State(cfg)
     app = FastAPI(title=APP_NAME, version=__version__, docs_url="/api/docs", redoc_url=None)
+    if cfg.web.cors_origins:
+        # 给随拾这类本机页面跨域调接口。来源在 load_config 里已经限定只能是 localhost
+        from fastapi.middleware.cors import CORSMiddleware
+
+        app.add_middleware(
+            CORSMiddleware, allow_origins=list(cfg.web.cors_origins),
+            allow_methods=["GET", "POST", "DELETE", "OPTIONS"], allow_headers=["*"],
+        )
 
     @app.exception_handler(VideoSummarizerError)
     async def _domain_error(_req: Request, exc: VideoSummarizerError):
@@ -1051,6 +1064,225 @@ def create_app(cfg: Config):
 
         return StreamingResponse(gen(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # ----- 存视频（给随拾用） -----
+
+    def _persist_download(row: dict[str, Any]) -> None:
+        Cache(state.fresh_config().cache_db).upsert_download(row)
+
+    def _after_download(job: downloads_mod.DownloadJob) -> None:
+        """下载完成后顺手送去转写（随拾点了「下载并发送拾光笺」）。"""
+        if job.then_summarize is None:
+            return
+        _submit_process(job.url, summary_type=job.then_summarize or None, asr_model=None, diarize=None,
+                        force=False, force_asr=False, title=job.title, batch=True)
+
+    state.downloads = downloads_mod.DownloadManager(
+        state.fresh_config, throttle=state.throttle, touched=state.touched,
+        on_done=_after_download, persist=_persist_download,
+    )
+    state.downloads.load(Cache(cfg.cache_db).downloads())
+
+    def _downloads_enabled(c: Config) -> None:
+        if not c.download.video_dir:
+            raise HTTPException(404, "拾光笺没有开启存视频功能：在 config.yaml 的 download.video_dir 填一个目录")
+
+    def _download_config_dict(c: Config) -> dict[str, Any]:
+        vd = Path(c.download.video_dir) if c.download.video_dir else None
+        dir_ok = False
+        if vd is not None:
+            try:
+                vd.mkdir(parents=True, exist_ok=True)
+                dir_ok = vd.is_dir() and os.access(vd, os.W_OK)
+            except OSError:
+                dir_ok = False
+        return {
+            "enabled": vd is not None,
+            "video_dir": str(vd) if vd else None,
+            "dir_name": vd.name if vd else None,
+            "dir_ok": dir_ok,
+            "quality": downloads_mod.normalize_quality(c.download.video_quality),
+            "qualities": list(downloads_mod.VIDEO_QUALITIES),
+            "prefer_h264": bool(c.download.prefer_h264),
+            "ffmpeg": shutil.which("ffmpeg") is not None,
+            "app": APP_NAME,
+            "version": __version__,
+        }
+
+    @app.get("/api/downloads/config")
+    def download_config():
+        return _download_config_dict(state.fresh_config())
+
+    class DownloadProbeBody(BaseModel):
+        url: str
+
+    @app.post("/api/downloads/probe")
+    def download_probe(body: DownloadProbeBody):
+        """探测一条视频能不能存、有哪些清晰度、是不是已经存过 / 转写过。合集链接返回 kind=list。"""
+        c = state.fresh_config()
+        _downloads_enabled(c)
+        url = extract_url(body.url)
+        if not url:
+            raise HTTPException(400, "先填一个视频链接")
+        info = state.probed(url)
+        if info is None:
+            state.touched()
+            result = listing_mod.probe_any(url, c.download)
+            if isinstance(result, listing_mod.ListPage):
+                return {"kind": "list", "list_kind": result.kind, "title": result.title, "total": result.total,
+                        "url": url}
+            info = result
+            state.remember_probe(url, info)
+
+        cache = Cache(c.cache_db)
+        existing = cache.find_download(info.video_id)
+        in_mem = state.downloads.find_by_video(info.video_id)
+        file_ok = bool(existing and existing.get("file_path") and Path(existing["file_path"]).is_file())
+        library_hit = library_mod.find_entry(c, info.video_id)
+        heights = downloads_mod.available_heights(info)
+        return {
+            "kind": "video",
+            "url": info.url,
+            "video_id": info.video_id,
+            "title": info.title,
+            "uploader": info.uploader,
+            "upload_date": _fmt_date(info.upload_date),
+            "thumbnail": info.thumbnail,
+            "duration_sec": info.duration_sec,
+            "extractor": info.extractor,
+            "heights": heights,
+            "max_height": heights[0] if heights else None,
+            "already_downloaded": file_ok,
+            "download": existing if file_ok else None,
+            "downloading": in_mem.to_dict() if in_mem and in_mem.active else None,
+            "in_library": library_hit is not None,
+            "summaries_done": [s.summary_type for s in library_hit.summaries] if library_hit else [],
+        }
+
+    class DownloadBody(BaseModel):
+        url: str
+        quality: str | int | None = None
+        force: bool = False
+        # None = 下完不管；"" = 下完只转写；"overall" 等 = 下完转写并出这种总结
+        then_summarize: str | None = None
+
+    @app.post("/api/downloads")
+    def create_download(body: DownloadBody):
+        c = state.fresh_config()
+        _downloads_enabled(c)
+        url = extract_url(body.url)
+        if not url:
+            raise HTTPException(400, "先填一个视频链接")
+        if body.then_summarize and body.then_summarize not in TEMPLATES:
+            raise HTTPException(400, f"不认识的总结类型 {body.then_summarize}")
+        quality = downloads_mod.normalize_quality(body.quality, c.download.video_quality)
+        info = state.probed(url)
+        existing = Cache(c.cache_db).find_download(info.video_id) if info else None
+        job, dup = state.downloads.submit(info, url=url, quality=quality, force=body.force,
+                                          then_summarize=body.then_summarize, existing=existing)
+        return {"job": job.to_dict(), "duplicate": dup}
+
+    @app.get("/api/downloads")
+    def list_downloads(limit: int = 200):
+        jobs = state.downloads.list()[: max(1, min(int(limit), 500))]
+        return {"jobs": [j.to_dict() for j in jobs], "config": _download_config_dict(state.fresh_config())}
+
+    @app.get("/api/downloads/events")
+    async def download_events(request: Request, after: int = 0, once: bool = False):
+        """一条 SSE 看全部下载任务：每个事件是某个任务的完整快照。断线带 Last-Event-ID 续。
+
+        once=1 只补发积压的事件就断开，给不想长连接的客户端轮询用。
+        """
+        last = request.headers.get("last-event-id")
+        if last and last.isdigit():
+            after = max(after, int(last))
+        q = state.downloads.subscribe(after_seq=after)
+        loop = asyncio.get_running_loop()
+
+        async def gen():
+            try:
+                yield ": connected\n\n"
+                while True:
+                    if await request.is_disconnected():
+                        return
+                    if once and q.empty():
+                        return
+                    try:
+                        ev = await loop.run_in_executor(None, q.get, True, 15)
+                    except Exception:  # noqa: BLE001 —— queue.Empty
+                        yield ": keepalive\n\n"
+                        continue
+                    payload = json.dumps(ev.to_dict(), ensure_ascii=False)
+                    yield f"id: {ev.seq}\nevent: job\ndata: {payload}\n\n"
+            finally:
+                state.downloads.unsubscribe(q)
+
+        return StreamingResponse(gen(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    _THUMB_HOSTS = ("hdslb.com", "bilivideo.com", "biliimg.com", "douyinpic.com", "douyinstatic.com",
+                    "byteimg.com", "bytedance.com", "ytimg.com", "googleusercontent.com")
+    _THUMB_REFERERS = {"hdslb.com": "https://www.bilibili.com/", "bilivideo.com": "https://www.bilibili.com/",
+                       "biliimg.com": "https://www.bilibili.com/", "douyinpic.com": "https://www.douyin.com/",
+                       "douyinstatic.com": "https://www.douyin.com/", "byteimg.com": "https://www.douyin.com/"}
+
+    @app.get("/api/downloads/thumb")
+    def download_thumb(url: str):
+        """封面图代理：抖音的封面带 Referer 校验，随拾页面直接 <img> 拿不到。只放行几个站点的图片 CDN。"""
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        suffix = next((h for h in _THUMB_HOSTS if host == h or host.endswith("." + h)), None)
+        if parsed.scheme not in ("http", "https") or suffix is None:
+            raise HTTPException(400, "不代理这个地址")
+        headers = {"User-Agent": state.cfg.download.user_agent}
+        if suffix in _THUMB_REFERERS:
+            headers["Referer"] = _THUMB_REFERERS[suffix]
+        try:
+            with urlopen(UrlRequest(url, headers=headers), timeout=15) as resp:  # noqa: S310 —— 域名已白名单
+                ctype = resp.headers.get("Content-Type", "image/jpeg")
+                data = resp.read(3 * 1024 * 1024)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(502, f"拿不到封面：{exc}") from exc
+        if not ctype.startswith("image/"):
+            raise HTTPException(502, "对方返回的不是图片")
+        from fastapi.responses import Response
+        return Response(content=data, media_type=ctype, headers={"Cache-Control": "public, max-age=86400"})
+
+    @app.get("/api/downloads/{job_id}")
+    def get_download(job_id: str):
+        job = state.downloads.get(job_id)
+        if job is None:
+            raise HTTPException(404, "没有这个下载任务")
+        return job.to_dict()
+
+    @app.delete("/api/downloads/{job_id}")
+    def delete_download(job_id: str):
+        """排队中的取消；已结束的只删记录，不删文件。"""
+        job = state.downloads.get(job_id)
+        if job is None:
+            raise HTTPException(404, "没有这个下载任务")
+        if job.status == "queued":
+            state.downloads.cancel(job_id)
+            return {"cancelled": True, "job": job.to_dict()}
+        if not job.finished:
+            raise HTTPException(409, "正在下载的任务没法中途取消，等它下完")
+        state.downloads.forget(job_id)
+        Cache(state.fresh_config().cache_db).remove_download(job_id)
+        return {"removed": True}
+
+    @app.post("/api/downloads/{job_id}/open")
+    def open_download(job_id: str):
+        job = state.downloads.get(job_id)
+        if job is None or not job.file_path or not Path(job.file_path).is_file():
+            raise HTTPException(404, "文件不在了")
+        path = Path(job.file_path)
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", "/select,", str(path)])  # noqa: S603, S607
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(path)])  # noqa: S603, S607
+        else:
+            subprocess.Popen(["xdg-open", str(path.parent)])  # noqa: S603, S607
+        return {"ok": True}
 
     # ----- 纠专有名词 -----
 
