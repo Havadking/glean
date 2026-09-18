@@ -99,6 +99,9 @@ def available_heights(info: VideoInfo) -> list[int]:
 def build_sidecar(info: VideoInfo, *, quality: str, file_path: Path) -> dict[str, Any]:
     raw = info.raw or {}
     desc = (raw.get("description") or "").strip()
+    uploader_url = raw.get("channel_url") or raw.get("uploader_url")
+    if not uploader_url and "bilibili" in (info.extractor or "").lower() and raw.get("uploader_id"):
+        uploader_url = f"https://space.bilibili.com/{raw['uploader_id']}"
     return {
         "schema": SIDECAR_SCHEMA,
         "site": info.extractor,
@@ -106,7 +109,7 @@ def build_sidecar(info: VideoInfo, *, quality: str, file_path: Path) -> dict[str
         "url": info.url,
         "title": info.title,
         "uploader": info.uploader,
-        "uploader_url": raw.get("channel_url") or raw.get("uploader_url"),
+        "uploader_url": uploader_url,
         "upload_date": info.upload_date,
         "duration_sec": info.duration_sec,
         "description": desc[:500],

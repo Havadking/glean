@@ -68,6 +68,10 @@ def test_build_sidecar_trims_description_and_keeps_full_title(tmp_path):
     assert len(d["description"]) == 500
     assert d["uploader_url"] == "https://space.bilibili.com/1"
     assert d["file_name"] == "x [BV1test].mp4"
+    # B 站 raw 里只有 uploader_id 时拼出空间地址
+    info2 = _info()
+    info2.raw = {"uploader_id": "42"}
+    assert dl.build_sidecar(info2, quality="best", file_path=tmp_path / "y.mp4")["uploader_url"] == "https://space.bilibili.com/42"
 
 
 def test_overall_progress_weights_video_and_audio_tracks():
