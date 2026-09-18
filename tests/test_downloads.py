@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from pathlib import Path
 
@@ -328,3 +329,70 @@ def test_api_probe_list_link_is_reported(client, monkeypatch):
 def test_api_thumb_proxy_only_allows_known_hosts(client):
     assert client.get("/api/downloads/thumb", params={"url": "https://evil.example/a.jpg"}).status_code == 400
     assert client.get("/api/downloads/thumb", params={"url": "ftp://i0.hdslb.com/a.jpg"}).status_code == 400
+
+
+def test_job_try_heal_when_renamed(cfg, monkeypatch):
+    video_dir = Path(cfg.download.video_dir)
+    monkeypatch.setattr(dl, "download", _fake_download(video_dir))
+    m = dl.DownloadManager(lambda: cfg)
+    job, _ = m.submit(_info("BVheal", title="原始标题"), url="u_heal", quality="720")
+    _wait(job)
+    assert job.status == "done"
+
+    old_video = Path(job.file_path)
+    old_sidecar = Path(job.sidecar_path)
+    assert old_video.is_file() and old_sidecar.is_file()
+
+    # 模拟用户在随拾里重命名为「重命名后的新标题.mp4」
+    new_video = old_video.parent / "重命名后的新标题.mp4"
+    new_sidecar = old_video.parent / ("重命名后的新标题" + dl.SIDECAR_SUFFIX)
+    old_video.rename(new_video)
+
+    # sidecar 同步改名并更新 title
+    sidecar_data = json.loads(old_sidecar.read_text(encoding="utf-8"))
+    sidecar_data["title"] = "重命名后的新标题"
+    new_sidecar.write_text(json.dumps(sidecar_data, ensure_ascii=False), encoding="utf-8")
+    old_sidecar.unlink()
+
+    # 此时原路径已不存在
+    assert not old_video.is_file()
+
+    # 执行自愈
+    assert job.try_heal(video_dir, force=True) is True
+    assert job.file_path == str(new_video)
+    assert job.sidecar_path == str(new_sidecar)
+    assert job.title == "重命名后的新标题"
+    assert job.to_dict()["file_exists"] is True
+
+
+def test_api_open_and_list_heals_renamed_video(client, cfg, monkeypatch):
+    r = client.post("/api/downloads", json={"url": "https://b23.tv/heal_api", "quality": "1080p"}).json()
+    job = _wait_api(client, r["job"]["id"])
+    assert job["status"] == "done"
+
+    old_video = Path(job["file_path"])
+    old_sidecar = Path(job["sidecar_path"])
+    new_video = old_video.parent / "改名视频.mp4"
+    new_sidecar = old_video.parent / ("改名视频" + dl.SIDECAR_SUFFIX)
+
+    old_video.rename(new_video)
+    sidecar_data = json.loads(old_sidecar.read_text(encoding="utf-8"))
+    sidecar_data["title"] = "改名视频"
+    new_sidecar.write_text(json.dumps(sidecar_data, ensure_ascii=False), encoding="utf-8")
+    old_sidecar.unlink()
+
+    opened_args = []
+    monkeypatch.setattr(subprocess, "Popen", lambda args, **kw: opened_args.append(args))
+
+    # 1. 触发 open 接口自愈
+    res = client.post(f"/api/downloads/{job['id']}/open")
+    assert res.status_code == 200
+    assert res.json() == {"ok": True}
+    assert opened_args and str(new_video) in opened_args[0][-1]
+
+    # 2. 触发 list 接口自愈
+    lst = client.get("/api/downloads").json()
+    healed = next(j for j in lst["jobs"] if j["id"] == job["id"])
+    assert healed["file_exists"] is True
+    assert healed["title"] == "改名视频"
+    assert healed["file_path"] == str(new_video)

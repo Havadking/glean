@@ -195,9 +195,94 @@ class DownloadJob:
     def active(self) -> bool:
         return self.status in ("queued", "downloading", "merging")
 
-    def to_dict(self) -> dict[str, Any]:
+    def try_heal(self, video_dir: Path | None = None, *, force: bool = False) -> bool:
+        """如果记录里的 file_path 物理文件不存在，但在同级目录或 video_dir 中能通过
+        .suishi.json 的 video_id / url 匹配到重命名后的新文件，则自动修复路径和标题。
+        """
+        if self.file_path and Path(self.file_path).is_file():
+            return True
+
+        # 节流：针对找不到文件的任务，非强制时每秒最多扫描一次，避免频繁磁盘 IO
+        now = time.monotonic()
+        last_check = getattr(self, "_last_heal_check", 0.0)
+        if not force and now - last_check < 1.0:
+            return False
+        self._last_heal_check = now
+
+        dirs_to_check: list[Path] = []
+        if self.file_path:
+            parent = Path(self.file_path).parent
+            if parent.is_dir():
+                dirs_to_check.append(parent)
+        if video_dir and video_dir.is_dir() and video_dir not in dirs_to_check:
+            dirs_to_check.append(video_dir)
+
+        candidate_sidecars: list[Path] = []
+        for d in dirs_to_check:
+            try:
+                candidate_sidecars.extend(d.glob(f"*{SIDECAR_SUFFIX}"))
+            except OSError:
+                pass
+        if not candidate_sidecars and video_dir and video_dir.is_dir():
+            try:
+                candidate_sidecars.extend(video_dir.rglob(f"*{SIDECAR_SUFFIX}"))
+            except OSError:
+                pass
+
+        vid = self.video_id
+        url = self.url
+        for s_path in candidate_sidecars:
+            try:
+                text = s_path.read_text(encoding="utf-8")
+                if vid and vid not in text and url not in text:
+                    continue
+                meta = json.loads(text)
+            except Exception:
+                continue
+
+            if not isinstance(meta, dict):
+                continue
+
+            if (vid and meta.get("video_id") == vid) or (url and meta.get("url") == url):
+                stem = s_path.name[: -len(SIDECAR_SUFFIX)]
+                parent = s_path.parent
+                orig_suffix = Path(self.file_path).suffix if self.file_path else ".mp4"
+                preferred = parent / f"{stem}{orig_suffix}"
+                media_path: Path | None = preferred if preferred.is_file() else None
+                if media_path is None:
+                    for ext in (".mp4", ".mkv", ".webm", ".mov", ".flv", ".avi"):
+                        cand = parent / f"{stem}{ext}"
+                        if cand.is_file():
+                            media_path = cand
+                            break
+                if media_path is None:
+                    try:
+                        for cand in parent.glob(f"{stem}.*"):
+                            if cand.is_file() and not cand.name.endswith(SIDECAR_SUFFIX):
+                                media_path = cand
+                                break
+                    except OSError:
+                        pass
+
+                if media_path is not None:
+                    self.file_path = str(media_path)
+                    self.sidecar_path = str(s_path)
+                    if meta.get("title"):
+                        self.title = meta["title"]
+                    return True
+
+        return False
+
+    def to_dict(self, video_dir: Path | None = None) -> dict[str, Any]:
         d = asdict(self)
-        d["file_exists"] = bool(self.file_path and Path(self.file_path).is_file())
+        exists = bool(self.file_path and Path(self.file_path).is_file())
+        if not exists and self.status == "done":
+            if self.try_heal(video_dir):
+                exists = True
+                d["file_path"] = self.file_path
+                d["sidecar_path"] = self.sidecar_path
+                d["title"] = self.title
+        d["file_exists"] = exists
         return d
 
     @classmethod
@@ -303,6 +388,23 @@ class DownloadManager:
 
     def get(self, job_id: str) -> DownloadJob | None:
         return self._jobs.get(job_id)
+
+    def heal_and_persist(self, job: DownloadJob, video_dir: Path | None = None, *, force: bool = False) -> bool:
+        """尝试自愈任务的文件路径。如果路径或元数据修复，触发变更通知并持久化。"""
+        if job.try_heal(video_dir, force=force):
+            self._changed(job, persist=True)
+            return True
+        return False
+
+    def to_dict(self, job: DownloadJob, video_dir: Path | None = None) -> dict[str, Any]:
+        """导出任务字典。如果文件不存在且自愈成功，自动触发持久化与广播。"""
+        exists = bool(job.file_path and Path(job.file_path).is_file())
+        if not exists and job.status == "done":
+            if self.heal_and_persist(job, video_dir):
+                exists = True
+        d = job.to_dict(video_dir=None)
+        d["file_exists"] = exists
+        return d
 
     def list(self) -> list[DownloadJob]:
         """进行中的在前（按排队先后），其余按创建时间倒序。"""

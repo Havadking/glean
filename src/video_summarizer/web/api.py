@@ -1184,8 +1184,10 @@ def create_app(cfg: Config):
 
     @app.get("/api/downloads")
     def list_downloads(limit: int = 200):
+        c = state.fresh_config()
+        vd = Path(c.download.video_dir) if c.download.video_dir else None
         jobs = state.downloads.list()[: max(1, min(int(limit), 500))]
-        return {"jobs": [j.to_dict() for j in jobs], "config": _download_config_dict(state.fresh_config())}
+        return {"jobs": [state.downloads.to_dict(j, video_dir=vd) for j in jobs], "config": _download_config_dict(c)}
 
     @app.get("/api/downloads/events")
     async def download_events(request: Request, after: int = 0, once: bool = False):
@@ -1253,7 +1255,9 @@ def create_app(cfg: Config):
         job = state.downloads.get(job_id)
         if job is None:
             raise HTTPException(404, "没有这个下载任务")
-        return job.to_dict()
+        c = state.fresh_config()
+        vd = Path(c.download.video_dir) if c.download.video_dir else None
+        return state.downloads.to_dict(job, video_dir=vd)
 
     @app.delete("/api/downloads/{job_id}")
     def delete_download(job_id: str):
@@ -1273,7 +1277,13 @@ def create_app(cfg: Config):
     @app.post("/api/downloads/{job_id}/open")
     def open_download(job_id: str):
         job = state.downloads.get(job_id)
-        if job is None or not job.file_path or not Path(job.file_path).is_file():
+        if job is None:
+            raise HTTPException(404, "没有这个下载任务")
+        c = state.fresh_config()
+        vd = Path(c.download.video_dir) if c.download.video_dir else None
+        if not (job.file_path and Path(job.file_path).is_file()):
+            state.downloads.heal_and_persist(job, video_dir=vd, force=True)
+        if not job.file_path or not Path(job.file_path).is_file():
             raise HTTPException(404, "文件不在了")
         path = Path(job.file_path)
         if sys.platform == "win32":
