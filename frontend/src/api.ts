@@ -17,6 +17,20 @@ export interface Meta {
   currency: string
   priced: boolean
   output_dir: string
+  obsidian_enabled: boolean
+  obsidian_include: ObsidianPart[]
+}
+
+export type ObsidianPart = 'summaries' | 'qa' | 'transcript'
+/** 这条视频在 Obsidian 库里的笔记。path 相对库根目录 */
+export interface ObsidianNote { path: string; exported_at: string; uri: string }
+export interface ObsidianConfig {
+  vault_path: string | null
+  folder: string
+  attachment_folder: string
+  include: ObsidianPart[]
+  transcript_collapsed: boolean
+  vault_exists: boolean
 }
 
 export interface LlmConfig {
@@ -113,6 +127,7 @@ export interface Video extends Omit<Entry, 'summaries'> {
   paragraphs: Paragraph[]
   summaries: Record<string, Summary>
   tags: Tag[]
+  obsidian: ObsidianNote | null
 }
 
 export interface Estimate {
@@ -325,6 +340,9 @@ export const api = {
   audioUrl: (id: string) => `/api/videos/${encodeURIComponent(id)}/audio`,
   fetchAudio: (id: string) => post<{ job: Job | null; duplicate: boolean; cached: boolean }>(`/videos/${encodeURIComponent(id)}/audio`, {}),
   avatarUrl: (name: string) => `/api/uploaders/${encodeURIComponent(name)}/avatar`,
+  saveToObsidian: (id: string, include?: ObsidianPart[]) =>
+    post<{ path: string; action: 'created' | 'updated'; uri: string; obsidian: ObsidianNote | null }>(
+      `/videos/${encodeURIComponent(id)}/obsidian`, { include, app_url: window.location.origin }),
   openFolder: (id: string) => post<{ ok: boolean }>(`/videos/${encodeURIComponent(id)}/open`, {}),
   probe: (url: string, page = 1, keyword = '') => post<Probe | Listing>('/probe', { url, page, keyword }),
   batch: (body: { items: { url: string; title?: string }[]; summary_type?: string | null; asr_model?: string | null; diarize?: string | boolean | null; correct_terms?: boolean | null }) =>
@@ -374,6 +392,8 @@ export const api = {
   updateAsrConfig: (body: Partial<AsrConfig>) => post<AsrConfig>('/config/asr', body),
   getTaskDefaults: () => call<TaskDefaults>('/config/task-defaults'),
   updateTaskDefaults: (body: Partial<TaskDefaults>) => post<TaskDefaults>('/config/task-defaults', body),
+  getObsidianConfig: () => call<ObsidianConfig>('/config/obsidian'),
+  updateObsidianConfig: (body: Partial<Omit<ObsidianConfig, 'vault_exists'>>) => post<ObsidianConfig>('/config/obsidian', body),
   testLlm: (body?: { provider?: string; model?: string; base_url?: string | null; api_key?: string; api_key_env?: string }) =>
     post<TestLlmResult>('/config/test-llm', body ?? {}),
 }

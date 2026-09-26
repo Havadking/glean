@@ -7,6 +7,7 @@ import { AudioBar, type AudioHandle } from '../components/AudioBar'
 import { useCorrections } from '../components/Corrections'
 import { Markdown } from '../components/Markdown'
 import { Mindmap } from '../components/Mindmap'
+import { ObsidianButton } from '../components/ObsidianButton'
 import { TagEditor } from '../components/Tags'
 import { ErrorBox, Highlight, Pill, Seg, countHits } from '../components/ui'
 import { useJob } from '../hooks/useJob'
@@ -279,6 +280,8 @@ export function Video() {
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
               {video.source_url && <a className="btn" href={video.source_url} target="_blank" rel="noreferrer"><ExternalLink /> 原视频</a>}
+              <ObsidianButton videoId={video.video_id} note={video.obsidian}
+                onSaved={(obsidian) => setVideo((v) => v ? { ...v, obsidian } : v)} />
               {video.work_dir && <button className="btn" onClick={openFolder}><FolderOpen /> 打开目录</button>}
               {!hasAudio && video.source_url && (
                 <button className="btn" onClick={fetchAudio} disabled={audioFetching}

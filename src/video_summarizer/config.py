@@ -62,6 +62,28 @@ class WebConfig:
     cors_origins: list[str] = field(default_factory=list)
 
 
+OBSIDIAN_PARTS = ("summaries", "qa", "transcript")
+
+
+@dataclass
+class ObsidianConfig:
+    # 「存到 Obsidian」：笔记直接写进库目录，Obsidian 自己会发现新文件。留空 = 关闭这个功能
+    # 相对路径按 config.yaml 所在目录解析
+    vault_path: str | None = None
+    # 笔记落在库里的哪个文件夹（相对库根目录）
+    folder: str = "00 Inbox/01 Clippings/Video"
+    # 封面图存哪（相对库根目录）
+    attachment_folder: str = "Attachments"
+    # 默认带上哪些内容：summaries | qa | transcript
+    include: list[str] = field(default_factory=lambda: list(OBSIDIAN_PARTS))
+    # 转写全文放进折叠的 callout，长视频不至于把笔记撑得没法看
+    transcript_collapsed: bool = True
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.vault_path)
+
+
 @dataclass
 class ASRConfig:
     provider: str = "funasr"
@@ -141,6 +163,7 @@ class Config:
     asr: ASRConfig = field(default_factory=ASRConfig)
     summarizer: SummarizerConfig = field(default_factory=SummarizerConfig)
     web: WebConfig = field(default_factory=WebConfig)
+    obsidian: ObsidianConfig = field(default_factory=ObsidianConfig)
     output_dir: Path = Path("./output")
     cache_db: Path = Path("./cache.sqlite")
     source_path: Path | None = None
@@ -214,12 +237,21 @@ def load_config(path: Path | None = None) -> Config:
         if not _is_local_origin(origin):
             raise ConfigError(f"配置项 `web.cors_origins` 只接受本机地址（localhost / 127.0.0.1），实际有 {origin!r}")
 
+    obsidian = _build(ObsidianConfig, _section(raw, "obsidian"), "obsidian")
+    if obsidian.vault_path:
+        vp = Path(str(obsidian.vault_path)).expanduser()
+        obsidian.vault_path = str(vp if vp.is_absolute() else base_dir / vp)
+    bad = [p for p in obsidian.include if p not in OBSIDIAN_PARTS]
+    if bad:
+        raise ConfigError(f"配置项 `obsidian.include` 只能取 {' | '.join(OBSIDIAN_PARTS)}，实际有 {', '.join(map(str, bad))}")
+
     return Config(
         subtitle=_build(SubtitleConfig, _section(raw, "subtitle"), "subtitle"),
         download=download,
         asr=_build(ASRConfig, _section(raw, "asr"), "asr"),
         summarizer=_build(SummarizerConfig, _section(raw, "summarizer"), "summarizer"),
         web=web,
+        obsidian=obsidian,
         output_dir=output_dir if output_dir.is_absolute() else base_dir / output_dir,
         cache_db=cache_db if cache_db.is_absolute() else base_dir / cache_db,
         source_path=config_path,
@@ -350,6 +382,38 @@ def update_asr_config(
     if diarize is not _UNSET and diarize is not None:
         d_val = str(diarize).lower() if isinstance(diarize, bool) else diarize.strip()
         text = _update_section_key(text, "asr", "diarize", d_val)
+
+    config_path.write_text(text, encoding="utf-8")
+
+
+def update_obsidian_config(
+    config_path: Path | None,
+    vault_path: str | None = _UNSET,
+    folder: str | None = _UNSET,
+    attachment_folder: str | None = _UNSET,
+    include: list[str] | None = _UNSET,
+    transcript_collapsed: bool | None = _UNSET,
+) -> None:
+    """在线更新 config.yaml 的 obsidian 段，保持文件注释和排版不变。"""
+    if config_path is None or not config_path.is_file():
+        return
+
+    text = config_path.read_text(encoding="utf-8")
+
+    def q(v: str) -> str:
+        return '"' + v.strip().replace("\\", "/").replace('"', "") + '"'
+
+    if vault_path is not _UNSET:
+        text = _update_section_key(text, "obsidian", "vault_path",
+                                   "null" if not vault_path or not vault_path.strip() else q(vault_path))
+    if folder is not _UNSET and folder is not None:
+        text = _update_section_key(text, "obsidian", "folder", q(folder))
+    if attachment_folder is not _UNSET and attachment_folder is not None:
+        text = _update_section_key(text, "obsidian", "attachment_folder", q(attachment_folder))
+    if include is not _UNSET and include is not None:
+        text = _update_section_key(text, "obsidian", "include", "[" + ", ".join(include) + "]")
+    if transcript_collapsed is not _UNSET and transcript_collapsed is not None:
+        text = _update_section_key(text, "obsidian", "transcript_collapsed", "true" if transcript_collapsed else "false")
 
     config_path.write_text(text, encoding="utf-8")
 

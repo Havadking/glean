@@ -35,6 +35,18 @@ web:
   # 允许跨域调接口的本机页面。随拾默认跑在 8964 端口（npm run dev）。只接受 localhost / 127.0.0.1
   cors_origins: ["http://localhost:8964", "http://127.0.0.1:8964"]
 
+obsidian:
+  # 「存到 Obsidian」：笔记直接写进这个库目录。留空 / 注释掉 = 关闭
+  vault_path: "E:/personal/obsidian"
+  # 笔记放在库里的哪个文件夹（相对库根目录）；同一条视频再存一次会原地更新，挪走了也能找到
+  folder: "00 Inbox/01 Clippings/Video"
+  # 封面图存哪（和 Obsidian 设置里的附件文件夹保持一致）
+  attachment_folder: "📦 Attachment"
+  # 默认带上哪些内容：summaries | qa | transcript
+  include: [summaries, qa, transcript]
+  # 转写全文放进折叠的 callout
+  transcript_collapsed: true
+
 asr:
   provider: funasr   # funasr | whisper
   model: fun-asr-nano       # funasr: fun-asr-nano（准，吃词表热词）| sensevoice-small（快）| paraformer-zh

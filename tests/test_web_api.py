@@ -928,3 +928,27 @@ def test_task_defaults_endpoints(client):
     bad = client.post("/api/config/task-defaults", json={"summary_type": "invalid_type"})
     assert bad.status_code == 400
 
+
+
+def test_obsidian_export_and_config(client, workspace, tmp_path, monkeypatch):
+    assert client.get("/api/meta").json()["obsidian_enabled"] is False
+    r = client.post("/api/videos/BVAAA/obsidian", json={})
+    assert r.status_code == 400 and "Obsidian" in r.json()["error"]
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    r = client.post("/api/config/obsidian", json={"vault_path": str(vault), "folder": "Inbox/V"})
+    assert r.status_code == 200 and r.json()["vault_exists"] is True
+    assert client.post("/api/config/obsidian", json={"folder": "../x"}).status_code == 400
+    assert client.post("/api/config/obsidian", json={"include": ["nope"]}).status_code == 400
+
+    from video_summarizer.web import obsidian as ob
+    monkeypatch.setattr(ob.thumbs_mod, "fetch", lambda *a, **k: (_ for _ in ()).throw(OSError("offline")))
+    r = client.post("/api/videos/BVAAA/obsidian", json={"app_url": "https://evil.example", "include": ["summaries"]})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["action"] == "created" and d["path"] == "Inbox/V/A 视频.md"
+    text = (vault / "Inbox" / "V" / "A 视频.md").read_text(encoding="utf-8")
+    assert "缓存里的总结" in text and "evil.example" not in text and "转写全文" not in text
+    assert client.get("/api/videos/BVAAA").json()["obsidian"]["path"] == "Inbox/V/A 视频.md"
+    assert client.post("/api/videos/BVAAA/obsidian", json={}).json()["action"] == "updated"

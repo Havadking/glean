@@ -711,6 +711,7 @@ input, select { font: inherit; color: var(--ink); }
 .pop .pi.on svg, .pop .pi.danger svg { color: currentColor; }
 .pop .pi .sp { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .pop .pi .n { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.pop .pi:disabled { opacity: .5; pointer-events: none; }
 .pop .pd { height: 1px; background: var(--line-2); margin: 4px 2px; }
 .pop .pin { padding: 3px 2px; }
 .pop .pin input { height: 28px; width: 100%; padding: 0 8px; border-radius: 6px; border: 1px solid var(--accent); background: var(--surface); font-size: 12.5px; outline: none; }
@@ -754,3 +755,8 @@ input, select { font: inherit; color: var(--ink); }
   .page, .dhead, .abar { padding-left: 20px; padding-right: 20px; }
   .col.right { padding-right: 0; }
 }
+
+/* 主按钮 + 小箭头连成一体（存到 Obsidian） */
+.btnsplit { display: inline-flex; }
+.btnsplit > .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.btnsplit > .btn:last-of-type { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -1px; padding-left: 6px; padding-right: 6px; }

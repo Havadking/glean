@@ -4,6 +4,8 @@ import {
   api,
   displayTitle,
   type AsrConfig,
+  type ObsidianConfig,
+  type ObsidianPart,
   type Storage,
   type TestLlmResult,
   type Usage,
@@ -833,6 +835,8 @@ export function Settings() {
         </div>
       </div>
 
+      <ObsidianSettings onSaved={refreshMeta} />
+
       {/* 存储管理 */}
       {storage && (
         <>
@@ -901,5 +905,96 @@ export function Settings() {
         </>
       )}
     </div>
+  )
+}
+
+const OBSIDIAN_PARTS: { key: ObsidianPart; label: string }[] = [
+  { key: 'summaries', label: '总结' },
+  { key: 'qa', label: '问答' },
+  { key: 'transcript', label: '转写全文' },
+]
+
+/** 「存到 Obsidian」的库路径、落笔记的文件夹、默认带哪些内容。 */
+function ObsidianSettings({ onSaved }: { onSaved: () => Promise<void> | void }) {
+  const [cfg, setCfg] = useState<ObsidianConfig | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  useEffect(() => { api.getObsidianConfig().then(setCfg).catch(() => {}) }, [])
+  if (!cfg) return null
+
+  const set = <K extends keyof ObsidianConfig>(k: K, v: ObsidianConfig[K]) => setCfg({ ...cfg, [k]: v })
+  const togglePart = (k: ObsidianPart) =>
+    set('include', cfg.include.includes(k) ? cfg.include.filter((x) => x !== k) : [...cfg.include, k])
+
+  const save = async () => {
+    setSaving(true)
+    setNotice(null)
+    try {
+      const updated = await api.updateObsidianConfig({
+        vault_path: cfg.vault_path?.trim() || null,
+        folder: cfg.folder.trim(),
+        attachment_folder: cfg.attachment_folder.trim(),
+        include: cfg.include,
+        transcript_collapsed: cfg.transcript_collapsed,
+      })
+      setCfg(updated)
+      setNotice(updated.vault_path && !updated.vault_exists ? '已保存，但这个库目录不存在' : 'Obsidian 设置已保存！')
+      await onSaved()
+      setTimeout(() => setNotice(null), 3000)
+    } catch (e: unknown) {
+      setNotice(`保存失败: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <>
+      <h2 style={{ fontSize: 16, fontWeight: 600, margin: '28px 0 10px' }}>Obsidian</h2>
+      <div className="card" style={{ padding: '20px 24px' }}>
+        <div style={{ fontSize: 13, color: 'var(--mute)', marginBottom: 14 }}>
+          视频详情页的「存到 Obsidian」会把总结、问答、转写写成库里的一篇笔记。同一条视频再存一次是原地更新，
+          笔记挪到别的文件夹也找得到，「## 我的笔记」往下的内容不会被覆盖。库路径留空就关掉这个功能。
+        </div>
+        <div className="cfg-form">
+          <div className="cfg-field">
+            <label>库路径</label>
+            <input value={cfg.vault_path ?? ''} placeholder="E:/personal/obsidian" onChange={(e) => set('vault_path', e.target.value)} />
+            <span className="hint">{cfg.vault_path && !cfg.vault_exists ? '⚠ 这个目录不存在' : 'Obsidian 库的根目录'}</span>
+          </div>
+          <div className="cfg-field">
+            <label>笔记文件夹</label>
+            <input value={cfg.folder} onChange={(e) => set('folder', e.target.value)} />
+            <span className="hint">相对库根目录，新笔记放这里</span>
+          </div>
+          <div className="cfg-field">
+            <label>附件文件夹</label>
+            <input value={cfg.attachment_folder} onChange={(e) => set('attachment_folder', e.target.value)} />
+            <span className="hint">封面图存这里，和 Obsidian 的附件设置保持一致</span>
+          </div>
+          <div className="cfg-field">
+            <label>默认带上</label>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {OBSIDIAN_PARTS.map((p) => (
+                <button key={p.key} type="button" className={`btn sm ${cfg.include.includes(p.key) ? 'primary' : 'ghost'}`}
+                  onClick={() => togglePart(p.key)}>{p.label}</button>
+              ))}
+              <button type="button" className={`btn sm ${cfg.transcript_collapsed ? 'primary' : 'ghost'}`}
+                onClick={() => set('transcript_collapsed', !cfg.transcript_collapsed)} title="转写放进可折叠的 callout">折叠转写</button>
+            </div>
+            <span className="hint">存的时候还能在按钮旁的小箭头里临时改</span>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button className="btn primary" onClick={save} disabled={saving}>{saving ? '保存中…' : '保存 Obsidian 设置'}</button>
+          {notice && (
+            <span style={{ fontSize: 13, color: notice.includes('失败') || notice.includes('不存在') ? 'var(--bad)' : 'var(--ok)' }}>
+              {notice}
+            </span>
+          )}
+        </div>
+      </div>
+    </>
   )
 }

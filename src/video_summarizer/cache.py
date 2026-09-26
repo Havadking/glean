@@ -29,7 +29,8 @@ log = logging.getLogger(__name__)
 
 # v6：加 video_remarks 表，支持给视频添加备注名称
 # v7：加 downloads 表，「存视频」的记录（给随拾看的那份 mp4 落在哪、下到哪一步）
-SCHEMA_VERSION = 7
+# v8：加 obsidian_exports 表，记每条视频存到 Obsidian 库里的哪个文件
+SCHEMA_VERSION = 8
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS transcripts (
@@ -168,6 +169,13 @@ CREATE TABLE IF NOT EXISTS downloads (
     updated_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_downloads_created ON downloads(created_at);
+
+-- 存到 Obsidian 的记录。path 是相对库根目录的路径；笔记被挪走后下次导出会按 vsum_id 重新找到并更新这里
+CREATE TABLE IF NOT EXISTS obsidian_exports (
+    video_id    TEXT PRIMARY KEY,
+    path        TEXT NOT NULL,
+    exported_at TEXT NOT NULL
+);
 """
 
 
@@ -1249,6 +1257,42 @@ class Cache:
                 conn.commit()
         except sqlite3.Error as exc:
             log.warning("保存视频备注失败：%s", exc)
+
+    def get_obsidian_export(self, video_id: str) -> tuple[str, str] | None:
+        """(相对库根目录的路径, 导出时间)，没导出过返回 None。"""
+        conn = self._connect()
+        if conn is None:
+            return None
+        try:
+            with closing(conn):
+                row = conn.execute("SELECT path, exported_at FROM obsidian_exports WHERE video_id = ?",
+                                   (video_id,)).fetchone()
+                return (row["path"], row["exported_at"]) if row else None
+        except sqlite3.Error as exc:
+            log.warning("查 Obsidian 导出记录失败：%s", exc)
+            return None
+
+    def set_obsidian_export(self, video_id: str, path: str | None) -> str | None:
+        """记下导出位置，返回导出时间。path 为 None 表示笔记已经找不到了，删掉记录。"""
+        conn = self._connect()
+        if conn is None:
+            return None
+        now = _now()
+        try:
+            with closing(conn):
+                if path:
+                    conn.execute(
+                        "INSERT INTO obsidian_exports (video_id, path, exported_at) VALUES (?, ?, ?)"
+                        " ON CONFLICT(video_id) DO UPDATE SET path = excluded.path, exported_at = excluded.exported_at",
+                        (video_id, path, now),
+                    )
+                else:
+                    conn.execute("DELETE FROM obsidian_exports WHERE video_id = ?", (video_id,))
+                conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("保存 Obsidian 导出记录失败：%s", exc)
+            return None
+        return now if path else None
 
     def clear(self, video_id: str | None = None) -> tuple[int, int]:
         """清缓存。给了 video_id 就只清那个视频的。返回 (转写数, 总结数)。"""

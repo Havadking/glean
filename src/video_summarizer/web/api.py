@@ -24,11 +24,15 @@ from typing import Any
 from .. import __version__
 from ..cache import Cache, summary_key
 from ..config import (
+    OBSIDIAN_PARTS,
+    _UNSET,
     Config,
+    _is_local_origin,
     load_config,
     mask_api_key,
     update_asr_config,
     update_env_key,
+    update_obsidian_config,
     update_pricing,
     update_summarizer_config,
     update_task_defaults,
@@ -50,11 +54,11 @@ from ..summarizer.base import CostEstimate
 from ..summarizer.prompts import TEMPLATES
 from ..audio import extractor as audio_extractor
 from ..ytdlp_base import VideoInfo, extract_url, probe
-from urllib.parse import urlparse
-from urllib.request import Request as UrlRequest, urlopen
 from . import avatars as avatars_mod
 from . import library as library_mod
 from . import mindmap as mindmap_mod
+from . import obsidian as obsidian_mod
+from . import thumbs as thumbs_mod
 from .jobs import JobManager, Reporter
 from .reading import to_paragraphs
 
@@ -355,6 +359,8 @@ def create_app(cfg: Config):
             "currency": c.summarizer.currency,
             "priced": c.summarizer.price_input_per_m is not None,
             "output_dir": str(c.output_dir),
+            "obsidian_enabled": c.obsidian.enabled,
+            "obsidian_include": list(c.obsidian.include),
         }
 
     # ----- 模型与价格配置 -----
@@ -523,6 +529,45 @@ def create_app(cfg: Config):
             "correct_terms": bool(refreshed.summarizer.correct_terms),
         }
 
+    class ObsidianConfigBody(BaseModel):
+        vault_path: str | None = None
+        folder: str | None = None
+        attachment_folder: str | None = None
+        include: list[str] | None = None
+        transcript_collapsed: bool | None = None
+
+    def _obsidian_config_dict(c: Config) -> dict[str, Any]:
+        o = c.obsidian
+        return {
+            "vault_path": o.vault_path, "folder": o.folder, "attachment_folder": o.attachment_folder,
+            "include": list(o.include), "transcript_collapsed": o.transcript_collapsed,
+            "vault_exists": bool(o.vault_path) and Path(o.vault_path).is_dir(),
+        }
+
+    @app.get("/api/config/obsidian")
+    def get_obsidian_config():
+        return _obsidian_config_dict(state.fresh_config())
+
+    @app.post("/api/config/obsidian")
+    def set_obsidian_config(body: ObsidianConfigBody):
+        c = state.fresh_config()
+        if body.include is not None:
+            bad = [p for p in body.include if p not in OBSIDIAN_PARTS]
+            if bad:
+                raise HTTPException(400, f"不认识的内容 {', '.join(bad)}")
+        for name, val in (("folder", body.folder), ("attachment_folder", body.attachment_folder)):
+            if val and (Path(val).is_absolute() or ".." in Path(val).parts):
+                raise HTTPException(400, f"{name} 要填库里的相对路径")
+        update_obsidian_config(
+            c.source_path,
+            vault_path=body.vault_path if "vault_path" in body.model_fields_set else _UNSET,
+            folder=body.folder, attachment_folder=body.attachment_folder,
+            include=body.include, transcript_collapsed=body.transcript_collapsed,
+        )
+        refreshed = state.fresh_config()
+        state.cfg.obsidian = refreshed.obsidian
+        return _obsidian_config_dict(refreshed)
+
     @app.get("/api/config/asr")
     def get_asr_config():
         c = state.fresh_config()
@@ -672,6 +717,7 @@ def create_app(cfg: Config):
             ],
             "summaries": _summaries_dict(c, entry),
             "tags": _tags_list(Cache(c.cache_db).tags_for_video(video_id)),
+            "obsidian": obsidian_mod.status(c, video_id),
         }
 
     @app.get("/api/videos/{video_id}/audio")
@@ -731,6 +777,27 @@ def create_app(cfg: Config):
             transcript = cleaning.clean_transcript(transcript)
         est = provider.plan(transcript, SummaryOptions(summary_type=type, language=language))
         return {"provider": provider.describe(), **_estimate_dict(c, est)}
+
+    class ObsidianExportBody(BaseModel):
+        include: list[str] | None = None
+        # 前端传 location.origin，笔记里放一个"在拾光笺中打开"的回链
+        app_url: str | None = None
+
+    @app.post("/api/videos/{video_id}/obsidian")
+    def export_obsidian(video_id: str, body: ObsidianExportBody | None = None):
+        c = state.fresh_config()
+        entry = library_mod.find_entry(c, video_id)
+        if entry is None:
+            raise HTTPException(404, "没有这个视频")
+        body = body or ObsidianExportBody()
+        if body.include is not None:
+            bad = [p for p in body.include if p not in OBSIDIAN_PARTS]
+            if bad:
+                raise HTTPException(400, f"不认识的内容 {', '.join(bad)}")
+        app_url = body.app_url if body.app_url and _is_local_origin(body.app_url) else None
+        res = obsidian_mod.export(c, entry, body.include, app_url=app_url)
+        return {"path": res.rel, "action": res.action, "uri": res.uri,
+                "obsidian": obsidian_mod.status(c, video_id)}
 
     class RemarkBody(BaseModel):
         remark: str | None = None
@@ -1276,31 +1343,15 @@ def create_app(cfg: Config):
         return StreamingResponse(gen(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    _THUMB_HOSTS = ("hdslb.com", "bilivideo.com", "biliimg.com", "douyinpic.com", "douyinstatic.com",
-                    "byteimg.com", "bytedance.com", "ytimg.com", "googleusercontent.com")
-    _THUMB_REFERERS = {"hdslb.com": "https://www.bilibili.com/", "bilivideo.com": "https://www.bilibili.com/",
-                       "biliimg.com": "https://www.bilibili.com/", "douyinpic.com": "https://www.douyin.com/",
-                       "douyinstatic.com": "https://www.douyin.com/", "byteimg.com": "https://www.douyin.com/"}
-
     @app.get("/api/downloads/thumb")
     def download_thumb(url: str):
         """封面图代理：抖音的封面带 Referer 校验，随拾页面直接 <img> 拿不到。只放行几个站点的图片 CDN。"""
-        parsed = urlparse(url)
-        host = (parsed.hostname or "").lower()
-        suffix = next((h for h in _THUMB_HOSTS if host == h or host.endswith("." + h)), None)
-        if parsed.scheme not in ("http", "https") or suffix is None:
-            raise HTTPException(400, "不代理这个地址")
-        headers = {"User-Agent": state.cfg.download.user_agent}
-        if suffix in _THUMB_REFERERS:
-            headers["Referer"] = _THUMB_REFERERS[suffix]
         try:
-            with urlopen(UrlRequest(url, headers=headers), timeout=15) as resp:  # noqa: S310 —— 域名已白名单
-                ctype = resp.headers.get("Content-Type", "image/jpeg")
-                data = resp.read(3 * 1024 * 1024)
+            data, ctype = thumbs_mod.fetch(url, state.cfg.download.user_agent)
+        except thumbs_mod.ThumbNotAllowed as exc:
+            raise HTTPException(400, "不代理这个地址") from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(502, f"拿不到封面：{exc}") from exc
-        if not ctype.startswith("image/"):
-            raise HTTPException(502, "对方返回的不是图片")
         from fastapi.responses import Response
         return Response(content=data, media_type=ctype, headers={"Cache-Control": "public, max-age=86400"})
 
