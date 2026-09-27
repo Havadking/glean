@@ -38,6 +38,11 @@ def extract(info: VideoInfo, cfg: Config, workdir: Path, force: bool = False) ->
         log.info("复用已有音频: %s", wav_path.name)
         return wav_path
 
+    if info.extractor == "local":
+        # 本地录播直接从原文件转码，原文件不动
+        _to_wav(Path(info.url), wav_path)
+        return wav_path
+
     source = _download_audio(info, cfg, workdir)
     _to_wav(source, wav_path)
     if source != wav_path:

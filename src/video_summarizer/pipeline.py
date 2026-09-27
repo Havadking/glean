@@ -13,6 +13,7 @@ from . import asr as asr_registry
 from . import cache as cache_mod
 from . import cleaning
 from . import correction
+from . import local
 from . import summarizer as summarizer_registry
 from .asr import worker as asr_worker
 from .audio import extractor
@@ -72,7 +73,8 @@ def run(
     if info is None:
         stage("probe", "探测视频信息")
         log.info("探测视频信息 ...")
-        info = probe(url, cfg.download)
+        info = probe_source(url, cfg)
+    apply_overrides(info, cfg)
     log.info(
         "《%s》 时长 %s 来源 %s",
         info.title, format_timestamp(info.duration_sec), info.extractor,
@@ -193,6 +195,21 @@ def run(
     result.summary_path = summary_path
     stage("done", "完成")
     return result
+
+
+def probe_source(url: str, cfg: Config) -> VideoInfo:
+    """链接走 yt-dlp，本地路径走 ffprobe。"""
+    if local.is_local(url):
+        return local.probe(url, cfg)
+    return probe(url, cfg.download)
+
+
+def apply_overrides(info: VideoInfo, cfg: Config) -> VideoInfo:
+    """手动改过的主播 / 日期盖在探测结果上：词表、热词、库分组都跟着改过的走。"""
+    meta = cache_mod.Cache(cfg.cache_db).get_video_meta(info.video_id)
+    info.uploader = meta.get("uploader") or info.uploader
+    info.upload_date = meta.get("upload_date") or info.upload_date
+    return info
 
 
 def write_summary_files(

@@ -377,7 +377,8 @@ def cache_refresh_meta(cfg: Config, everything: bool) -> None:
     from .web.library import load_library
 
     store = cache_mod.Cache(cfg.cache_db)
-    todo = [e for e in load_library(cfg) if (everything or not e.uploader) and e.source_url]
+    # 本地视频没什么可探测的，主播是手填的
+    todo = [e for e in load_library(cfg) if (everything or not e.uploader) and e.source_url and not e.is_local]
     if not todo:
         click.echo("都有了，不用补。")
         return

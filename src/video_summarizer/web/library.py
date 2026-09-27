@@ -79,6 +79,10 @@ class LibraryEntry:
         return f"语音识别 {self.asr_model}" if self.asr_model else "语音识别"
 
     @property
+    def is_local(self) -> bool:
+        return self.meta.get("extractor") == "local" or self.video_id.startswith("local-")
+
+    @property
     def missing_types(self) -> list[str]:
         done = {s.summary_type for s in self.summaries}
         return [k for k in TEMPLATES if k not in done]
@@ -97,8 +101,14 @@ def load_library(cfg: Config) -> list[LibraryEntry]:
         else:
             _merge(existing, entry)
 
-    remarks = Cache(cfg.cache_db).get_all_remarks()
+    cache = Cache(cfg.cache_db)
+    remarks = cache.get_all_remarks()
+    overrides = cache.get_all_video_meta()
     for e in entries.values():
+        ov = overrides.get(e.video_id)
+        if ov:
+            e.uploader = ov.get("uploader") or e.uploader
+            e.upload_date = ov.get("upload_date") or e.upload_date
         if e.video_id in remarks:
             e.remark = remarks[e.video_id]
         elif not e.remark and e.meta.get("remark"):

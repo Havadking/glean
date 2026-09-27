@@ -39,13 +39,14 @@ from ..config import (
 )
 from ..errors import VideoSummarizerError
 from ..models import SummaryOptions
-from ..pipeline import plan_transcript_key, run as run_pipeline, write_summary_files
+from ..pipeline import apply_overrides, plan_transcript_key, probe_source, run as run_pipeline, write_summary_files
 from .. import cleaning
 from .. import correction as correction_mod
 from .. import downloads as downloads_mod
 from .. import digest as digest_mod
 from .. import tagging as tagging_mod
 from .. import listing as listing_mod
+from .. import local as local_mod
 from .. import qa as qa_mod
 from .. import search as search_mod
 from ..subtitle.fetcher import select_subtitle_language
@@ -182,13 +183,24 @@ def _fmt_date(yyyymmdd: str | None) -> str | None:
     return f"{yyyymmdd[:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:]}"
 
 
+def _parse_date(text: str) -> str:
+    """YYYY-MM-DD / YYYYMMDD / YYYY/MM/DD -> YYYYMMDD。"""
+    from fastapi import HTTPException
+
+    digits = "".join(ch for ch in (text or "") if ch.isdigit())
+    if len(digits) != 8:
+        raise HTTPException(400, f"日期格式不对：{text}（要 2024-05-12 这样的）")
+    return digits
+
+
 def _entry_dict(e: library_mod.LibraryEntry) -> dict[str, Any]:
     return {
         "video_id": e.video_id,
         "title": e.title,
         "remark": e.remark,
         "source_url": e.source_url,
-        "extractor": e.meta.get("extractor"),
+        "extractor": e.meta.get("extractor") or ("local" if e.is_local else None),
+        "is_local": e.is_local,
         "uploader": e.uploader,
         "upload_date": _fmt_date(e.upload_date),
         "thumbnail": e.thumbnail,
@@ -753,7 +765,7 @@ def create_app(cfg: Config):
             if info is None:
                 state.throttle(c.download.batch_delay_sec)
                 rep.stage("probe", "探测视频")
-                info = probe(url, c.download)
+                info = probe_source(url, c)
                 state.remember_probe(url, info)
             state.touched()
             rep.stage("download", "提取音频")
@@ -867,6 +879,11 @@ def create_app(cfg: Config):
     def probe_url(body: ProbeBody):
         """贴什么都行：单个视频出探测卡，合集 / UP 主空间出一页列表。"""
         c = state.fresh_config()
+        if local_mod.is_local(body.url):
+            info = local_mod.probe(body.url, c)
+            apply_overrides(info, c)
+            state.remember_probe(info.url, info)
+            return _video_probe_dict(c, info)
         url = extract_url(body.url)
         if not url:
             raise HTTPException(400, "先填一个视频链接")
@@ -883,7 +900,9 @@ def create_app(cfg: Config):
                 return _listing_dict(c, result)
             info = result
             state.remember_probe(url, info)
+        return _video_probe_dict(c, info)
 
+    def _video_probe_dict(c: Config, info: VideoInfo) -> dict[str, Any]:
         picked = select_subtitle_language(info, c)
         diarize = c.asr.wants_diarization(needed=False)
         key = plan_transcript_key(info, c, force_asr=False, diarize=diarize)
@@ -902,6 +921,7 @@ def create_app(cfg: Config):
             "duration_sec": info.duration_sec,
             "extractor": info.extractor,
             "kind": "video",
+            "is_local": info.extractor == local_mod.EXTRACTOR,
             "subtitle": {"language": picked[0], "auto": picked[1]} if picked else None,
             "transcript_cached": cached,
             "already_in_library": existing is not None,
@@ -927,6 +947,10 @@ def create_app(cfg: Config):
         force: bool = False
         force_asr: bool = False
         correct_terms: bool | None = None   # None = 按 config
+        # 本地视频在探测卡上填的；链接视频也能带，等价于入库后在详情页改
+        title: str | None = None
+        uploader: str | None = None
+        upload_date: str | None = None      # YYYY-MM-DD 或 YYYYMMDD
 
     def _submit_process(url: str, *, summary_type: str | None, asr_model: str | None,
                         diarize: str | bool | None, force: bool, force_asr: bool,
@@ -1010,11 +1034,43 @@ def create_app(cfg: Config):
 
     _resume_pending()
 
+    def _save_import_meta(url: str, body: ProcessBody) -> str | None:
+        """开始之前把探测卡上填的标题 / 主播 / 日期记下来：排队中重启服务、以后重跑都还认。返回任务标题。"""
+        c = state.fresh_config()
+        info = state.probed(url)
+        is_local = local_mod.is_local(url)
+        if info is None and is_local:
+            info = local_mod.probe(url, c, with_thumb=False)
+            state.remember_probe(url, info)
+        if info is None:
+            return None
+        cache = Cache(c.cache_db)
+        title = (body.title or "").strip()
+        if is_local:
+            cache.put_local_source(info.video_id, path=info.url, size=Path(info.url).stat().st_size,
+                                   title=title or None)
+            if title:
+                info.title = title
+        fields = {}
+        if body.uploader is not None:
+            fields["uploader"] = body.uploader
+        if body.upload_date is not None:
+            fields["upload_date"] = _parse_date(body.upload_date) if body.upload_date.strip() else ""
+        if fields:
+            meta = cache.set_video_meta(info.video_id, **fields)
+            info.uploader = meta.get("uploader") or info.uploader
+            info.upload_date = meta.get("upload_date") or info.upload_date
+        return info.title
+
     @app.post("/api/jobs")
     def create_job(body: ProcessBody):
-        url = extract_url(body.url)
+        if local_mod.is_local(body.url):
+            url = str(local_mod.check_file(local_mod.to_path(body.url)))
+        else:
+            url = extract_url(body.url)
         if not url:
             raise HTTPException(400, "先填一个视频链接")
+        job_title = _save_import_meta(url, body)
         summary_type = (body.summary_type or "").strip() or None
         if summary_type and summary_type.lower() == "none":
             summary_type = None
@@ -1022,8 +1078,77 @@ def create_app(cfg: Config):
             raise HTTPException(400, f"不认识的总结类型 {summary_type}")
         job, dup = _submit_process(url, summary_type=summary_type, asr_model=body.asr_model,
                                    diarize=body.diarize, force=body.force, force_asr=body.force_asr,
-                                   correct_terms=body.correct_terms)
+                                   correct_terms=body.correct_terms, title=job_title)
         return {"job": job.to_dict(), "duplicate": dup}
+
+    # ----- 本地视频 -----
+
+    class PickBody(BaseModel):
+        multiple: bool = False
+
+    pick_lock = threading.Lock()
+
+    @app.post("/api/local/pick")
+    def local_pick(body: PickBody | None = None):
+        """弹系统文件选择框。服务就跑在本机，框会弹在桌面上。"""
+        if not pick_lock.acquire(blocking=False):
+            raise HTTPException(409, "文件选择框已经开着了，看看任务栏")
+        try:
+            return {"paths": local_mod.pick_files(multiple=bool(body and body.multiple))}
+        except Exception as exc:  # noqa: BLE001 —— 没有 tkinter / 没有桌面会话
+            raise HTTPException(500, f"打不开文件选择框：{exc}。可以直接把文件路径贴进输入框") from exc
+        finally:
+            pick_lock.release()
+
+    @app.get("/api/local/{video_id}/thumb")
+    def local_thumb(video_id: str):
+        c = state.fresh_config()
+        path = local_mod.thumb_path(c, video_id)
+        if not path.is_file():
+            src = local_mod.locate(c, video_id)
+            info = local_mod.media_info(src) if src else {}
+            if not src or not local_mod.make_thumb(src, path, info.get("duration") or 0.0):
+                raise HTTPException(404, "没有封面")
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+    @app.post("/api/videos/{video_id}/reveal")
+    def reveal_source(video_id: str):
+        """在资源管理器里选中本地视频的原文件。"""
+        c = state.fresh_config()
+        entry = library_mod.find_entry(c, video_id)
+        if entry is None:
+            raise HTTPException(404, "没有这个视频")
+        if not entry.is_local:
+            raise HTTPException(400, "这不是本地视频")
+        src = local_mod.locate(c, video_id, entry.source_url)
+        if src is None:
+            raise HTTPException(404, f"原文件找不到了（记录的位置：{entry.source_url}）。"
+                                     "挪过地方的话，把新路径贴进新任务再加一次就能认回来")
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", "/select,", str(src)])  # noqa: S603, S607
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(src)])  # noqa: S603, S607
+        else:
+            subprocess.Popen(["xdg-open", str(src.parent)])  # noqa: S603, S607
+        return {"ok": True, "path": str(src)}
+
+    class VideoMetaBody(BaseModel):
+        uploader: str | None = None       # 空串 = 撤销手改，回到探测结果
+        upload_date: str | None = None
+
+    @app.post("/api/videos/{video_id}/meta")
+    def update_video_meta(video_id: str, body: VideoMetaBody):
+        c = state.fresh_config()
+        if library_mod.find_entry(c, video_id) is None:
+            raise HTTPException(404, "没有这个视频")
+        fields: dict[str, str | None] = {}
+        if body.uploader is not None:
+            fields["uploader"] = body.uploader
+        if body.upload_date is not None:
+            fields["upload_date"] = _parse_date(body.upload_date) if body.upload_date.strip() else ""
+        Cache(c.cache_db).set_video_meta(video_id, **fields)
+        entry = library_mod.find_entry(c, video_id)
+        return {"video_id": video_id, "uploader": entry.uploader, "upload_date": _fmt_date(entry.upload_date)}
 
     class BatchBody(BaseModel):
         items: list[dict[str, Any]]      # {url, title?}

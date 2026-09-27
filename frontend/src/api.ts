@@ -72,6 +72,7 @@ export interface Entry {
   remark?: string | null
   source_url: string
   extractor: string | null
+  is_local?: boolean
   uploader: string | null
   upload_date: string | null
   thumbnail: string | null
@@ -194,6 +195,7 @@ export interface Probe {
   thumbnail: string | null
   duration_sec: number
   extractor: string
+  is_local?: boolean
   subtitle: { language: string; auto: boolean } | null
   transcript_cached: boolean
   already_in_library: boolean
@@ -348,8 +350,12 @@ export const api = {
   batch: (body: { items: { url: string; title?: string }[]; summary_type?: string | null; asr_model?: string | null; diarize?: string | boolean | null; correct_terms?: boolean | null }) =>
     post<{ jobs: Job[]; queued: number; duplicates: number }>('/jobs/batch', body),
   cancelQueued: () => call<{ cancelled: number }>('/jobs', { method: 'DELETE' }),
-  createJob: (body: { url: string; asr_model?: string | null; diarize?: string | boolean | null; summary_type?: string | null; force?: boolean; force_asr?: boolean; correct_terms?: boolean | null }) =>
+  createJob: (body: { url: string; asr_model?: string | null; diarize?: string | boolean | null; summary_type?: string | null; force?: boolean; force_asr?: boolean; correct_terms?: boolean | null; title?: string | null; uploader?: string | null; upload_date?: string | null }) =>
     post<{ job: Job; duplicate: boolean }>('/jobs', body),
+  pickLocal: (multiple = false) => post<{ paths: string[] }>('/local/pick', { multiple }),
+  revealSource: (id: string) => post<{ ok: boolean; path: string }>(`/videos/${encodeURIComponent(id)}/reveal`, {}),
+  updateVideoMeta: (id: string, body: { uploader?: string; upload_date?: string }) =>
+    post<{ video_id: string; uploader: string | null; upload_date: string | null }>(`/videos/${encodeURIComponent(id)}/meta`, body),
   summarize: (id: string, body: { type: string; language?: string; extra?: string | null; force?: boolean }) =>
     post<{ job: Job | null; duplicate: boolean; cached: boolean; summary?: { type: string; content: string; provider: string } }>(
       `/videos/${encodeURIComponent(id)}/summaries`, body),

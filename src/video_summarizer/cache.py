@@ -30,7 +30,8 @@ log = logging.getLogger(__name__)
 # v6：加 video_remarks 表，支持给视频添加备注名称
 # v7：加 downloads 表，「存视频」的记录（给随拾看的那份 mp4 落在哪、下到哪一步）
 # v8：加 obsidian_exports 表，记每条视频存到 Obsidian 库里的哪个文件
-SCHEMA_VERSION = 8
+# v9：加 local_sources（本地视频文件在哪）和 video_meta（手动改过的主播 / 日期）
+SCHEMA_VERSION = 9
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS transcripts (
@@ -175,6 +176,25 @@ CREATE TABLE IF NOT EXISTS obsidian_exports (
     video_id    TEXT PRIMARY KEY,
     path        TEXT NOT NULL,
     exported_at TEXT NOT NULL
+);
+
+-- 本地视频：只记路径不拷文件。video_id 是内容指纹（local-xxxx），文件改名挪目录后再加一次会更新 path
+CREATE TABLE IF NOT EXISTS local_sources (
+    video_id    TEXT PRIMARY KEY,
+    path        TEXT NOT NULL,
+    size        INTEGER NOT NULL,
+    title       TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+-- 手动改过的主播 / 日期。比探测结果优先：库分组、词表范围都按这里走，重跑、refresh-meta 也不会冲掉。
+-- 字段为 NULL 表示没改过那一项
+CREATE TABLE IF NOT EXISTS video_meta (
+    video_id    TEXT PRIMARY KEY,
+    uploader    TEXT,
+    upload_date TEXT,
+    updated_at  TEXT NOT NULL
 );
 """
 
@@ -1212,6 +1232,85 @@ class Cache:
             "size_bytes": size,
         }
 
+    # ---------- 本地视频 / 手动改的元信息 ----------
+
+    def get_local_source(self, video_id: str) -> dict[str, Any] | None:
+        conn = self._connect()
+        if conn is None:
+            return None
+        try:
+            with closing(conn):
+                row = conn.execute("SELECT * FROM local_sources WHERE video_id = ?", (video_id,)).fetchone()
+        except sqlite3.Error as exc:
+            log.warning("读本地视频记录失败：%s", exc)
+            return None
+        return dict(row) if row else None
+
+    def put_local_source(self, video_id: str, *, path: str, size: int, title: str | None = None) -> None:
+        """记下（或更新）本地文件的位置。title 给 None 就保留原来的。"""
+        conn = self._connect()
+        if conn is None:
+            return
+        now = _now()
+        try:
+            with closing(conn):
+                conn.execute(
+                    "INSERT INTO local_sources (video_id, path, size, title, created_at, updated_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(video_id) DO UPDATE SET"
+                    " path = excluded.path, size = excluded.size, updated_at = excluded.updated_at,"
+                    " title = CASE WHEN ? IS NULL THEN local_sources.title ELSE excluded.title END",
+                    (video_id, path, size, title or Path(path).stem, now, now, title),
+                )
+                conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("保存本地视频记录失败：%s", exc)
+
+    def get_video_meta(self, video_id: str) -> dict[str, str]:
+        """手动改过的字段，没改过的不出现在结果里。"""
+        return self.get_all_video_meta().get(video_id, {})
+
+    def get_all_video_meta(self) -> dict[str, dict[str, str]]:
+        conn = self._connect()
+        if conn is None:
+            return {}
+        try:
+            with closing(conn):
+                rows = conn.execute("SELECT video_id, uploader, upload_date FROM video_meta").fetchall()
+        except sqlite3.Error as exc:
+            log.warning("读视频元信息失败：%s", exc)
+            return {}
+        return {r["video_id"]: {k: r[k] for k in ("uploader", "upload_date") if r[k]} for r in rows}
+
+    def set_video_meta(self, video_id: str, **fields: str | None) -> dict[str, str]:
+        """改主播 / 日期。只动传进来的字段；传空串或 None 表示撤销那一项、回到探测结果。"""
+        cur = self.get_video_meta(video_id)
+        for k, v in fields.items():
+            if k not in ("uploader", "upload_date"):
+                raise ValueError(f"不能改的字段 {k}")
+            v = (v or "").strip()
+            if v:
+                cur[k] = v
+            else:
+                cur.pop(k, None)
+        conn = self._connect()
+        if conn is None:
+            return cur
+        try:
+            with closing(conn):
+                if cur:
+                    conn.execute(
+                        "INSERT INTO video_meta (video_id, uploader, upload_date, updated_at) VALUES (?, ?, ?, ?)"
+                        " ON CONFLICT(video_id) DO UPDATE SET uploader = excluded.uploader,"
+                        " upload_date = excluded.upload_date, updated_at = excluded.updated_at",
+                        (video_id, cur.get("uploader"), cur.get("upload_date"), _now()),
+                    )
+                else:
+                    conn.execute("DELETE FROM video_meta WHERE video_id = ?", (video_id,))
+                conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("保存视频元信息失败：%s", exc)
+        return cur
+
     def get_remark(self, video_id: str) -> str | None:
         """获取视频的用户备注名称。"""
         conn = self._connect()
@@ -1307,6 +1406,8 @@ class Cache:
                     conn.execute("DELETE FROM questions WHERE video_id = ?", (video_id,))
                     conn.execute("DELETE FROM tags WHERE video_id = ?", (video_id,))
                     conn.execute("DELETE FROM video_remarks WHERE video_id = ?", (video_id,))
+                    conn.execute("DELETE FROM video_meta WHERE video_id = ?", (video_id,))
+                    conn.execute("DELETE FROM local_sources WHERE video_id = ?", (video_id,))
                 else:
                     t = conn.execute("DELETE FROM transcripts")
                     s = conn.execute("DELETE FROM summaries")
@@ -1314,6 +1415,8 @@ class Cache:
                     conn.execute("DELETE FROM tags")
                     conn.execute("DELETE FROM digests")
                     conn.execute("DELETE FROM video_remarks")
+                    conn.execute("DELETE FROM video_meta")
+                    conn.execute("DELETE FROM local_sources")
                 conn.commit()
                 counts = (t.rowcount, s.rowcount)
                 conn.execute("VACUUM")

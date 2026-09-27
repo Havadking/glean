@@ -1,14 +1,17 @@
-import { Link as LinkIcon } from 'lucide-react'
+import { FolderOpen, Link as LinkIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api, type Listing, type Probe } from '../api'
 import { ListingPanel } from '../components/ListingPanel'
 import { ErrorBox, Pill } from '../components/ui'
+import { UploaderInput } from '../components/UploaderInput'
 import { useJob, type JobView } from '../hooks/useJob'
 import { fmtDuration, fmtMoney, fmtSeconds, fmtTokens } from '../lib/format'
 import { useStore } from '../store'
 
 const JOB_KEY = 'vsum.currentJob'
+// 录播一般是同一个主播连着加，记住上次填的
+const LAST_UPLOADER_KEY = 'vsum.lastLocalUploader'
 
 export function NewTask() {
   const { meta, refreshLibrary, queue, refreshQueue } = useStore()
@@ -24,6 +27,11 @@ export function NewTask() {
   const [summaryType, setSummaryType] = useState<string>('')
   const [correctTerms, setCorrectTerms] = useState<boolean>(false)
   const [jobId, setJobId] = useState<string | null>(() => sessionStorage.getItem(JOB_KEY))
+  // 本地文件：探测卡上可编辑的标题 / 主播 / 日期
+  const [localTitle, setLocalTitle] = useState('')
+  const [localUploader, setLocalUploader] = useState('')
+  const [localDate, setLocalDate] = useState('')
+  const [picking, setPicking] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const job = useJob(jobId)
 
@@ -46,24 +54,46 @@ export function NewTask() {
 
   useEffect(() => { inputRef.current?.focus() }, [])
 
-  const doProbe = async () => {
-    const u = url.trim()
+  const doProbe = async (text?: string) => {
+    const u = (text ?? url).trim()
     if (!u) return
     setProbing(true); setError(null); setProbe(null); setListing(null); setNotice(null)
     try {
       const r = await api.probe(u)
       if (r.kind === 'list') setListing(r)
-      else setProbe(r)
+      else {
+        setProbe(r)
+        if (r.is_local) {
+          setLocalTitle(r.title)
+          let last = ''
+          try { last = localStorage.getItem(LAST_UPLOADER_KEY) ?? '' } catch { /* 无痕模式 */ }
+          setLocalUploader(r.uploader ?? last)
+          setLocalDate(r.upload_date ?? '')
+        }
+      }
     } catch (e) { setError(e) } finally { setProbing(false) }
+  }
+
+  const pickLocal = async () => {
+    setPicking(true); setError(null)
+    try {
+      const { paths } = await api.pickLocal()
+      if (paths[0]) { setUrl(paths[0]); await doProbe(paths[0]) }
+    } catch (e) { setError(e) } finally { setPicking(false) }
   }
 
   const start = async () => {
     if (!probe) return
     setError(null)
+    const up = localUploader.trim()
+    if (probe.is_local) {
+      try { if (up) localStorage.setItem(LAST_UPLOADER_KEY, up) } catch { /* 无痕模式 */ }
+    }
     try {
       const r = await api.createJob({
         url: probe.url, asr_model: asr || null, diarize: diarize === 'auto' ? 'auto' : diarize === 'true',
         summary_type: summaryType || null, correct_terms: correctTerms,
+        ...(probe.is_local ? { title: localTitle.trim() || null, uploader: up, upload_date: localDate } : {}),
       })
       sessionStorage.setItem(JOB_KEY, r.job.id)
       setJobId(r.job.id)
@@ -79,15 +109,19 @@ export function NewTask() {
       <div className="ph">
         <div>
           <h1>新任务</h1>
-          <p>贴一个视频链接，或者合集 / UP 主空间的链接。字幕能拿到就不跑语音识别，处理过的直接读缓存。</p>
+          <p>贴一个视频链接，或者合集 / UP 主空间的链接；本地录播直接选文件或贴路径（只记位置，不拷贝）。字幕能拿到就不跑语音识别，处理过的直接读缓存。</p>
         </div>
       </div>
 
       <form className="card urlbox" onSubmit={(e) => { e.preventDefault(); void doProbe() }}>
         <LinkIcon />
-        <input ref={inputRef} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="视频 / 合集 / UP 主空间链接，抖音分享口令直接整段贴"
+        <input ref={inputRef} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="视频 / 合集 / UP 主空间链接，或本地文件路径"
           spellCheck={false} aria-label="视频链接" />
         {url && <button type="button" className="btn ghost" onClick={clear}>清空</button>}
+        <button type="button" className="btn" onClick={() => void pickLocal()} disabled={picking || probing}
+          title="弹出系统的文件选择框，选一个录播文件">
+          {picking ? <><span className="spin" /> 选择中</> : <><FolderOpen /> 本地文件</>}
+        </button>
         <button type="submit" className="btn primary" disabled={!url.trim() || probing}>
           {probing ? <><span className="spin" /> 探测中</> : '探测'}
         </button>
@@ -107,15 +141,32 @@ export function NewTask() {
             <span className="dur mono">{fmtDuration(probe.duration_sec)}</span>
           </div>
           <div>
-            <h2>{probe.title}</h2>
+            {probe.is_local ? (
+              <>
+                <input className="tin title" value={localTitle} onChange={(e) => setLocalTitle(e.target.value)}
+                  placeholder={probe.title} aria-label="标题" />
+                <div className="localmeta">
+                  <div className="opt">
+                    <label>主播</label>
+                    <UploaderInput value={localUploader} onChange={setLocalUploader} />
+                  </div>
+                  <div className="opt">
+                    <label htmlFor="ldate">日期</label>
+                    <input id="ldate" className="tin" type="date" value={localDate} onChange={(e) => setLocalDate(e.target.value)} />
+                  </div>
+                </div>
+                <div className="localpath mono" title="只记位置，不会拷贝或改动原文件">{probe.url}</div>
+              </>
+            ) : <h2>{probe.title}</h2>}
             <div className="meta">
-              {probe.uploader && <span><b>{probe.uploader}</b></span>}
-              <span>{probe.extractor}</span>
+              {probe.is_local && <Pill tone="neutral">本地文件</Pill>}
+              {!probe.is_local && probe.uploader && <span><b>{probe.uploader}</b></span>}
+              {!probe.is_local && <span>{probe.extractor}</span>}
               <span className="mono">{probe.video_id}</span>
-              {probe.upload_date && <span>{probe.upload_date} 发布</span>}
+              {!probe.is_local && probe.upload_date && <span>{probe.upload_date} 发布</span>}
               {probe.subtitle
                 ? <Pill tone="ok" dot>有{probe.subtitle.auto ? '自动' : ''}字幕 · {probe.subtitle.language}</Pill>
-                : <Pill tone="warn" dot>没有字幕，走语音识别</Pill>}
+                : probe.is_local ? <Pill tone="info" dot>走语音识别</Pill> : <Pill tone="warn" dot>没有字幕，走语音识别</Pill>}
               {probe.transcript_cached && <Pill tone="info">处理过 · 转写命中缓存</Pill>}
               {!probe.transcript_cached && probe.already_in_library && <Pill tone="info">库里有这条，设置不同会重跑</Pill>}
             </div>
@@ -149,7 +200,8 @@ export function NewTask() {
               )}
               <div className="opt" style={{ marginLeft: 'auto' }}>
                 <EstimateLine probe={probe} summaryType={summaryType} />
-                <button className="btn primary" onClick={start} disabled={busy}>开始</button>
+                <button className="btn primary" onClick={start} disabled={busy}
+                  title={probe.is_local && !localUploader.trim() ? '没填主播也能跑，入库后在详情页还能补' : undefined}>开始</button>
               </div>
             </div>
           </div>

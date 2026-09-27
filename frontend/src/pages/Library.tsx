@@ -449,6 +449,7 @@ export function Library() {
                       )}
                     </div>
                     <div className="badges">
+                      {e.is_local && <Pill tone="neutral">本地</Pill>}
                       {e.summaries.length === 0 && <Pill tone="neutral">没总结</Pill>}
                       {e.summaries.map((sm) => <Pill tone="ok" key={sm.type}>{sm.label}</Pill>)}
                     </div>

@@ -9,6 +9,7 @@ import { Markdown } from '../components/Markdown'
 import { Mindmap } from '../components/Mindmap'
 import { ObsidianButton } from '../components/ObsidianButton'
 import { TagEditor } from '../components/Tags'
+import { UploaderInput } from '../components/UploaderInput'
 import { ErrorBox, Highlight, Pill, Seg, countHits } from '../components/ui'
 import { useJob } from '../hooks/useJob'
 import { fmtDuration, fmtMoney, fmtTokens, fmtWhen } from '../lib/format'
@@ -33,6 +34,14 @@ export function Video() {
   const [editingRemark, setEditingRemark] = useState(false)
   const [remarkInput, setRemarkInput] = useState('')
   const [savingRemark, setSavingRemark] = useState(false)
+
+  // 主播 / 日期行内编辑（链接视频也能改：纠正抓错的名字、把小号并到主号）
+  const [editingMeta, setEditingMeta] = useState(false)
+  const [upInput, setUpInput] = useState('')
+  const [dateInput, setDateInput] = useState('')
+  const [savingMeta, setSavingMeta] = useState(false)
+  // 改元信息、找原文件的失败就地提示，别把整页换成错误页
+  const [actionErr, setActionErr] = useState<unknown>(null)
 
   // 本地音频：播放器句柄、正在播到的那一段、下载音频的任务
   const audioRef = useRef<AudioHandle>(null)
@@ -162,6 +171,26 @@ export function Video() {
     setRemarkInput(video.remark ?? '')
     setEditingRemark(true)
   }
+  const startEditMeta = () => {
+    setUpInput(video.uploader ?? '')
+    setDateInput(video.upload_date ?? '')
+    setEditingMeta(true)
+  }
+  const saveMeta = async () => {
+    setSavingMeta(true); setActionErr(null)
+    try {
+      const res = await api.updateVideoMeta(video.video_id, { uploader: upInput.trim(), upload_date: dateInput })
+      setVideo((v) => v ? { ...v, uploader: res.uploader, upload_date: res.upload_date } : v)
+      setEditingMeta(false)
+      void refreshLibrary()
+    } catch (e) {
+      setActionErr(e)
+    } finally {
+      setSavingMeta(false)
+    }
+  }
+  const revealSource = () => { setActionErr(null); api.revealSource(video.video_id).catch(setActionErr) }
+
   const saveRemark = async (val?: string) => {
     const nextRemark = (val !== undefined ? val : remarkInput).trim()
     setSavingRemark(true)
@@ -267,26 +296,53 @@ export function Video() {
             </div>
           )}
           {audioJob?.status === 'failed' && <div className="errbox" style={{ marginTop: 10 }}>下载音频失败：{audioJob.error}</div>}
+          {actionErr != null && <div style={{ marginTop: 10 }}><ErrorBox error={actionErr} /></div>}
+          {editingMeta && (
+            <div className="localmeta" style={{ margin: '4px 0 10px', alignItems: 'center' }}>
+              <div className="opt">
+                <label>主播</label>
+                <UploaderInput value={upInput} onChange={setUpInput} autoFocus
+                  onKeyDown={(e) => { if (e.key === 'Enter') void saveMeta(); if (e.key === 'Escape') setEditingMeta(false) }} />
+              </div>
+              <div className="opt">
+                <label htmlFor="vdate">日期</label>
+                <input id="vdate" className="tin" type="date" value={dateInput} onChange={(e) => setDateInput(e.target.value)} />
+              </div>
+              <button className="btn primary sm" onClick={() => void saveMeta()} disabled={savingMeta}><Check size={15} /> 保存</button>
+              <button className="btn ghost sm" onClick={() => setEditingMeta(false)} disabled={savingMeta}><X size={15} /> 取消</button>
+              <span style={{ fontSize: 12, color: 'var(--faint)' }}>清空保存 = 恢复原来抓到的；换主播后词表和分组跟着走</span>
+            </div>
+          )}
           <div className="row">
             <div className="meta">
-              {video.uploader && <span><b>{video.uploader}</b></span>}
+              {video.is_local && <Pill tone="neutral">本地</Pill>}
+              <span>
+                {video.uploader ? <b>{video.uploader}</b> : <span style={{ color: 'var(--faint)' }}>没填主播</span>}
+                {!editingMeta && (
+                  <button className="iconbtn sm" onClick={startEditMeta} title="改主播 / 日期" style={{ opacity: 0.65, padding: 2, marginLeft: 2, verticalAlign: 'middle' }}>
+                    <Pencil size={13} />
+                  </button>
+                )}
+              </span>
               <span className="mono">{fmtDuration(video.duration_sec)}</span>
               {video.extractor && <span>{video.extractor}</span>}
               <span>{video.source_label}{video.diarized ? ' · 分说话人' : ''}</span>
               {video.language && <span>{video.language}</span>}
               {typeof video.meta.elapsed_sec === 'number' && <span>识别用时 {video.meta.elapsed_sec} 秒</span>}
-              {video.upload_date && <span>{video.upload_date} 发布</span>}
+              {video.upload_date && <span>{video.upload_date} {video.is_local ? '录制' : '发布'}</span>}
               {video.usage.calls > 0 && <span className="mono" title={`${video.usage.calls} 次调用，${fmtTokens(video.usage.input_tokens)} 入 / ${fmtTokens(video.usage.output_tokens)} 出`}>已花 {fmtMoney(video.usage.cost, meta?.currency)}</span>}
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
-              {video.source_url && <a className="btn" href={video.source_url} target="_blank" rel="noreferrer"><ExternalLink /> 原视频</a>}
+              {video.is_local
+                ? <button className="btn" onClick={revealSource} title={video.source_url}><ExternalLink /> 原文件</button>
+                : video.source_url && <a className="btn" href={video.source_url} target="_blank" rel="noreferrer"><ExternalLink /> 原视频</a>}
               <ObsidianButton videoId={video.video_id} note={video.obsidian}
                 onSaved={(obsidian) => setVideo((v) => v ? { ...v, obsidian } : v)} />
               {video.work_dir && <button className="btn" onClick={openFolder}><FolderOpen /> 打开目录</button>}
               {!hasAudio && video.source_url && (
                 <button className="btn" onClick={fetchAudio} disabled={audioFetching}
                   title={video.source_type === 'subtitle' ? '这条走的是字幕，没下过音频。下一份就能点时间戳听原声' : '本地音频已清理，重新下一份就能点时间戳听原声'}>
-                  {audioFetching ? <><span className="spin" /> {audioJob?.status === 'queued' ? '排队中' : '下载音频中…'}</> : <><Download /> 下载音频</>}
+                  {audioFetching ? <><span className="spin" /> {audioJob?.status === 'queued' ? '排队中' : '下载音频中…'}</> : <><Download /> {video.is_local ? '提取音频' : '下载音频'}</>}
                 </button>
               )}
               <button className="btn ghost danger" onClick={remove} title="删除"><Trash2 /></button>
