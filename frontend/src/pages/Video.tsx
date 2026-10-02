@@ -1,4 +1,4 @@
-import { Check, Copy, Download, ExternalLink, FolderOpen, Pencil, Search, Trash2, X } from 'lucide-react'
+import { Check, Copy, Download, ExternalLink, FolderOpen, GraduationCap, Pencil, Search, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, displayTitle, type Estimate, type Video as VideoT } from '../api'
@@ -7,7 +7,6 @@ import { AudioBar, type AudioHandle } from '../components/AudioBar'
 import { useCorrections } from '../components/Corrections'
 import { Markdown } from '../components/Markdown'
 import { Mindmap } from '../components/Mindmap'
-import { Study } from '../components/Study'
 import { ObsidianButton } from '../components/ObsidianButton'
 import { TagEditor } from '../components/Tags'
 import { UploaderInput } from '../components/UploaderInput'
@@ -30,15 +29,6 @@ export function Video() {
   const [clean, setClean] = useState<boolean>(() => { try { return localStorage.getItem('clean') === '1' } catch { return false } })
   // 看没应用纠错表的原文。只是临时看一眼，不记住
   const [raw, setRaw] = useState(false)
-  // 速读（转写 + 总结）还是伴读（边看视频边问，v0.9）。记住上次选的
-  const [mode, setMode] = useState<'read' | 'study'>(() => {
-    if (params.get('mode') === 'study') return 'study'
-    try { return localStorage.getItem('vsum.mode') === 'study' ? 'study' : 'read' } catch { return 'read' }
-  })
-  const switchMode = (m: 'read' | 'study') => {
-    setMode(m)
-    try { localStorage.setItem('vsum.mode', m) } catch { /* ignore */ }
-  }
 
   // 视频备注行内编辑
   const [editingRemark, setEditingRemark] = useState(false)
@@ -343,10 +333,8 @@ export function Video() {
               {video.usage.calls > 0 && <span className="mono" title={`${video.usage.calls} 次调用，${fmtTokens(video.usage.input_tokens)} 入 / ${fmtTokens(video.usage.output_tokens)} 出`}>已花 {fmtMoney(video.usage.cost, meta?.currency)}</span>}
             </div>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <div className="seg" role="group" aria-label="模式">
-                <button aria-pressed={mode === 'read'} onClick={() => switchMode('read')} title="转写 + 总结，快速过一遍">速读</button>
-                <button aria-pressed={mode === 'study'} onClick={() => switchMode('study')} title="边看视频边问，适合专业长视频">伴读</button>
-              </div>
+              <Link className="btn primary" to={`/study/${encodeURIComponent(video.video_id)}`}
+                title="全屏边看视频边问：学习底稿、按当前位置提问，适合专业长视频"><GraduationCap /> 伴读</Link>
               {video.is_local
                 ? <button className="btn" onClick={revealSource} title={video.source_url}><ExternalLink /> 原文件</button>
                 : video.source_url && <a className="btn" href={video.source_url} target="_blank" rel="noreferrer"><ExternalLink /> 原视频</a>}
@@ -362,14 +350,12 @@ export function Video() {
               <button className="btn ghost danger" onClick={remove} title="删除"><Trash2 /></button>
             </div>
           </div>
-          {/* 伴读要把竖向空间留给视频和转写，标签在速读里改 */}
-          {mode === 'read' && <TagEditor videoId={video.video_id} tags={video.tags ?? []}
+          <TagEditor videoId={video.video_id} tags={video.tags ?? []}
             hasMaterial={video.paragraphs.length > 0 || Object.keys(video.summaries).length > 0}
-            onChange={(tags) => { setVideo((v) => v ? { ...v, tags } : v); void refreshLibrary() }} />}
+            onChange={(tags) => { setVideo((v) => v ? { ...v, tags } : v); void refreshLibrary() }} />
         </div>
       </div>
 
-      {mode === 'study' ? <Study video={video} /> : <>
       <div className="split" ref={splitRef} style={{ userSelect: isResizing ? 'none' : undefined }}>
         <div className="col left" style={{ width: `${(splitRatio * 100).toFixed(1)}%` }}>
           <div className="colhead">
@@ -430,7 +416,6 @@ export function Video() {
       </div>
 
       {hasAudio && <AudioBar ref={audioRef} src={api.audioUrl(video.video_id)} onTime={onTime} />}
-      </>}
     </div>
   )
 }

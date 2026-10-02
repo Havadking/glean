@@ -6,6 +6,7 @@ import { Library } from './pages/Library'
 import { NewTask } from './pages/NewTask'
 import { Review } from './pages/Review'
 import { Settings } from './pages/Settings'
+import { StudyPage } from './pages/StudyPage'
 import { Uploader } from './pages/Uploader'
 import { Video } from './pages/Video'
 import { StoreProvider } from './store'
@@ -30,7 +31,11 @@ function readCollapsed() {
 
 function Hotkeys() {
   const nav = useNavigate()
+  const loc = useLocation()
+  // 伴读页有自己的快捷键（空格、方向键、Q），别在看视频时被 N / L / R 带走
+  const off = loc.pathname.startsWith('/study/')
   useEffect(() => {
+    if (off) return
     const on = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
@@ -41,7 +46,7 @@ function Hotkeys() {
     }
     window.addEventListener('keydown', on)
     return () => window.removeEventListener('keydown', on)
-  }, [nav])
+  }, [nav, off])
   return null
 }
 
@@ -102,7 +107,10 @@ export default function App() {
     <BrowserRouter>
       <StoreProvider>
         <Hotkeys />
-        <Shell />
+        <Routes>
+          <Route path="/study/:id" element={<StudyPage />} />
+          <Route path="*" element={<Shell />} />
+        </Routes>
       </StoreProvider>
     </BrowserRouter>
   )

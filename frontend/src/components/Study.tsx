@@ -1,9 +1,10 @@
 import DOMPurify from 'dompurify'
-import { ChevronLeft, ChevronRight, Film, MapPin, RefreshCw, Send, Trash2 } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Film, MapPin, RefreshCw, Send, Trash2 } from 'lucide-react'
 import { marked } from 'marked'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
-  api, type StudyChapter, type StudyQuestion, type StudySheet, type StudySource, type StudyState,
+  api, displayTitle, type StudyChapter, type StudyQuestion, type StudySheet, type StudySource, type StudyState,
   type StudyTerm, type Video,
 } from '../api'
 import { useJob } from '../hooks/useJob'
@@ -12,8 +13,8 @@ import { paragraphAt } from './AskPanel'
 import { ErrorBox, Pill } from './ui'
 
 /**
- * 伴读模式（DESIGN.md v0.9）：左边视频 + 本章卡 + 跟随播放的转写，右边学习底稿 / 定位提问。
- * 视觉稿 docs/mockup/v0.9-study.html。
+ * 伴读页（DESIGN.md v0.9）：独立的全屏页面 /study/:id，不套侧栏和详情页的头。
+ * 布局跟着视频走：竖屏录屏三栏（视频 | 转写 | AI），横屏视频在上、转写在下，右边是学习底稿 / 定位提问。
  */
 
 const QUICK = ['这里在说什么？', '他为什么这么说？', '这和前面讲的矛盾吗？', '能举个例子吗？']
@@ -39,6 +40,9 @@ export function Study({ video }: { video: Video }) {
   const [time, setTime] = useState(0)
   const [duration, setDuration] = useState(video.duration_sec || 0)
   const [mediaErr, setMediaErr] = useState<string | null>(null)
+  // 竖屏录屏（手机直播之类）：视频单独占一栏，不然上下全是黑边
+  const [portrait, setPortrait] = useState(false)
+  const [aspect, setAspect] = useState(9 / 16)
   const [autoScroll, setAutoScroll] = useState(() => readPref('vsum.study.autoscroll', true))
   const [markTerms, setMarkTerms] = useState(() => readPref('vsum.study.terms', true))
   const mediaRef = useRef<HTMLMediaElement | null>(null)
@@ -142,30 +146,45 @@ export function Study({ video }: { video: Video }) {
 
   const asked = state?.questions ?? []
 
+  const ch = curCh >= 0 ? chapters[curCh] : undefined
+  const chPct = ch ? Math.min(100, Math.max(0, (time - ch.start) / Math.max(1, ch.end - ch.start) * 100)) : 0
+
   return (
-    <div className="study">
-      <section className="st-left">
-        <Player video={video} state={state} mediaRef={mediaRef} onTimeUpdate={onTimeUpdate}
-          onDuration={setDuration} mediaErr={mediaErr} setMediaErr={setMediaErr} reload={load} />
-        <ChapterStrip chapters={chapters} duration={duration || video.duration_sec} time={time}
-          asked={asked.map((q) => q.position).filter((p): p is number => p != null)} onSeek={(s) => seek(s)} />
-        {curCh >= 0 && chapters[curCh] && (
-          <div className="st-chap">
-            <span className="no">第 {curCh + 1} 章 · {fmtDuration(chapters[curCh].start)}–{fmtDuration(chapters[curCh].end)}</span>
-            <div className="body">
-              <div className="t">{chapters[curCh].title}</div>
-              {chapters[curCh].claim && <div className="claim"><span className="k">本章论点：</span>{chapters[curCh].claim}</div>}
-              <div className="pg"><i style={{ width: `${Math.min(100, Math.max(0, (time - chapters[curCh].start) / Math.max(1, chapters[curCh].end - chapters[curCh].start) * 100))}%` }} /></div>
-            </div>
-            <div className="nav">
+    <div className="sp-page">
+      <header className="sp-top">
+        <Link className="iconbtn" to={`/video/${encodeURIComponent(id)}`} title="回到视频详情（速读）" aria-label="返回"><ArrowLeft /></Link>
+        <div className="tt">
+          <b title={video.title}>{displayTitle(video)}</b>
+          <span>{video.uploader ?? ''}{video.uploader ? ' · ' : ''}{fmtDuration(duration || video.duration_sec)}</span>
+        </div>
+        <span className="sp" />
+        <span className="keys"><kbd>空格</kbd> 播放 <kbd>←</kbd><kbd>→</kbd> 5 秒 <kbd>Q</kbd> 在这里提问</span>
+      </header>
+
+      <div className={`sp-main ${portrait ? 'port' : 'land'}`} style={{ '--ar': aspect } as React.CSSProperties}>
+        <section className="sp-media">
+          <Player video={video} state={state} mediaRef={mediaRef} onTimeUpdate={onTimeUpdate}
+            onMeta={(d, ar) => { setDuration(d); if (ar) { setAspect(ar); setPortrait(ar < 1) } }} mediaErr={mediaErr} setMediaErr={setMediaErr} reload={load} />
+          <ChapterStrip chapters={chapters} duration={duration || video.duration_sec} time={time}
+            asked={asked.map((q) => q.position).filter((p): p is number => p != null)} onSeek={(s) => seek(s)} />
+        </section>
+
+        <section className="sp-read">
+          {ch && (
+            <div className="sp-chap" title={ch.claim}>
+              <span className="no">第 {curCh + 1}/{chapters.length} 章</span>
+              <div className="body">
+                <div className="t">{ch.title}<span className="tm">{fmtDuration(ch.start)}–{fmtDuration(ch.end)}</span></div>
+                {ch.claim && <div className="claim">{ch.claim}</div>}
+              </div>
               <button className="iconbtn" title="上一章" aria-label="上一章"
-                onClick={() => seek(chapters[Math.max(0, time - chapters[curCh].start > 3 ? curCh : curCh - 1)].start)}><ChevronLeft /></button>
+                onClick={() => seek(chapters[Math.max(0, time - ch.start > 3 ? curCh : curCh - 1)].start)}><ChevronLeft /></button>
               <button className="iconbtn" title="下一章" aria-label="下一章" disabled={curCh >= chapters.length - 1}
                 onClick={() => chapters[curCh + 1] && seek(chapters[curCh + 1].start)}><ChevronRight /></button>
+              <i className="pg" style={{ width: `${chPct}%` }} />
             </div>
-          </div>
-        )}
-        <div className="st-tx" ref={txRef}>
+          )}
+          <div className="st-tx" ref={txRef}>
           <div className="hd">
             转写 · 跟随播放
             <span className="sp" />
@@ -186,8 +205,8 @@ export function Study({ video }: { video: Video }) {
               </Fragment>
             )
           })}
-        </div>
-      </section>
+          </div>
+        </section>
 
       <aside className="st-right">
         <div className="st-tabs" role="tablist">
@@ -215,15 +234,16 @@ export function Study({ video }: { video: Video }) {
           <div className="src">来自学习底稿 · 出现 {pop.term.mentions} 次</div>
         </div>
       )}
+      </div>
     </div>
   )
 }
 
 // ---------- 播放器 ----------
 
-function Player({ video, state, mediaRef, onTimeUpdate, onDuration, mediaErr, setMediaErr, reload }: {
+function Player({ video, state, mediaRef, onTimeUpdate, onMeta, mediaErr, setMediaErr, reload }: {
   video: Video; state: StudyState | null; mediaRef: React.MutableRefObject<HTMLMediaElement | null>
-  onTimeUpdate: () => void; onDuration: (d: number) => void
+  onTimeUpdate: () => void; onMeta: (duration: number, aspect: number | null) => void
   mediaErr: string | null; setMediaErr: (s: string | null) => void; reload: () => Promise<void>
 }) {
   const media = state?.media
@@ -262,7 +282,11 @@ function Player({ video, state, mediaRef, onTimeUpdate, onDuration, mediaErr, se
   const common = {
     ref: (el: HTMLMediaElement | null) => { mediaRef.current = el },
     onTimeUpdate, onSeeked: onTimeUpdate,
-    onLoadedMetadata: (e: React.SyntheticEvent<HTMLMediaElement>) => { setMediaErr(null); onDuration(e.currentTarget.duration || 0) },
+    onLoadedMetadata: (e: React.SyntheticEvent<HTMLMediaElement>) => {
+      setMediaErr(null)
+      const el = e.currentTarget as HTMLVideoElement
+      onMeta(el.duration || 0, el.videoHeight ? el.videoWidth / el.videoHeight : null)
+    },
     preload: 'metadata' as const,
     controls: true,
   }
@@ -395,8 +419,7 @@ function SheetPane({ id, state, time, onSeek, reload, setState }: {
     <div className="st-pane">
       <div className="st-genbar">
         <span className="ok" />
-        <span title={meta?.provider}>底稿 · {meta?.provider}</span>
-        <span>{fmtWhen(meta?.created_at)}</span>
+        <span title={`${meta?.provider ?? ''} 生成`}>底稿已生成 · {fmtWhen(meta?.created_at)}</span>
         {(meta?.stale || meta?.outdated) && <Pill tone="warn">{meta?.outdated ? '底稿格式更新了' : '转写改过'}，可以重新生成</Pill>}
         <span className="sp" />
         {running
@@ -617,7 +640,10 @@ function AskBox({ id, state, time, chapter, chapterTitle, inputRef, onAsked, onA
     try {
       const a = await api.studyAsk(id, { question, position: time, spoiler_guard: spoiler, web: webOn })
       onAsked(a)
-      if (!text) setQ('')
+      if (!text) {
+        setQ('')
+        if (inputRef.current) inputRef.current.style.height = ''
+      }
     } catch (e) { setErr(e) } finally { setAsking(null) }
   }
 
@@ -635,7 +661,13 @@ function AskBox({ id, state, time, chapter, chapterTitle, inputRef, onAsked, onA
       </div>
       <div className="box">
         <span className="pin"><MapPin size={12} />{fmtDuration(time)}{chapter != null && chapterTitle ? ` · 第 ${chapter + 1} 章` : ''}</span>
-        <textarea ref={inputRef} rows={2} value={q} onChange={(e) => setQ(e.target.value)} disabled={!!asking}
+        <textarea ref={inputRef} rows={1} value={q} disabled={!!asking}
+          onChange={(e) => {
+            setQ(e.target.value)
+            const el = e.target
+            el.style.height = 'auto'
+            el.style.height = `${Math.min(el.scrollHeight, 140)}px`
+          }}
           placeholder="在这里卡住了？直接问。Enter 发送，Shift+Enter 换行"
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void ask() }
