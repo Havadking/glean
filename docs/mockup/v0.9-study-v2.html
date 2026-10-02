@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>伴读布局 v2 · 视觉稿</title>
+<style>
+:root {
+  --bg: #F3F4F6; --surface: #FFFFFF; --surface-2: #F8F9FB; --line: #E4E6EB; --line-2: #EEF0F3;
+  --ink: #16181D; --ink-2: #4B5060; --mute: #6E7382; --faint: #A0A5B3;
+  --accent: #CF3F6B; --accent-ink: #B8315B; --accent-bg: #FCEEF3; --accent-line: #F4C9D7;
+  --ok: #1E9A63; --ok-bg: #E6F6EE; --warn: #D8890E; --warn-bg: #FDF3E1; --info: #3B6FD8; --info-bg: #EAF0FC;
+  --shadow: 0 1px 2px rgba(20,22,30,.06), 0 4px 16px rgba(20,22,30,.05);
+  --panel: 360px; --rail: 44px;
+}
+:root[data-theme="dark"] {
+  --bg: #0E1014; --surface: #161920; --surface-2: #1C2029; --line: #262A34; --line-2: #20242D;
+  --ink: #E8EAF0; --ink-2: #C0C4CF; --mute: #8A90A0; --faint: #5C6272;
+  --accent: #F27CA3; --accent-ink: #F79BBA; --accent-bg: #2A1A21; --accent-line: #4A2735;
+  --ok: #3FBF84; --ok-bg: #17302A; --warn: #E9A23B; --warn-bg: #33291A; --info: #7AA2F0; --info-bg: #1B2538;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E1014; --surface: #161920; --surface-2: #1C2029; --line: #262A34; --line-2: #20242D;
+    --ink: #E8EAF0; --ink-2: #C0C4CF; --mute: #8A90A0; --faint: #5C6272;
+    --accent: #F27CA3; --accent-ink: #F79BBA; --accent-bg: #2A1A21; --accent-line: #4A2735;
+    --ok: #3FBF84; --ok-bg: #17302A; --warn: #E9A23B; --warn-bg: #33291A; --info: #7AA2F0; --info-bg: #1B2538;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.55 "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; overflow: hidden; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+.mono { font-family: "JetBrains Mono", ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; }
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+svg { flex: none; }
+
+/* ---------- 页面骨架：顶栏 36px + 舞台 + 侧栏 ---------- */
+.page { height: 100vh; display: grid; grid-template-rows: 36px minmax(0, 1fr); grid-template-columns: minmax(0, 1fr) var(--panel); }
+.page.cinema { grid-template-columns: minmax(0, 1fr) var(--rail); }
+.top { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 0 10px; border-bottom: 1px solid var(--line); background: var(--surface); min-width: 0; }
+.top .back { width: 26px; height: 26px; border-radius: 6px; display: grid; place-items: center; color: var(--mute); }
+.top .back:hover { background: var(--surface-2); color: var(--ink); }
+.top .back svg { width: 16px; height: 16px; }
+.top b { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.top .sub { font-size: 12px; color: var(--mute); white-space: nowrap; }
+.top .sp { flex: 1; }
+.top .keys { font-size: 11px; color: var(--faint); white-space: nowrap; display: flex; gap: 4px; align-items: center; }
+kbd { font-family: "JetBrains Mono", monospace; font-size: 10px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--mute); background: var(--surface); margin-left: 6px; }
+
+/* ---------- 舞台：视频 + 时间轴 + 本章卡 ---------- */
+.stage { min-width: 0; min-height: 0; padding: 12px 14px 12px; display: flex; flex-direction: column; gap: 8px; }
+.vwrap { flex: none; align-self: center; position: relative; border-radius: 10px; overflow: hidden; background: #000; box-shadow: var(--shadow); }
+.screen { position: absolute; inset: 0; display: grid; place-items: center; cursor: pointer;
+  background: radial-gradient(ellipse at 40% 40%, #3a2f45 0%, #1b1622 45%, #0b0a0e 100%); }
+.screen .box { width: 22%; aspect-ratio: .62; background: linear-gradient(160deg, #f2eef2, #d9d2da); border-radius: 4px; position: relative; box-shadow: 0 20px 60px rgba(0,0,0,.6); transform: translateX(-30%) rotate(-3deg); }
+.screen .box::before { content: "HUMIRA PEN"; position: absolute; left: 10%; top: 22%; font: 600 clamp(9px, 1.4vw, 20px)/1 system-ui; color: #6a1f3c; letter-spacing: .02em; }
+.screen .box::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 45%; background: linear-gradient(#8e2848, #6a1f3c); border-radius: 0 0 4px 4px; }
+.screen .pen { position: absolute; left: 55%; top: 22%; width: 3.2%; height: 56%; border-radius: 99px; background: linear-gradient(90deg, #ddd, #fff 40%, #bbb); transform: rotate(8deg); }
+.screen .pen::before { content: ""; position: absolute; left: -15%; right: -15%; top: 0; height: 30%; background: #b7224a; border-radius: 99px 99px 6px 6px; }
+.port .screen { background: radial-gradient(ellipse at 50% 30%, #3a4256 0%, #1a1f2b 50%, #0b0c10 100%); }
+.port .screen .box, .port .screen .pen { display: none; }
+.port .screen .phone { display: block; }
+.screen .phone { display: none; position: absolute; inset: 9% 7% 16%; border-radius: 10px; background: rgba(255,255,255,.92); }
+.screen .burn { position: absolute; left: 50%; bottom: 13%; transform: translateX(-50%); color: #fff; font-weight: 700; font-size: clamp(13px, 1.7vw, 26px); text-shadow: 0 2px 6px #000; white-space: nowrap; letter-spacing: .04em; }
+.screen .wm { position: absolute; right: 2.5%; top: 4%; color: rgba(255,255,255,.75); font-weight: 600; font-size: clamp(10px, 1.1vw, 16px); }
+.chapchip { position: absolute; left: 12px; top: 12px; display: flex; gap: 8px; align-items: center; padding: 5px 10px; border-radius: 8px; background: rgba(0,0,0,.55); color: #fff; font-size: 12.5px; backdrop-filter: blur(6px); opacity: 0; transition: opacity .2s; }
+.vwrap:hover .chapchip, .vwrap.paused .chapchip { opacity: 1; }
+.chapchip b { font-weight: 600; }
+.chapchip .n { color: #F79BBA; font-variant-numeric: tabular-nums; }
+.ctrl { position: absolute; left: 0; right: 0; bottom: 0; padding: 18px 14px 10px; background: linear-gradient(transparent, rgba(0,0,0,.65)); display: flex; align-items: center; gap: 14px; color: #fff; font-size: 13px; }
+.ctrl .ib { width: 26px; height: 26px; display: grid; place-items: center; }
+.ctrl .ib svg { width: 18px; height: 18px; }
+.ctrl .sp { flex: 1; }
+.ctrl .rate { font-size: 12px; border: 1px solid rgba(255,255,255,.35); border-radius: 5px; padding: 1px 6px; }
+.ctrl .bar { position: absolute; left: 14px; right: 14px; bottom: 44px; height: 3px; background: rgba(255,255,255,.3); border-radius: 2px; }
+.ctrl .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: 2px; }
+.size { position: absolute; right: 10px; top: 10px; font: 11px/1 "JetBrains Mono", monospace; color: #fff; background: rgba(207,63,107,.9); padding: 5px 7px; border-radius: 6px; pointer-events: none; }
+
+/* 章节时间轴：每章一段，当前章标出名字 */
+.tl { flex: none; align-self: center; position: relative; height: 26px; cursor: pointer; }
+.tl .seg { position: absolute; top: 14px; height: 6px; background: var(--line); border-radius: 2px; }
+.tl .seg.done { background: var(--accent-line); }
+.tl .seg.cur { background: var(--accent); top: 13px; height: 8px; }
+.tl .seg:hover { background: var(--faint); }
+.tl .seg.cur:hover { background: var(--accent); }
+.tl .lbl { position: absolute; top: -1px; font-size: 11.5px; color: var(--accent-ink); white-space: nowrap; font-weight: 600; transform: translateX(-50%); }
+.tl .head { position: absolute; top: 10px; width: 2px; height: 14px; background: var(--ink); transform: translateX(-1px); border-radius: 1px; }
+.tl .q { position: absolute; top: 22px; width: 6px; height: 6px; border-radius: 50%; background: var(--info); transform: translateX(-3px); }
+.tl .tip { position: absolute; bottom: 26px; transform: translateX(-50%); background: var(--ink); color: var(--bg); font-size: 12px; padding: 3px 8px; border-radius: 6px; white-space: nowrap; pointer-events: none; opacity: 0; }
+.tl:hover .tip { opacity: 1; }
+
+/* 本章卡（横屏）：左边章名，右边论点 | 证据 | 结论 三栏 —— 视频下面这块又宽又矮，横着排正好 */
+.chap { flex: 1 1 0; min-height: 0; align-self: center; display: grid; grid-template-columns: 210px 1fr 1.6fr 1fr; gap: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.chap > div { min-height: 0; padding: 10px 14px; overflow: auto; }
+.chap > div + div { border-left: 1px solid var(--line-2); }
+.chap .head { display: flex; flex-direction: column; gap: 6px; background: var(--surface-2); }
+.chap .no { align-self: flex-start; font-size: 11px; color: var(--accent-ink); background: var(--accent-bg); border-radius: 5px; padding: 2px 7px; font-weight: 500; }
+.chap h3 { margin: 0; font-size: 15.5px; line-height: 1.45; }
+.chap .tm { font: 11.5px "JetBrains Mono", monospace; color: var(--faint); }
+.chap .pg { height: 3px; background: var(--line-2); border-radius: 2px; overflow: hidden; margin-top: 2px; }
+.chap .pg i { display: block; height: 100%; background: var(--accent); }
+.chap .nav { display: flex; gap: 4px; margin-top: auto; }
+.chap .nav button { flex: 1; font-size: 12px; color: var(--mute); border: 1px solid var(--line); border-radius: 6px; padding: 3px 0; background: var(--surface); }
+.chap .nav button:hover { color: var(--ink); }
+.chap .k { display: block; font-size: 11px; font-weight: 600; color: var(--accent-ink); letter-spacing: .06em; margin-bottom: 4px; }
+.chap p { margin: 0; font-size: 13px; line-height: 1.7; color: var(--ink-2); }
+.chap ul { margin: 0; padding-left: 15px; font-size: 13px; line-height: 1.65; color: var(--ink-2); }
+.chap li + li { margin-top: 4px; }
+.chap .next { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 12px; color: var(--mute); }
+.chap .next b { color: var(--ink-2); font-weight: 500; }
+.tcl { font: 11px "JetBrains Mono", monospace; color: var(--accent-ink); background: var(--accent-bg); border-radius: 4px; padding: 0 4px; white-space: nowrap; }
+.tcl:hover { text-decoration: underline; }
+/* 空间不够时本章卡退化成一行 */
+.chap.thin { grid-template-columns: auto 1fr auto; align-items: center; }
+.chap.thin > div { padding: 8px 12px; overflow: hidden; }
+.chap.thin .head { flex-direction: row; align-items: center; background: none; }
+.chap.thin .head .tm, .chap.thin .head .pg, .chap.thin .head .nav, .chap.thin .ev, .chap.thin .con { display: none; }
+.chap.thin .head h3 { font-size: 14px; white-space: nowrap; }
+.chap.thin .claimc p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chap.thin .claimc .k { display: none; }
+.chap .more { display: none; }
+.chap.thin .more { display: block; border-left: 1px solid var(--line-2); font-size: 12px; color: var(--accent-ink); white-space: nowrap; }
+
+/* 竖屏：视频按高度撑满一栏，旁边一栏放本章卡（竖排）+ 接下来 */
+.stage.port { flex-direction: row; gap: 12px; }
+.stage.port .vcol { flex: none; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.stage.port .chap { align-self: stretch; flex: 1 1 0; min-width: 0; grid-template-columns: 1fr; grid-template-rows: auto auto 1fr auto; }
+.stage.port .chap > div + div { border-left: 0; border-top: 1px solid var(--line-2); }
+.stage.port .chap .head { background: none; }
+.stage.port .chap .nav { margin-top: 4px; }
+
+/* ---------- 侧栏 ---------- */
+.side { min-height: 0; display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--line); }
+.tabs { flex: none; display: flex; align-items: center; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid var(--line); }
+.tabs button.t { padding: 7px 11px 9px; font-size: 13.5px; color: var(--mute); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tabs button.t:hover { color: var(--ink); }
+.tabs button.t.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 500; }
+.tabs .n { font-size: 11px; color: var(--faint); margin-left: 3px; }
+.tabs .sp { flex: 1; }
+.iconbtn { width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; color: var(--mute); }
+.iconbtn:hover { background: var(--surface-2); color: var(--ink); }
+.iconbtn svg { width: 16px; height: 16px; }
+.pane { flex: 1; min-height: 0; overflow: auto; padding: 12px 14px 16px; display: none; }
+.pane.on { display: block; }
+.cinema .side { display: none; }
+.cinema.drawer .side { display: flex; position: fixed; top: 36px; right: var(--rail); bottom: 0; width: 380px; z-index: 20;
+  box-shadow: -12px 0 40px rgba(0,0,0,.28); border-left: 1px solid var(--line); animation: slidein .18s ease-out; }
+@keyframes slidein { from { transform: translateX(24px); opacity: .4; } }
+.cinema.drawer .rail button.on { background: var(--accent-bg); color: var(--accent-ink); }
+.side .closer { display: none; }
+.cinema.drawer .side .closer { display: grid; }
+.cinema.drawer #toCinema { display: none; }
+.rail { display: none; flex-direction: column; align-items: center; gap: 4px; padding-top: 8px; background: var(--surface); border-left: 1px solid var(--line); }
+.cinema .rail { display: flex; }
+.rail button { width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; color: var(--mute); position: relative; }
+.rail button:hover { background: var(--surface-2); color: var(--ink); }
+.rail button svg { width: 18px; height: 18px; }
+.rail .dot { position: absolute; right: 5px; top: 5px; min-width: 14px; height: 14px; border-radius: 7px; background: var(--accent); color: #fff; font-size: 9.5px; display: grid; place-items: center; padding: 0 3px; }
+.rail hr { width: 22px; border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+
+/* 问 */
+.turn { margin-bottom: 18px; }
+.turn .q { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.turn .at { font-size: 11px; color: var(--mute); display: flex; gap: 6px; align-items: center; }
+.turn .bubble { background: var(--accent-bg); border-radius: 12px 12px 3px 12px; padding: 7px 11px; font-size: 13.5px; max-width: 92%; }
+.turn .a { margin-top: 8px; font-size: 13.5px; line-height: 1.7; }
+.blk { margin-top: 6px; }
+.blk .bh { font-size: 12px; font-weight: 600; margin-bottom: 2px; display: flex; gap: 6px; align-items: center; }
+.blk.v .bh { color: var(--accent-ink); }
+.blk.b { border: 1px dashed var(--info); border-radius: 8px; padding: 7px 9px; background: color-mix(in srgb, var(--info-bg) 55%, transparent); }
+.blk.b .bh { color: var(--info); }
+.blk ul { margin: 0; padding-left: 17px; }
+.blk li { margin: 2px 0; }
+.tagl { font-size: 10px; font-weight: 600; padding: 0 5px; border-radius: 3px; background: var(--warn-bg); color: var(--warn); }
+.afoot { font-size: 11px; color: var(--faint); margin-top: 6px; }
+
+/* 底稿 */
+.sec { font-size: 11px; letter-spacing: .08em; color: var(--faint); margin: 16px 0 8px; display: flex; }
+.sec:first-child { margin-top: 0; }
+.sec .r { margin-left: auto; letter-spacing: 0; color: var(--mute); }
+.pre { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; margin-bottom: 6px; font-size: 13px; display: flex; gap: 8px; align-items: center; }
+.pre .chk { width: 15px; height: 15px; border: 1.5px solid var(--faint); border-radius: 4px; flex: none; }
+.pre.k .chk { background: var(--ok); border-color: var(--ok); }
+.pre.k span { color: var(--mute); }
+.chl { display: grid; grid-template-columns: 50px 1fr; gap: 6px; padding: 5px 6px; border-radius: 6px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+.chl:hover { background: var(--surface-2); }
+.chl .tm { font: 11px "JetBrains Mono", monospace; color: var(--faint); padding-top: 2px; }
+.chl.cur { background: var(--accent-bg); color: var(--accent-ink); font-weight: 600; }
+.chl.done { color: var(--mute); }
+.gi { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; font-size: 12.5px; color: var(--ink-2); line-height: 1.6; }
+.gi b { color: var(--ink); font-size: 13px; }
+.gi .en { color: var(--mute); font-size: 11px; margin-left: 6px; }
+
+/* 转写 */
+.txhd { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--mute); margin-bottom: 6px; }
+.txhd .sp { flex: 1; }
+.txhd button { color: var(--accent-ink); }
+.para { display: grid; grid-template-columns: 44px 1fr; gap: 8px; padding: 6px; margin: 0 -6px; border-radius: 6px; }
+.para .tc { font: 11px "JetBrains Mono", monospace; color: var(--faint); padding-top: 3px; }
+.para p { margin: 0; font-size: 13.5px; line-height: 1.8; color: var(--ink-2); }
+.para.on { background: var(--accent-bg); }
+.para.on .tc { color: var(--accent-ink); font-weight: 600; }
+.para.on p { color: var(--ink); }
+.term { border-bottom: 1.5px dotted var(--info); }
+.wide .page { --panel: 560px; }
+
+/* 提问框：常驻侧栏底部 */
+.ask { flex: none; border-top: 1px solid var(--line); padding: 8px 10px 10px; }
+.ask .quick { display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; margin-bottom: 6px; }
+.ask .quick button { flex: none; font-size: 11.5px; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--line); color: var(--ink-2); }
+.ask .quick button:hover { color: var(--accent-ink); border-color: var(--accent-line); background: var(--accent-bg); }
+.ask .box { border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; }
+.ask .row1 { display: flex; align-items: center; gap: 6px; }
+.ask .pin { font-size: 11.5px; color: var(--accent-ink); background: var(--accent-bg); border-radius: 5px; padding: 1px 6px; white-space: nowrap; }
+.ask input { flex: 1; min-width: 0; border: 0; outline: none; background: none; font: inherit; font-size: 13.5px; color: var(--ink); }
+.ask input::placeholder { color: var(--faint); }
+.ask .send { width: 28px; height: 28px; border-radius: 7px; background: var(--accent); color: #fff; display: grid; place-items: center; }
+.ask .send svg { width: 14px; height: 14px; }
+.ask .row2 { display: flex; gap: 12px; margin-top: 4px; font-size: 11.5px; color: var(--mute); }
+.ask .row2 .sp { flex: 1; }
+
+/* ---------- 视觉稿控制面板（不属于设计） ---------- */
+.mock { position: fixed; left: 14px; bottom: 14px; z-index: 50; width: 300px; background: rgba(22,24,29,.94); color: #E8EAF0; border-radius: 12px; padding: 12px 14px; font-size: 12px; line-height: 1.6; box-shadow: 0 10px 40px rgba(0,0,0,.35); }
+.mock.min .body { display: none; }
+.mock h4 { margin: 0; font-size: 12.5px; display: flex; align-items: center; gap: 8px; }
+.mock h4 .sp { flex: 1; }
+.mock h4 button { color: #8A90A0; font-size: 11px; }
+.mock .grp { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+.mock .grp button { padding: 3px 9px; border-radius: 6px; background: rgba(255,255,255,.08); color: #C0C4CF; }
+.mock .grp button.on { background: #CF3F6B; color: #fff; }
+.mock .cmp { margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.12); }
+.mock .cmp div { display: flex; justify-content: space-between; }
+.mock .cmp b { font-family: "JetBrains Mono", monospace; font-weight: 500; }
+.mock .cmp .now b { color: #F79BBA; }
+.mock ul { margin: 8px 0 0; padding-left: 16px; color: #A0A5B3; }
+</style>
+</head>
+<body>
+
+<div class="page" id="page">
+  <header class="top">
+    <button class="back" title="回到视频详情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg></button>
+    <b>2026-09-23【瞭望】创新药激战——全球肿瘤药物，即将进入“中国时代”</b>
+    <span class="sub">温竣岩 · 3:11:32</span>
+    <span class="sp"></span>
+    <span class="keys"><kbd>空格</kbd>播放<kbd>Q</kbd>提问<kbd>T</kbd>转写<kbd>F</kbd>影院</span>
+  </header>
+
+  <main class="stage" id="stage">
+    <div class="vcol" id="vcol">
+      <div class="vwrap paused" id="vwrap">
+        <div class="screen"><div class="box"></div><div class="pen"></div><div class="phone"></div><span class="wm">温竣岩 bilibili</span><span class="burn">包括全球药王 阿达木单抗</span></div>
+        <div class="chapchip"><span class="n">9/21</span><b>CHO细胞与CXO产业</b></div>
+        <div class="ctrl">
+          <div class="bar"><i style="width:26%"></i></div>
+          <span class="ib"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg></span>
+          <span class="mono">49:52 / 3:11:31</span>
+          <span class="sp"></span>
+          <span class="rate mono">1.25×</span>
+          <span class="ib"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H2v6h4l5 4zM15.5 8.5a5 5 0 0 1 0 7"/></svg></span>
+          <span class="ib"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></span>
+        </div>
+        <span class="size" id="size"></span>
+      </div>
+      <div class="tl" id="tl"></div>
+    </div>
+    <section class="chap" id="chap"></section>
+  </main>
+
+  <aside class="side" id="side">
+    <div class="tabs">
+      <button class="t on" data-tab="ask">问<span class="n">2</span></button>
+      <button class="t" data-tab="sheet">底稿</button>
+      <button class="t" data-tab="tx">转写</button>
+      <span class="sp"></span>
+      <button class="iconbtn closer" id="closeDrawer" title="收起（Esc），视频不动"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+      <button class="iconbtn" id="toCinema" title="收起侧栏，影院模式（F）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg></button>
+    </div>
+
+    <div class="pane on" id="pane-ask">
+      <div class="turn">
+        <div class="q"><span class="at"><button class="tcl">14:02</button>第 3 章</span><div class="bubble">PFS 和 OS 有什么区别？为什么只看 PFS 不行？</div></div>
+      </div>
+      <div class="turn">
+        <div class="q"><span class="at"><button class="tcl">49:52</button>第 9 章</span><div class="bubble">他说 CHO 细胞起源于中国，中国却没法拥有，具体卡在哪？</div></div>
+        <div class="a">
+          <div class="blk v"><div class="bh">视频里说</div>
+            <ul>
+              <li>中国研究机构能提取、培育 CHO 细胞，但做不到发现和建立细胞株，也没法大规模培养 <button class="tcl">58:23</button></li>
+              <li>细胞株的授权分研究、临床、商业生产几个阶段，条款很复杂，拿不到授权就只能用别人的 <button class="tcl">53:29</button></li>
+            </ul>
+          </div>
+          <div class="blk b"><div class="bh"><span class="tagl">模型知识 · 未核实</span>背景补充</div>
+            <ul>
+              <li>「有细胞」和「有可商用的细胞株」是两回事：后者要经过克隆筛选、稳定性验证、建库和完整的溯源文件，监管审评会查这些。</li>
+              <li>所以卡点更像是工程化和配套体系，而不是生物材料本身。这也是视频把话题引到 CXO 的原因。</li>
+            </ul>
+          </div>
+          <div class="afoot mono">输入 54.1k（缓存命中 51.9k）· 输出 612</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pane" id="pane-sheet"></div>
+    <div class="pane" id="pane-tx"></div>
+
+    <div class="ask">
+      <div class="quick"><button>这里在说什么</button><button>为什么</button><button>和前面矛盾吗</button><button>举个例子</button></div>
+      <div class="box">
+        <div class="row1">
+          <span class="pin">📍 49:52 · 第 9 章</span>
+          <input placeholder="卡住了？直接问…">
+          <button class="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+        </div>
+        <div class="row2"><span>○ 联网</span><span>○ 防剧透</span><span class="sp"></span><span class="mono">约 54k tok · 多数命中缓存</span></div>
+      </div>
+    </div>
+  </aside>
+
+  <nav class="rail" id="rail">
+    <button data-open="ask" title="问（Q）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span class="dot">2</span></button>
+    <button data-open="sheet" title="底稿"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19.5V5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-1.5zM8 7h6M8 11h6"/></svg></button>
+    <button data-open="tx" title="转写（T）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 10h16M4 14h10M4 18h7"/></svg></button>
+    <hr>
+    <button id="fromCinema" title="展开侧栏（F）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/></svg></button>
+  </nav>
+</div>
+
+<div class="mock" id="mock">
+  <h4>视觉稿控制（不属于设计）<span class="sp"></span><button id="mockMin">收起</button></h4>
+  <div class="body">
+    <div class="grp" id="gOrient"><button class="on" data-v="land">横屏视频</button><button data-v="port">竖屏录屏</button></div>
+    <div class="grp" id="gMode"><button class="on" data-v="side">A 标准：侧栏常驻</button><button data-v="cinema">B 影院：侧栏按需浮出</button></div>
+    <div class="grp" id="gTab"><button class="on" data-v="ask">侧栏：问</button><button data-v="sheet">底稿</button><button data-v="tx">转写</button></div>
+    <div class="cmp">
+      <div class="now"><span>当前看到的视频</span><b id="cNow">—</b></div>
+      <div><span>A 标准（侧栏常驻）</span><b id="cA">—</b></div>
+      <div><span>B 影院（侧栏浮出）</span><b id="cB">—</b></div>
+      <div><span>现在的专注模式</span><b id="cFocus">—</b></div>
+      <div><span>一开始（转写常驻）</span><b id="cOld">—</b></div>
+    </div>
+    <ul>
+      <li>侧栏只有一个：问 / 底稿 / 转写三个标签，提问框常驻底部</li>
+      <li>A：视频下面的宽矮空间给本章卡，横排论点 | 证据 | 结论</li>
+      <li>B：侧栏收成右边一条图标；按 Q 或点图标从右边浮出、盖在视频上，Esc 收回，视频大小不变；本章卡压成一行，点「展开论证」浮出</li>
+      <li>16:10 屏幕上只要侧栏常驻，视频宽度就被卡在 ~1050；要更大只能让侧栏浮出</li>
+      <li>竖屏录屏按高度撑满，A/B 差别不大</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+const CH = [
+  [0, "癌症与药物研发之难"], [412, "专利制度与药王陨落"], [635, "肿瘤药临床试验的残酷"], [843, "癌症的基因突变机制"],
+  [1227, "氮芥开启化疗时代"], [1418, "化疗奠基与联合化疗"], [1818, "焦土时期"], [2018, "靶向时代与单抗"],
+  [2712, "CHO细胞与CXO产业"], [3571, "中国医药业与CXO萌芽"], [4025, "GLP与CXO制度化"], [4412, "722寒冬与药审改革"],
+  [4930, "MNC陨落与专利悬崖"], [5545, "免疫时代：CTLA-4与PD-1"], [6209, "PD-1四小龙与价格战"], [7143, "工程化时代：ADC"],
+  [8477, "中国ADC与License out"], [9493, "CXO地缘政治风险"], [10235, "ADC拉动CXO未来"], [10769, "专利悬崖窗口期"], [10954, "板凳之变与使命"],
+];
+const DUR = 11492, NOW = 2992, CUR = 8;
+const fmt = s => { s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : String(m).padStart(2, "0")) + ":" + String(x).padStart(2, "0"); };
+const $ = s => document.querySelector(s);
+let orient = "land";
+
+function chapHTML() {
+  return `
+  <div class="head">
+    <span class="no">第 9/21 章</span>
+    <h3>CHO细胞与CXO产业</h3>
+    <span class="tm">45:12 – 59:31 · 已看 33%</span>
+    <div class="pg"><i style="width:33%"></i></div>
+    <div class="nav"><button>‹ 上一章</button><button>下一章 ›</button></div>
+  </div>
+  <div class="claimc"><span class="k">论点</span><p>中国仓鼠卵巢细胞（CHO）成为全球生物制药的核心细胞，但中国因缺乏完整的 CXO 配套而长期受制；CXO 是医药产业的公共基础设施。</p></div>
+  <div class="ev"><span class="k">证据</span><ul>
+    <li>1957 年美国培育出 CHO 细胞系，能无限生长、糖基化接近人类 <button class="tcl">47:36</button></li>
+    <li>2019 年全球十大畅销药里六种由 CHO 生产，2024 年重组蛋白药 70% 由 CHO 生产 <button class="tcl">49:52</button></li>
+    <li>CXO 覆盖研发、生产到商业化的外包服务，分 CRO、CMO、CSO <button class="tcl">54:52</button></li>
+    <li>中国能提取培育 CHO，但做不到建立细胞株和大规模培养 <button class="tcl">58:23</button></li>
+  </ul></div>
+  <div class="con"><span class="k">结论</span><p>CXO 是围绕药企展开的庞大系统，一个国家的 CXO 就是这个国家的药业基石。</p>
+    <div class="next">下一章 · <span class="mono">59:31</span> <b>中国医药业与CXO萌芽</b></div></div>
+  <div class="more">展开论证 ›</div>`;
+}
+
+function tlHTML(w) {
+  let h = "";
+  CH.forEach(([s], i) => {
+    const e = i + 1 < CH.length ? CH[i + 1][0] : DUR;
+    const cls = i < CUR ? "done" : i === CUR ? "cur" : "";
+    h += `<div class="seg ${cls}" title="${i + 1}. ${CH[i][1]}" style="left:${s / DUR * 100}%;width:calc(${(e - s) / DUR * 100}% - 2px)"></div>`;
+  });
+  const mid = (CH[CUR][0] + CH[CUR + 1][0]) / 2;
+  h += `<span class="lbl" style="left:${mid / DUR * 100}%">9 · ${CH[CUR][1]}</span>`;
+  h += `<div class="head" style="left:${NOW / DUR * 100}%"></div>`;
+  [842, 2992].forEach(q => h += `<div class="q" style="left:${q / DUR * 100}%"></div>`);
+  h += `<div class="tip" id="tltip" style="left:50%">悬停看章节名，点击跳转</div>`;
+  return h;
+}
+
+function sheetHTML() {
+  const pre = [["新药研发的基本流程", 1], ["专利与仿制药", 1], ["临床试验分期与终点指标", 0], ["癌基因与抑癌基因", 0], ["化疗、靶向与免疫治疗", 0], ["单克隆抗体", 0]];
+  return `<div class="sec">看之前 · 前置知识<span class="r">已懂 2/10</span></div>` +
+    pre.map(([t, k]) => `<div class="pre ${k ? "k" : ""}"><span class="chk"></span><span>${t}</span></div>`).join("") +
+    `<div class="sec">章节<span class="r">21 章 · 点击跳转，▸ 展开论证</span></div>` +
+    CH.map(([s, t], i) => `<div class="chl ${i < CUR ? "done" : i === CUR ? "cur" : ""}"><span class="tm">${fmt(s)}</span><span>${i + 1}. ${t}</span></div>`).join("") +
+    `<div class="sec">术语<span class="r">47 条</span></div>
+    <div class="gi"><b>CHO</b><span class="en">Chinese Hamster Ovary</span><br>视频里：中国仓鼠卵巢细胞，全球生物药生产的主力细胞 <button class="tcl">47:36</button></div>
+    <div class="gi"><b>CXO</b><span class="en">CRO / CMO / CSO</span><br>视频里：医药外包服务的统称，覆盖研发到商业化 <button class="tcl">54:52</button></div>`;
+}
+
+function txHTML() {
+  const ps = [
+    [2903, "所以你看，这个细胞是中国人找到的、命名里带着中国两个字，但真正把它变成工业的是别人。"],
+    [2992, "到2024年，全球重组蛋白药物中70%由<span class=term>CHO</span>细胞生产。包括全球药王阿达木单抗、黄金救命药人血白蛋白，培育为软黄金的重组胶原蛋白。疫情期间的重组新冠疫苗也均为<span class=term>CHO</span>细胞生产。"],
+    [3078, "以<span class=term>CHO</span>细胞为例。研发机构要购买细胞进行试验，需要的不仅是细胞株，还要选择细胞株的开发平台、筛选技术等。"],
+    [3292, "这就引出了一个概念，<span class=term>CXO</span>。它是围绕药企展开的医药外包服务组织，分为 CRO、CMO 和 CSO。"],
+  ];
+  return `<div class="txhd">跟随播放 · 术语标虚线<span class="sp"></span><button id="wideBtn">加宽阅读 ⇔</button></div>` +
+    ps.map(([s, t]) => `<div class="para ${s === 2992 ? "on" : ""}"><span class="tc">${fmt(s)}</span><p>${t}</p></div>`).join("");
+}
+
+function fit() {
+  const stage = $("#stage"), vw = $("#vwrap"), tl = $("#tl"), chap = $("#chap");
+  const cs = getComputedStyle(stage);
+  const W = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const H = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  let w, h;
+  const cinema = $("#page").classList.contains("cinema");
+  if (orient === "land") {
+    const ar = 16 / 9, tlH = 26 + 8, minCard = cinema ? 40 : 150, gap = 8;
+    w = Math.min(W, (H - tlH - minCard - gap) * ar);
+    h = w / ar;
+    const rest = H - h - tlH - gap;
+    chap.classList.toggle("thin", cinema || rest < 120);
+    chap.style.width = w + "px";
+  } else {
+    const ar = 720 / 1584, tlH = 26 + 6;
+    h = H - tlH; w = h * ar;
+    chap.classList.remove("thin");
+    chap.style.width = "";
+  }
+  w = Math.floor(w); h = Math.floor(h);
+  vw.style.width = w + "px"; vw.style.height = h + "px"; tl.style.width = w + "px";
+  $("#size").textContent = `视频 ${w}×${h}`;
+  $("#cNow").textContent = `${w}×${h}`;
+  // 同一屏幕下 A / B 两种模式的视频尺寸
+  const vh = innerHeight, vw0 = innerWidth;
+  if (orient === "land") {
+    const H0 = vh - 36 - 24, aW = Math.min(vw0 - 360 - 28, (H0 - 34 - 150 - 8) * 16 / 9), bW = Math.min(vw0 - 44 - 28, (H0 - 34 - 40 - 8) * 16 / 9);
+    $("#cA").textContent = `${Math.floor(aW)}×${Math.floor(aW * 9 / 16)}`;
+    $("#cB").textContent = `${Math.floor(bW)}×${Math.floor(bW * 9 / 16)}`;
+  } else {
+    const ph = vh - 36 - 24 - 32, pw = Math.floor(ph * 720 / 1584);
+    $("#cA").textContent = $("#cB").textContent = `${pw}×${Math.floor(ph)}`;
+  }
+  // 对照：同一屏幕下现在实现的两种布局（按当前代码的公式估算）
+  const panel = 440;
+  if (orient === "land") {
+    const col = innerWidth - panel - 32;
+    const fw = Math.min(col, (vh - 360) * 16 / 9);
+    $("#cFocus").textContent = `${Math.round(fw)}×${Math.round(fw * 9 / 16)}`;
+    const ow = Math.min(col - 300, vh * 0.56 * 16 / 9);
+    $("#cOld").textContent = `${Math.round(ow)}×${Math.round(ow * 9 / 16)}`;
+  } else {
+    const ph = vh - 88, pw = Math.min(innerWidth * .36, ph * 720 / 1584);
+    $("#cFocus").textContent = `${Math.round(pw)}×${Math.round(pw * 1584 / 720)}`;
+    $("#cOld").textContent = $("#cFocus").textContent;
+  }
+}
+
+function render() {
+  const stage = $("#stage"), vcol = $("#vcol");
+  stage.classList.toggle("port", orient === "port");
+  $("#vwrap").parentElement.parentElement.classList.toggle("port", orient === "port");
+  document.body.classList.toggle("port", orient === "port");
+  $("#chap").innerHTML = chapHTML();
+  $("#tl").innerHTML = tlHTML();
+  $("#pane-sheet").innerHTML = sheetHTML();
+  $("#pane-tx").innerHTML = txHTML();
+  const wb = $("#wideBtn"); if (wb) wb.onclick = () => { document.body.classList.toggle("wide"); setTimeout(fit, 0); };
+  requestAnimationFrame(fit);
+}
+document.body.classList.toggle("port", false);
+
+function setTab(t) {
+  document.querySelectorAll(".tabs .t").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
+  document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === "pane-" + t));
+  document.querySelectorAll("#gTab button").forEach(b => b.classList.toggle("on", b.dataset.v === t));
+}
+function setDrawer(tab) {
+  const page = $("#page");
+  if (!tab) { page.classList.remove("drawer"); document.querySelectorAll(".rail [data-open]").forEach(b => b.classList.remove("on")); return; }
+  setTab(tab);
+  page.classList.add("drawer");
+  document.querySelectorAll(".rail [data-open]").forEach(b => b.classList.toggle("on", b.dataset.open === tab));
+}
+function setCinema(on) {
+  $("#page").classList.toggle("cinema", on);
+  if (!on) $("#page").classList.remove("drawer");
+  document.querySelectorAll("#gMode button").forEach(b => b.classList.toggle("on", b.dataset.v === (on ? "cinema" : "side")));
+  requestAnimationFrame(fit);
+}
+document.querySelectorAll(".tabs .t").forEach(b => b.onclick = () => setTab(b.dataset.tab));
+$("#toCinema").onclick = () => setCinema(true);
+$("#fromCinema").onclick = () => setCinema(false);
+document.querySelectorAll(".rail [data-open]").forEach(b => b.onclick = () => {
+  const open = $("#page").classList.contains("drawer") && b.classList.contains("on");
+  setDrawer(open ? null : b.dataset.open);
+});
+$("#closeDrawer").onclick = () => setDrawer(null);
+$("#chap").addEventListener("click", e => { if (e.target.closest(".more")) { setDrawer("sheet"); } });
+document.querySelectorAll("#gOrient button").forEach(b => b.onclick = () => {
+  orient = b.dataset.v; document.querySelectorAll("#gOrient button").forEach(x => x.classList.toggle("on", x === b)); render(); });
+document.querySelectorAll("#gMode button").forEach(b => b.onclick = () => setCinema(b.dataset.v === "cinema"));
+document.querySelectorAll("#gTab button").forEach(b => b.onclick = () => {
+  if ($("#page").classList.contains("cinema")) setDrawer(b.dataset.v); else setTab(b.dataset.v); });
+$("#mockMin").onclick = () => { $("#mock").classList.toggle("min"); $("#mockMin").textContent = $("#mock").classList.contains("min") ? "展开" : "收起"; };
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input")) return;
+  if (e.key === "f" || e.key === "F") setCinema(!$("#page").classList.contains("cinema"));
+  const cin = $("#page").classList.contains("cinema");
+  if (e.key === "q" || e.key === "Q") { e.preventDefault(); if (cin) setDrawer("ask"); else setTab("ask"); $(".ask input").focus(); }
+  if (e.key === "t" || e.key === "T") { if (cin) setDrawer("tx"); else setTab("tx"); }
+  if (e.key === "Escape") setDrawer(null);
+});
+$("#tl").addEventListener("mousemove", e => {
+  const r = $("#tl").getBoundingClientRect(), x = e.clientX - r.left, s = x / r.width * DUR;
+  let i = 0; CH.forEach(([st], k) => { if (s >= st) i = k; });
+  const tip = $("#tltip"); if (tip) { tip.style.left = x + "px"; tip.textContent = `${fmt(s)} · ${i + 1}. ${CH[i][1]}`; }
+});
+addEventListener("resize", fit);
+render();
+</script>
+</body>
+</html>
