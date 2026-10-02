@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>伴读模式 · 拾光笺 v0.9 视觉稿</title>
+<style>
+/* 设计 token 与 frontend/src/index.css 一致 */
+:root {
+  --bg: #F3F4F6; --surface: #FFFFFF; --surface-2: #F8F9FB; --line: #E4E6EB; --line-2: #EEF0F3;
+  --ink: #16181D; --ink-2: #4B5060; --mute: #6E7382; --faint: #A0A5B3;
+  --accent: #CF3F6B; --accent-ink: #B8315B; --accent-bg: #FCEEF3; --accent-line: #F4C9D7;
+  --ok: #1E9A63; --ok-bg: #E6F6EE; --warn: #D8890E; --warn-bg: #FDF3E1; --info: #3B6FD8; --info-bg: #EAF0FC;
+  --bad: #D2413F; --bad-bg: #FDECEC;
+  --shadow: 0 1px 2px rgba(20,22,30,.06), 0 4px 16px rgba(20,22,30,.05);
+}
+:root[data-theme="dark"] {
+  --bg: #0E1014; --surface: #161920; --surface-2: #1C2029; --line: #262A34; --line-2: #20242D;
+  --ink: #E8EAF0; --ink-2: #C0C4CF; --mute: #8A90A0; --faint: #5C6272;
+  --accent: #F27CA3; --accent-ink: #F79BBA; --accent-bg: #2A1A21; --accent-line: #4A2735;
+  --ok: #3FBF84; --ok-bg: #17302A; --warn: #E9A23B; --warn-bg: #33291A; --info: #7AA2F0; --info-bg: #1B2538;
+  --bad: #F07070; --bad-bg: #331C1C;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E1014; --surface: #161920; --surface-2: #1C2029; --line: #262A34; --line-2: #20242D;
+    --ink: #E8EAF0; --ink-2: #C0C4CF; --mute: #8A90A0; --faint: #5C6272;
+    --accent: #F27CA3; --accent-ink: #F79BBA; --accent-bg: #2A1A21; --accent-line: #4A2735;
+    --ok: #3FBF84; --ok-bg: #17302A; --warn: #E9A23B; --warn-bg: #33291A; --info: #7AA2F0; --info-bg: #1B2538;
+    --bad: #F07070; --bad-bg: #331C1C;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.55 "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+.mono { font-family: "JetBrains Mono", ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, h3 { margin: 0; font-weight: 600; }
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+svg { flex: none; }
+
+/* ---------- 视觉稿说明条 ---------- */
+.mocknote { background: var(--info-bg); color: var(--info); font-size: 12px; padding: 6px 16px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.mocknote b { font-weight: 600; }
+.mocknote .sp { flex: 1; }
+.mocknote button { text-decoration: underline; text-underline-offset: 2px; }
+
+/* ---------- 壳 ---------- */
+.app { display: flex; flex-direction: column; height: calc(100vh - 30px); }
+.dhead { flex: none; padding: 12px 20px 12px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 14px; }
+.iconbtn { width: 32px; height: 32px; border-radius: 7px; display: grid; place-items: center; color: var(--mute); }
+.iconbtn:hover { background: var(--surface-2); color: var(--ink); }
+.iconbtn svg { width: 17px; height: 17px; }
+.dhead .tt { min-width: 0; flex: 1; }
+.dhead h1 { font-size: 16px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta { display: flex; align-items: center; gap: 8px; color: var(--mute); font-size: 12.5px; margin-top: 2px; flex-wrap: wrap; }
+.meta .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--faint); }
+.av { width: 18px; height: 18px; border-radius: 50%; background: linear-gradient(135deg, #8FB3F5, #3B6FD8); display: inline-grid; place-items: center; font-size: 10px; color: #fff; font-weight: 600; }
+.seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 3px; gap: 2px; flex: none; }
+.seg button { height: 26px; padding: 0 12px; border-radius: 5px; font-size: 13px; color: var(--mute); display: inline-flex; align-items: center; gap: 6px; }
+.seg button:hover { color: var(--ink); }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.08); font-weight: 500; }
+.seg.sm button { height: 24px; padding: 0 10px; font-size: 12.5px; }
+.badge { font-size: 10.5px; padding: 1px 6px; border-radius: 4px; background: var(--accent-bg); color: var(--accent-ink); font-weight: 500; }
+.badge.gray { background: var(--surface-2); color: var(--mute); border: 1px solid var(--line); }
+.cost { font-size: 12px; color: var(--mute); white-space: nowrap; }
+
+.main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 440px; }
+
+/* ---------- 左：播放 + 转写 ---------- */
+.left { display: flex; flex-direction: column; min-height: 0; padding: 16px 20px 0; gap: 12px; }
+.player { flex: none; background: #0B0C10; border-radius: 10px; overflow: hidden; position: relative; box-shadow: var(--shadow); }
+.screen { aspect-ratio: 16/9; max-height: 42vh; width: 100%; position: relative; display: grid; place-items: center;
+  background: radial-gradient(ellipse at 30% 35%, #2A3346 0%, #12151C 55%, #0B0C10 100%); cursor: pointer; }
+.screen .host { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); width: 26%; aspect-ratio: 1/1.1; }
+.screen .host::before { content: ""; position: absolute; left: 50%; top: 4%; width: 36%; aspect-ratio: 1; transform: translateX(-50%); border-radius: 50%; background: #3A4256; }
+.screen .host::after { content: ""; position: absolute; left: 50%; bottom: 0; width: 100%; height: 54%; transform: translateX(-50%); border-radius: 48% 48% 0 0; background: #323A4D; }
+.screen .board { position: absolute; left: 6%; top: 10%; width: 32%; border-left: 3px solid #CF3F6B; padding: 8px 12px; color: #C9CFDB; font-size: 13px; line-height: 1.6; background: rgba(255,255,255,.03); }
+.screen .board b { display: block; color: #fff; font-size: 15px; margin-bottom: 4px; font-weight: 600; }
+.screen .bigplay { width: 58px; height: 58px; border-radius: 50%; background: rgba(255,255,255,.14); display: grid; place-items: center; backdrop-filter: blur(4px); transition: opacity .2s; z-index: 1; }
+.screen .bigplay svg { width: 22px; height: 22px; color: #fff; margin-left: 3px; }
+.player.playing .bigplay { opacity: 0; }
+.sub { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); max-width: 82%; text-align: center; color: #fff; font-size: 15px; line-height: 1.5;
+  background: rgba(0,0,0,.62); padding: 4px 12px; border-radius: 6px; z-index: 1; }
+.ctrl { display: flex; align-items: center; gap: 10px; padding: 8px 12px 10px; color: #D5D9E2; background: #0B0C10; }
+.ctrl .ib { width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; color: #D5D9E2; }
+.ctrl .ib:hover { background: rgba(255,255,255,.08); }
+.ctrl .ib svg { width: 16px; height: 16px; }
+.ctrl .time { font-size: 12px; color: #9AA1B0; white-space: nowrap; }
+.ctrl .time b { color: #fff; font-weight: 500; }
+.ctrl .sp { flex: 1; }
+.ctrl .rate { font-size: 12px; padding: 2px 7px; border-radius: 5px; border: 1px solid #333A48; color: #C0C6D2; }
+.bar { position: relative; height: 18px; margin: 0 12px; cursor: pointer; background: #0B0C10; }
+.bar .track { position: absolute; left: 0; right: 0; top: 7px; height: 4px; background: #2A2F3B; border-radius: 2px; }
+.bar .fill { position: absolute; left: 0; top: 7px; height: 4px; background: var(--accent); border-radius: 2px; }
+.bar .knob { position: absolute; top: 3px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transform: translateX(-6px); box-shadow: 0 0 0 3px rgba(207,63,107,.35); }
+.bar .tick { position: absolute; top: 5px; width: 2px; height: 8px; background: #0B0C10; }
+.bar .qdot { position: absolute; top: -1px; width: 6px; height: 6px; border-radius: 50%; background: #7AA2F0; transform: translateX(-3px); }
+.bar .tip { position: absolute; bottom: 20px; transform: translateX(-50%); background: #1C2029; color: #E8EAF0; font-size: 12px; padding: 4px 8px; border-radius: 6px; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .12s; }
+.bar:hover .tip { opacity: 1; }
+
+.chap { flex: none; display: flex; gap: 12px; align-items: flex-start; padding: 10px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.chap .no { font-size: 11px; color: var(--accent-ink); background: var(--accent-bg); border-radius: 5px; padding: 2px 7px; white-space: nowrap; font-weight: 500; margin-top: 1px; }
+.chap .body { flex: 1; min-width: 0; }
+.chap .t { font-weight: 600; font-size: 14px; }
+.chap .claim { color: var(--ink-2); font-size: 13px; margin-top: 2px; }
+.chap .claim .k { color: var(--mute); }
+.chap .pg { height: 3px; background: var(--line-2); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+.chap .pg i { display: block; height: 100%; background: var(--accent); }
+.chap .nav { display: flex; gap: 2px; }
+
+.tx { position: relative; flex: 1; min-height: 0; overflow: auto; padding: 4px 4px 24px 0; }
+.tx .hd { position: sticky; top: 0; background: var(--bg); padding: 4px 0 8px; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--mute); z-index: 1; }
+.tx .hd .sp { flex: 1; }
+.tx .hd label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.para { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 12px; padding: 8px 8px; margin: 0 -8px; border-radius: 8px; transition: background .15s; }
+.para:hover { background: var(--surface); }
+.para .tc { font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--faint); padding-top: 3px; text-align: left; border-radius: 4px; align-self: start; }
+.para .tc:hover { color: var(--accent-ink); }
+.para p { margin: 0; font-size: 14.5px; line-height: 1.85; color: var(--ink-2); max-width: 64ch; }
+.para.playing { background: var(--surface); box-shadow: inset 3px 0 0 var(--accent); }
+.para.playing .tc { color: var(--accent-ink); font-weight: 600; }
+.para.playing p { color: var(--ink); }
+.para.future p { color: var(--mute); }
+.chapline { display: flex; align-items: center; gap: 8px; margin: 14px 0 6px; font-size: 12px; color: var(--mute); }
+.chapline::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.chapline b { color: var(--ink-2); font-weight: 600; }
+.term { border-bottom: 1.5px dotted var(--info); cursor: help; position: relative; color: inherit; }
+.term:hover { background: var(--info-bg); border-radius: 2px; }
+.pop { position: fixed; z-index: 20; width: 300px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 12px 14px; font-size: 13px; display: none; }
+.pop.on { display: block; }
+.pop h4 { margin: 0 0 6px; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+.pop .src { font-size: 11px; color: var(--mute); margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.pop .lbl { font-size: 11px; color: var(--mute); margin: 8px 0 2px; }
+.pop .lbl:first-of-type { margin-top: 0; }
+
+/* ---------- 右：面板 ---------- */
+.right { border-left: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+.tabs { flex: none; display: flex; gap: 2px; padding: 10px 14px 0; border-bottom: 1px solid var(--line); }
+.tabs button { padding: 8px 12px 10px; font-size: 13.5px; color: var(--mute); border-bottom: 2px solid transparent; margin-bottom: -1px; display: inline-flex; gap: 6px; align-items: center; }
+.tabs button:hover { color: var(--ink); }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 500; }
+.tabs .n { font-size: 11px; color: var(--faint); }
+.pane { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 20px; display: none; }
+.pane.on { display: block; }
+.sec { font-size: 11px; letter-spacing: .08em; color: var(--faint); margin: 18px 0 8px; display: flex; align-items: center; gap: 8px; }
+.sec:first-child { margin-top: 2px; }
+.sec .sp { flex: 1; }
+.sec .r { letter-spacing: 0; font-size: 11.5px; color: var(--mute); }
+
+.genbar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--mute); padding: 8px 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; }
+.genbar .ok { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.genbar .sp { flex: 1; }
+.lnk { color: var(--accent-ink); font-size: 12px; }
+.lnk:hover { text-decoration: underline; }
+.tcl { font-family: "JetBrains Mono", monospace; font-size: 11.5px; color: var(--accent-ink); background: var(--accent-bg); border-radius: 4px; padding: 0 4px; cursor: pointer; white-space: nowrap; }
+.tcl:hover { filter: brightness(.95); text-decoration: underline; }
+
+.pre { display: grid; gap: 6px; }
+.pre details { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.pre summary { list-style: none; cursor: pointer; padding: 8px 10px; display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 500; }
+.pre summary::-webkit-details-marker { display: none; }
+.pre summary .chk { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--faint); flex: none; display: grid; place-items: center; }
+.pre details.known summary .chk { background: var(--ok); border-color: var(--ok); }
+.pre details.known summary .chk::after { content: ""; width: 7px; height: 4px; border: 2px solid #fff; border-top: 0; border-right: 0; transform: rotate(-45deg) translate(1px,-1px); }
+.pre details.known summary .nm { color: var(--mute); }
+.pre summary .hint { margin-left: auto; font-size: 11.5px; color: var(--faint); font-weight: 400; }
+.pre .d { padding: 0 10px 10px 34px; font-size: 13px; color: var(--ink-2); line-height: 1.7; }
+
+.chs { display: grid; gap: 2px; }
+.ch { border-radius: 8px; padding: 7px 8px; display: grid; grid-template-columns: 44px 1fr; gap: 8px; cursor: pointer; }
+.ch:hover { background: var(--surface-2); }
+.ch .tm { font-family: "JetBrains Mono", monospace; font-size: 11.5px; color: var(--faint); padding-top: 2px; }
+.ch .nm { font-size: 13.5px; color: var(--ink-2); }
+.ch.done .nm { color: var(--mute); }
+.ch.cur { background: var(--accent-bg); }
+.ch.cur .nm { color: var(--accent-ink); font-weight: 600; }
+.ch.cur .tm { color: var(--accent-ink); }
+.arg { grid-column: 2; margin-top: 6px; display: grid; gap: 0; }
+.arg .st { display: grid; grid-template-columns: 34px 1fr; gap: 6px; font-size: 12.5px; line-height: 1.65; color: var(--ink-2); padding: 4px 0; position: relative; }
+.arg .st .k { font-size: 11px; color: var(--accent-ink); font-weight: 600; padding-top: 1px; }
+.arg .st + .st { border-top: 1px dashed var(--accent-line); }
+.arg ul { margin: 0; padding-left: 14px; }
+
+.gl { display: grid; gap: 8px; }
+.gi { border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
+.gi .h { display: flex; align-items: baseline; gap: 8px; }
+.gi .h b { font-size: 13.5px; }
+.gi .h .en { font-size: 11.5px; color: var(--mute); }
+.gi .h .cnt { margin-left: auto; font-size: 11px; color: var(--faint); }
+.gi .v, .gi .bg { font-size: 12.5px; line-height: 1.65; margin-top: 6px; }
+.gi .v { color: var(--ink-2); }
+.gi .bg { color: var(--ink-2); border: 1px dashed var(--line); background: var(--surface-2); border-radius: 6px; padding: 6px 8px; }
+.tagl { display: inline-block; font-size: 10.5px; font-weight: 600; padding: 0 5px; border-radius: 3px; margin-right: 6px; vertical-align: 1px; }
+.tagl.video { background: var(--accent-bg); color: var(--accent-ink); }
+.tagl.bg { background: var(--info-bg); color: var(--info); }
+.tagl.web { background: var(--ok-bg); color: var(--ok); }
+.tagl.unv { background: var(--warn-bg); color: var(--warn); }
+
+.claims { display: grid; gap: 6px; }
+.cl { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; font-size: 12.5px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; line-height: 1.6; color: var(--ink-2); }
+.cl .f { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+.chipx { font-size: 10.5px; padding: 0 6px; border-radius: 4px; background: var(--surface-2); border: 1px solid var(--line); color: var(--mute); }
+.chipx.warn { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-weight: 500; font-size: 12.5px; white-space: nowrap; }
+.btn:hover { background: var(--surface-2); }
+.btn.sm { height: 24px; padding: 0 8px; font-size: 12px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { filter: brightness(.95); }
+.btn svg { width: 13px; height: 13px; }
+.later { opacity: .62; }
+.later .sec .badge { opacity: 1; }
+
+/* 问 */
+.qa { display: flex; flex-direction: column; gap: 16px; }
+.turn .q { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.turn .q .at { font-size: 11px; color: var(--mute); display: flex; gap: 6px; align-items: center; }
+.turn .q .bubble { background: var(--accent-bg); color: var(--ink); border-radius: 12px 12px 3px 12px; padding: 8px 12px; font-size: 13.5px; max-width: 88%; line-height: 1.6; }
+.turn .a { margin-top: 10px; font-size: 13.5px; line-height: 1.75; color: var(--ink); }
+.blk { margin-top: 8px; }
+.blk .bh { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+.blk.v .bh { color: var(--accent-ink); }
+.blk.b { border: 1px dashed var(--info); border-radius: 8px; padding: 8px 10px 6px; background: var(--info-bg); background: color-mix(in srgb, var(--info-bg) 55%, transparent); }
+.blk.b .bh { color: var(--info); }
+.blk ul { margin: 0; padding-left: 18px; }
+.blk li { margin: 3px 0; }
+.blk .srcs { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; padding-top: 6px; border-top: 1px dashed color-mix(in srgb, var(--info) 40%, transparent); font-size: 11.5px; color: var(--mute); }
+.blk .srcs a { color: var(--info); text-decoration: none; }
+.blk .srcs a:hover { text-decoration: underline; }
+.conflict { margin-top: 8px; display: flex; gap: 8px; padding: 7px 10px; border-radius: 8px; background: var(--warn-bg); color: var(--ink-2); font-size: 12.5px; line-height: 1.6; }
+.conflict svg { width: 15px; height: 15px; color: var(--warn); margin-top: 2px; }
+.afoot { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 11.5px; color: var(--faint); }
+.afoot .sp { flex: 1; }
+.turn.collapsed .a { display: none; }
+.turn.collapsed .q .bubble { opacity: .75; }
+.spinner { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--mute); }
+.spinner i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+
+.askbox { flex: none; border-top: 1px solid var(--line); padding: 10px 14px 12px; background: var(--surface); }
+.askbox .quick { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.askbox .quick button { font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); }
+.askbox .quick button:hover { border-color: var(--accent-line); color: var(--accent-ink); background: var(--accent-bg); }
+.askbox .box { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--surface); }
+.askbox .box:focus-within { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-bg); }
+.askbox .pin { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--accent-ink); background: var(--accent-bg); border-radius: 6px; padding: 2px 8px; }
+.askbox .pin svg { width: 12px; height: 12px; }
+.askbox textarea { display: block; width: 100%; border: 0; resize: none; background: none; font: inherit; color: var(--ink); font-size: 13.5px; min-height: 40px; outline: none; margin-top: 6px; }
+.askbox textarea::placeholder { color: var(--faint); }
+.askbox .row { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--mute); }
+.askbox .row .sp { flex: 1; }
+.tg { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.tg .sw { width: 26px; height: 15px; border-radius: 999px; background: var(--line); position: relative; transition: background .15s; }
+.tg .sw::after { content: ""; position: absolute; left: 2px; top: 2px; width: 11px; height: 11px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+.tg.on .sw { background: var(--accent); }
+.tg.on .sw::after { transform: translateX(11px); }
+.send { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); color: #fff; display: grid; place-items: center; }
+.send svg { width: 15px; height: 15px; }
+
+/* 笔记 */
+.notes { display: grid; gap: 8px; }
+.note { border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; font-size: 13px; line-height: 1.65; }
+.note blockquote { margin: 0 0 6px; padding-left: 9px; border-left: 3px solid var(--accent-line); color: var(--mute); font-size: 12.5px; }
+.note .f { display: flex; gap: 8px; align-items: center; margin-top: 6px; font-size: 11.5px; color: var(--faint); }
+
+kbd { font-family: "JetBrains Mono", monospace; font-size: 10.5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--mute); background: var(--surface); }
+.keys { font-size: 11.5px; color: var(--faint); display: flex; gap: 10px; align-items: center; white-space: nowrap; }
+
+@media (max-width: 1080px) {
+  .app { height: auto; }
+  .main { grid-template-columns: minmax(0, 1fr); }
+  .left { padding: 12px 16px 0; }
+  .tx { max-height: 420px; }
+  .right { border-left: 0; border-top: 1px solid var(--line); min-height: 640px; }
+  .keys { display: none; }
+}
+@media (max-width: 640px) {
+  .dhead { flex-wrap: wrap; padding: 10px 16px; }
+  .dhead .tt { flex-basis: calc(100% - 46px); }
+  .cost { display: none; }
+  .screen .board { display: none; }
+  .chap .nav { display: none; }
+  .chap { flex-direction: column; gap: 6px; }
+  .chap .body { width: 100%; }
+  .tx .hd label:first-of-type { display: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="mocknote">
+  <span><b>视觉稿 v0.9 · 伴读模式</b>：数据是虚构的，只用来看布局和交互。能点：播放、进度条、时间码、术语（虚线下划线）、右侧标签页、开关。</span>
+  <span class="sp"></span>
+  <button id="themeBtn">切换深浅色</button>
+</div>
+
+<div class="app">
+  <header class="dhead">
+    <button class="iconbtn" title="返回库" aria-label="返回库"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+    <div class="tt">
+      <h1>创新药出海三年复盘：从 License-out 到 NewCo，中国 Biotech 到底在和谁博弈</h1>
+      <div class="meta"><span class="av">深</span>深水区研究所<span class="dot"></span><span class="mono">2:07:45</span><span class="dot"></span>本地导入<span class="dot"></span>Fun-ASR-Nano · 已纠 23 处专名</div>
+    </div>
+    <span class="keys"><span><kbd>空格</kbd> 播放</span><span><kbd>Q</kbd> 在此处提问</span><span><kbd>M</kbd> 记笔记</span></span>
+    <span class="cost mono" title="这条视频累计花费">累计 ¥0.47</span>
+    <div class="seg" role="group" aria-label="模式">
+      <button aria-pressed="false">速读</button>
+      <button aria-pressed="true">伴读</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <!-- 左：播放 + 本章 + 转写 -->
+    <section class="left">
+      <div class="player" id="player">
+        <div class="screen" id="screen">
+          <div class="board"><b>首付款 / 总包</b>2023：3.1%<br>2024：4.6%<br>2025：5.8%</div>
+          <div class="host"></div>
+          <div class="bigplay"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg></div>
+          <div class="sub" id="sub"></div>
+        </div>
+        <div class="bar" id="bar">
+          <div class="track"></div>
+          <div class="fill" id="fill"></div>
+          <div id="ticks"></div>
+          <div class="knob" id="knob"></div>
+          <div class="tip" id="tip"></div>
+        </div>
+        <div class="ctrl">
+          <button class="ib" id="playBtn" aria-label="播放"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg></button>
+          <button class="ib" id="back5" aria-label="后退 5 秒"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg></button>
+          <span class="time mono"><b id="cur">37:20</b> / 2:07:45</span>
+          <span class="sp"></span>
+          <span class="rate mono">1.25×</span>
+          <button class="ib" aria-label="字幕"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h4M13 15h4M7 11h10"/></svg></button>
+          <button class="ib" aria-label="全屏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+
+      <div class="chap" id="chapCard">
+        <span class="no" id="chapNo">第 3 章</span>
+        <div class="body">
+          <div class="t" id="chapT"></div>
+          <div class="claim" id="chapClaim"></div>
+          <div class="pg"><i id="chapPg"></i></div>
+        </div>
+        <div class="nav">
+          <button class="iconbtn" id="prevCh" title="上一章" aria-label="上一章"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+          <button class="iconbtn" id="nextCh" title="下一章" aria-label="下一章"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg></button>
+        </div>
+      </div>
+
+      <div class="tx" id="tx">
+        <div class="hd">转写 · 跟随播放<span class="sp"></span>
+          <label><input type="checkbox" checked> 标出术语</label>
+          <label><input type="checkbox" checked> 自动滚动</label>
+        </div>
+        <div id="paras"></div>
+      </div>
+    </section>
+
+    <!-- 右：底稿 / 问 / 笔记 -->
+    <aside class="right">
+      <div class="tabs" role="tablist">
+        <button role="tab" data-tab="notes" aria-selected="false">学习底稿</button>
+        <button role="tab" data-tab="ask" aria-selected="true">问 <span class="n">3</span></button>
+        <button role="tab" data-tab="memo" aria-selected="false">笔记 <span class="n">2</span></button>
+      </div>
+
+      <!-- 学习底稿 -->
+      <div class="pane" id="pane-notes">
+        <div class="genbar"><span class="ok"></span>底稿已生成 · DeepSeek · <span class="mono">41.2k tok · ¥0.38</span><span class="sp"></span><button class="lnk">重新生成</button></div>
+
+        <div class="sec">看之前 · 前置知识<span class="sp"></span><span class="r">已懂 2 / 6</span></div>
+        <div class="pre">
+          <details class="known"><summary><span class="chk"></span><span class="nm">临床 I / II / III 期</span><span class="hint">已懂</span></summary><div class="d"><span class="tagl bg">背景</span>新药上市前的三段人体试验。I 期看安全性，II 期初步看疗效、定剂量，III 期大样本确证。越往后越贵、越确定，资产也越值钱。</div></details>
+          <details class="known"><summary><span class="chk"></span><span class="nm">Biotech 与 MNC</span><span class="hint">已懂</span></summary><div class="d"><span class="tagl bg">背景</span>Biotech：专注研发、通常没有商业化能力的创新药公司。MNC：跨国大药企，有全球销售网络和大量现金。</div></details>
+          <details open><summary><span class="chk"></span><span class="nm">License-out（对外授权）</span><span class="hint">第 2 章起反复出现</span></summary><div class="d"><span class="tagl bg">背景</span>把某个药在特定地区（通常是海外）的开发和销售权卖给别人，换取首付款、里程碑付款和销售分成。卖方保留部分权益，买方承担后续开发成本。<div style="margin-top:6px"><button class="lnk">标为已懂</button></div></div></details>
+          <details><summary><span class="chk"></span><span class="nm">首付款 / 里程碑 / 销售分成</span><span class="hint">第 2–3 章核心</span></summary><div class="d"><span class="tagl bg">背景</span>授权交易对价的三层：签约即付的确定钱、达到研发或销售节点才付的或有钱、上市后按销售额比例分的钱。新闻标题里的「总包」是三者相加。</div></details>
+          <details><summary><span class="chk"></span><span class="nm">专利悬崖</span><span class="hint">第 5 章</span></summary><div class="d"><span class="tagl bg">背景</span>重磅药专利到期后仿制药涌入，原研收入在一两年内大幅下滑。MNC 买管线很大程度是为了填这个窟窿。</div></details>
+          <details><summary><span class="chk"></span><span class="nm">一级市场 / 美元基金</span><span class="hint">第 4、6 章</span></summary><div class="d"><span class="tagl bg">背景</span>投资未上市公司的市场。美元基金是募集美元、多投海外架构公司的 VC/PE，和人民币基金在退出路径上不同。</div></details>
+        </div>
+
+        <div class="sec">章节与论证线<span class="sp"></span><span class="r">7 章</span></div>
+        <div class="chs" id="chs"></div>
+
+        <div class="sec">术语表<span class="sp"></span><span class="r">18 条 · 5 条已进 UP 主词表</span></div>
+        <div class="gl">
+          <div class="gi">
+            <div class="h"><b>首付款占比</b><span class="en">Upfront ratio</span><span class="cnt">出现 9 次</span></div>
+            <div class="v"><span class="tagl video">视频里</span>UP 主把它当作「买方真实信心」的指标：总包是营销口径，首付款才是确定花出去的钱 <span class="tcl" data-t="1865">31:05</span> <span class="tcl" data-t="2225">37:05</span></div>
+            <div class="bg"><span class="tagl bg">背景</span>首付款 ÷ 交易总额。资产越早期占比通常越低；同阶段横向比较才有意义。</div>
+          </div>
+          <div class="gi">
+            <div class="h"><b>NewCo</b><span class="en">New Company</span><span class="cnt">出现 14 次</span></div>
+            <div class="v"><span class="tagl video">视频里</span>「把一条或几条管线装进一家新设的海外公司，美元基金出钱，原公司拿现金加股权」 <span class="tcl" data-t="2490">41:30</span></div>
+            <div class="bg"><span class="tagl bg">背景</span>区别于直接授权：卖方保留新公司股权，享受后续升值，但也承担新公司融资失败的风险。</div>
+          </div>
+          <div class="gi">
+            <div class="h"><b>里程碑付款</b><span class="en">Milestone payment</span><span class="cnt">出现 11 次</span></div>
+            <div class="v"><span class="tagl video">视频里</span>多数挂在三期成功、获批上市、年销售额达标之后，「能兑现三成就不错」 <span class="tcl" data-t="2080">34:40</span> <span class="tcl" data-t="2112">35:12</span></div>
+          </div>
+        </div>
+
+        <div class="later">
+          <div class="sec">论断与数字 <span class="badge gray">二期</span><span class="sp"></span><span class="r">12 条 · 4 条有时效性</span></div>
+          <div class="claims">
+            <div class="cl"><div>近两年三笔总包超 10 亿美元的交易，首付款都不到 5%<div class="f"><span class="tcl" data-t="1865">31:05</span><span class="chipx warn">有时效性</span><span class="chipx">可核实</span></div></div><button class="btn sm">核实</button></div>
+            <div class="cl"><div>MNC 2030 年前将有大批重磅药专利到期<div class="f"><span class="tcl" data-t="3830">63:50</span><span class="chipx">可核实</span></div></div><button class="btn sm">核实</button></div>
+          </div>
+          <div class="sec">玩家 <span class="badge gray">二期</span></div>
+          <div style="font-size:12.5px;color:var(--mute)">公司 / 基金 / 人物的关系图（授权、收购、投资、竞争），点节点看相关片段。</div>
+        </div>
+      </div>
+
+      <!-- 问 -->
+      <div class="pane on" id="pane-ask">
+        <div class="qa" id="qa">
+          <div class="turn collapsed" data-toggle>
+            <div class="q"><span class="at"><span class="tcl" data-t="842">14:02</span>第 2 章</span><div class="bubble">里程碑付款和销售分成有什么区别？</div></div>
+            <div class="a"></div>
+          </div>
+          <div class="turn collapsed" data-toggle>
+            <div class="q"><span class="at"><span class="tcl" data-t="1790">29:50</span>第 3 章</span><div class="bubble">他说的「卖青苗」是什么意思？</div></div>
+            <div class="a"></div>
+          </div>
+
+          <div class="turn">
+            <div class="q"><span class="at"><span class="tcl" data-t="2240">37:20</span>第 3 章</span><div class="bubble">为什么首付款低反而说明买方不看好？公司后面不是还能拿里程碑吗？</div></div>
+            <div class="a">
+              <div class="blk v">
+                <div class="bh">视频里说</div>
+                <ul>
+                  <li>里程碑大多挂在三期成功、获批上市、年销售额达到某个档位之后 <span class="tcl" data-t="2080">34:40</span>，UP 主估计最后能兑现的「三成都不到」 <span class="tcl" data-t="2112">35:12</span>。</li>
+                  <li>合同一般允许买方提前终止、把权益退回 <span class="tcl" data-t="2210">36:50</span>，没付的里程碑随之作废。</li>
+                  <li>所以他的结论是：首付款是买方唯一「确定花出去」的钱，占比低等于买方花小钱买了一个<b>期权</b> <span class="tcl" data-t="2225">37:05</span>。</li>
+                </ul>
+              </div>
+              <div class="blk b">
+                <div class="bh"><span class="tagl web">联网</span>背景补充</div>
+                <ul>
+                  <li>业内确实常把低首付、高里程碑的授权称作「期权式交易」：买方用首付款锁定权利，等数据出来再决定要不要继续投入。</li>
+                  <li>首付款占比和资产阶段强相关。临床前、I 期资产占比低是常态，所以比较时要看同阶段的交易，不能拿二期资产和已上市药比。</li>
+                </ul>
+                <div class="srcs">
+                  <span>检索 2 次 · 2026-10-03</span>
+                  <a href="#">[1] 示例来源：某券商医药行业 2025 年度 BD 交易统计</a>
+                  <a href="#">[2] 示例来源：某行业媒体《授权交易条款拆解》</a>
+                </div>
+              </div>
+              <div class="conflict">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+                <div><b>有出入：</b>视频说这类交易首付款「普遍不到 5%」 <span class="tcl" data-t="1865">31:05</span>，检索到的统计里同阶段交易大多在 5%–15%。可能是 UP 主只挑了几笔极端案例，建议以原始统计为准。</div>
+              </div>
+              <div class="afoot"><span class="mono">输入 46.1k tok（缓存命中 44.8k）· ¥0.004</span><span class="sp"></span><button class="lnk">存为笔记</button><button class="lnk">追问</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 笔记 -->
+      <div class="pane" id="pane-memo">
+        <div class="genbar"><span class="badge gray">二期</span>划线和笔记都绑时间戳，「存到 Obsidian」时随视频一起导出<span class="sp"></span></div>
+        <div class="sec">本条笔记</div>
+        <div class="notes">
+          <div class="note"><blockquote>首付款是买方唯一确定花出去的钱。</blockquote>看交易新闻先算首付款占比，别被总包吓到。和同阶段比，不和已上市药比。<div class="f"><span class="tcl" data-t="2225">37:05</span>第 3 章<span style="margin-left:auto">从「问」存入</span></div></div>
+          <div class="note">NewCo 和授权的核心区别：卖方换来的是股权，赌的是新公司下一轮能融到钱。<div class="f"><span class="tcl" data-t="2550">42:30</span>第 4 章</div></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <button class="btn primary">存到 Obsidian</button>
+          <button class="btn">第 3 章自测（4 题）</button>
+        </div>
+      </div>
+
+      <div class="askbox">
+        <div class="quick">
+          <button>这里在说什么</button><button>为什么</button><button>和前面矛盾吗</button><button>举个例子</button>
+        </div>
+        <div class="box">
+          <span class="pin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 21s-7-6.2-7-12a7 7 0 0 1 14 0c0 5.8-7 12-7 12z"/><circle cx="12" cy="9" r="2.4"/></svg><span id="pinT">37:20 · 第 3 章</span></span>
+          <textarea placeholder="在这个位置卡住了？直接问。AI 能看到全片转写、学习底稿和你前后几分钟的原文" rows="2"></textarea>
+          <div class="row">
+            <span class="tg on" data-tg><span class="sw"></span>联网</span>
+            <span class="tg" data-tg title="开启后，后面才讲到的内容只给时间点，不展开"><span class="sw"></span>防剧透</span>
+            <span class="sp"></span>
+            <span class="mono">约 ¥0.004</span>
+            <button class="send" aria-label="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div class="pop" id="pop"></div>
+
+<script>
+const DUR = 7665; // 2:07:45
+const chapters = [
+  { s: 0,    t: "开场：为什么 2024 年后 BD 成了主线",
+    claim: "融资窗口关闭后，对外授权从「锦上添花」变成很多 Biotech 唯一的现金来源" },
+  { s: 760,  t: "License-out 交易怎么拆：首付款、里程碑、分成",
+    claim: "新闻里的「总包」把三种确定性完全不同的钱加在了一起" },
+  { s: 1755, t: "为什么首付款占比才是真信号",
+    claim: "总包是营销口径，首付款占比才反映买方的真实信心",
+    arg: [
+      ["论点", "看授权交易要先看首付款占比，而不是总包金额"],
+      ["证据", "<ul><li>三笔总包超 10 亿美元的交易首付款都不到 5% <span class='tcl' data-t='1865'>31:05</span></li><li>里程碑多挂在三期和上市后，兑现率低 <span class='tcl' data-t='2080'>34:40</span></li><li>买方可提前终止、退回权益 <span class='tcl' data-t='2210'>36:50</span></li></ul>"],
+      ["结论", "低首付 = 买方花小钱买期权；判断交易质量先看首付款占比和终止条款 <span class='tcl' data-t='2225'>37:05</span>"]
+    ] },
+  { s: 2490, t: "NewCo：把管线装进新公司卖给美元基金",
+    claim: "NewCo 是一级市场冻结时的变通，卖方用股权换来了更高的估值" },
+  { s: 3790, t: "MNC 的算盘：专利悬崖与「买便宜的二期数据」",
+    claim: "MNC 来中国买的不是创新，是更便宜、更快的临床数据" },
+  { s: 5300, t: "资本端：一级市场冻结时 Biotech 怎么活",
+    claim: "能活下来的公司都提前一年把 BD 当成融资来做" },
+  { s: 6540, t: "判断：哪些是真出海，哪些是卖青苗",
+    claim: "看三件事：首付款占比、是否保留中国权益、买方有没有同类管线" },
+];
+
+const paras = [
+  { s: 1690, ch: 1, p: "所以你回头看这些交易公告，它会写首付多少、近期里程碑多少、总额多少、再加上两位数的销售分成。这四个数字放在一起，其实是四种完全不同确定性的钱，但是标题只会给你最大的那个。" },
+  { s: 1755, ch: 2, p: "好，那这一章我想讲一个我自己的判断方法，就是看<span class='term' data-k='upfront'>首付款占比</span>。你别看总包，总包是给二级市场看的，是营销口径。" },
+  { s: 1790, ch: 2, p: "有人说这是在「卖青苗」，就是庄稼还没长成你就按很低的价钱把它卖了。这个说法刻薄，但是不完全错，我们一会儿拿数据看。" },
+  { s: 1865, ch: 2, p: "我拉了一下近两年，总包超过十亿美元的交易，我挑了三笔大家都知道的，首付款都不到 5%。也就是说一个号称十几亿美元的交易，买方签字那天真正掏的钱可能就五千万上下。" },
+  { s: 1990, ch: 2, p: "那剩下的钱去哪了？剩下的是<span class='term' data-k='milestone'>里程碑付款</span>。里程碑你要看它挂在哪，有的是挂在临床推进上，有的是挂在获批上，还有一大块是挂在销售额上的，比如年销售额第一次超过十亿美元再给你一笔。" },
+  { s: 2080, ch: 2, p: "这些里程碑大多数都挂在三期成功和上市以后。三期的成功率你们自己去查，肿瘤药大概也就三成多。再往后的销售里程碑，那就更远了。" },
+  { s: 2112, ch: 2, p: "所以我自己的估计是，这些交易里的里程碑最后能兑现三成就不错了。这不是悲观，这是这个行业的基础概率。" },
+  { s: 2210, ch: 2, p: "还有一个大家容易忽略的，就是终止条款。基本上所有的授权合同都允许买方提前终止，把权益还给你。还给你的时候，没付的里程碑当然也就不用付了。" },
+  { s: 2225, ch: 2, p: "所以你把这几件事放在一起看，首付款是买方唯一确定花出去的钱。首付款占比低，说明什么？说明买方是在用很小的代价，买一个期权。数据好我继续，数据不好我退回去。" },
+  { s: 2300, ch: 2, p: "当然我不是说低首付的交易就一定差。早期资产首付低是常态，你要横向比，拿同一个阶段的东西来比。但是如果一个已经有二期数据的资产还是这个首付比例，那你就要想一想了。" },
+  { s: 2400, ch: 2, p: "那有没有一种方式，能让卖方不只是拿这一点首付款，而是能分享到后面的升值？有，这就是下一章要讲的。" },
+  { s: 2490, ch: 3, p: "<span class='term' data-k='newco'>NewCo</span>。这两年你会频繁看到这个词。简单说就是把一条或者几条管线装进一家新设的海外公司，美元基金出钱，原来的公司拿一笔现金加上新公司的股权。" },
+  { s: 2550, ch: 3, p: "它和授权最大的区别是，你拿到的是股权。股权意味着如果这个新公司后面融到下一轮、甚至上市，你是能分到升值的。但反过来，如果它融不到钱，这些股权也就是一张纸。" },
+];
+
+const terms = {
+  upfront: { h: "首付款占比", v: "总包是营销口径，首付款才是确定花出去的钱 <span class='tcl' data-t='1865'>31:05</span>", b: "首付款 ÷ 交易总额。资产越早期通常越低，比较时要看同阶段交易。" },
+  milestone: { h: "里程碑付款", v: "多挂在三期成功、上市、年销售额达标之后 <span class='tcl' data-t='2080'>34:40</span>", b: "达到预先约定的研发或商业节点才支付的或有对价。" },
+  newco: { h: "NewCo", v: "把管线装进新设的海外公司，美元基金出钱，原公司拿现金加股权 <span class='tcl' data-t='2490'>41:30</span>", b: "卖方保留股权、分享升值，也承担新公司融资失败的风险。" },
+};
+
+const asked = [842, 1790, 2240];
+let t = 2240, playing = false, timer = null;
+
+const $ = s => document.querySelector(s);
+const fmt = s => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60;
+  return (h ? h + ":" + String(m).padStart(2,"0") : String(m).padStart(2,"0")) + ":" + String(x).padStart(2,"0"); };
+const chIdx = s => { let i = 0; chapters.forEach((c, k) => { if (s >= c.s) i = k; }); return i; };
+
+// 进度条上的章节分隔和提问点
+const ticks = $("#ticks");
+chapters.slice(1).forEach(c => { const d = document.createElement("div"); d.className = "tick"; d.style.left = (c.s/DUR*100) + "%"; ticks.appendChild(d); });
+asked.forEach(a => { const d = document.createElement("div"); d.className = "qdot"; d.title = "你在 " + fmt(a) + " 问过"; d.style.left = (a/DUR*100) + "%"; ticks.appendChild(d); });
+
+// 转写
+const box = $("#paras");
+let lastCh = -1;
+paras.forEach((p, i) => {
+  if (p.ch !== lastCh) { const l = document.createElement("div"); l.className = "chapline"; l.innerHTML = "<b>第 " + (p.ch+1) + " 章</b>" + chapters[p.ch].t; box.appendChild(l); lastCh = p.ch; }
+  const d = document.createElement("div"); d.className = "para"; d.dataset.i = i;
+  d.innerHTML = "<button class='tc' data-t='" + p.s + "'>" + fmt(p.s) + "</button><p>" + p.p + "</p>";
+  box.appendChild(d);
+});
+
+// 底稿：章节列表
+function renderChs() {
+  const ci = chIdx(t);
+  $("#chs").innerHTML = chapters.map((c, i) =>
+    "<div class='ch " + (i < ci ? "done" : i === ci ? "cur" : "") + "' data-t='" + c.s + "'><span class='tm'>" + fmt(c.s) + "</span><span class='nm'>" + (i+1) + ". " + c.t + "</span>" +
+    (i === ci && c.arg ? "<div class='arg'>" + c.arg.map(a => "<div class='st'><span class='k'>" + a[0] + "</span><div>" + a[1] + "</div></div>").join("") + "</div>" : "") +
+    "</div>").join("");
+}
+
+function render(scroll) {
+  const pct = t / DUR * 100;
+  $("#fill").style.width = pct + "%"; $("#knob").style.left = pct + "%";
+  $("#cur").textContent = fmt(t);
+  const ci = chIdx(t), c = chapters[ci], end = (chapters[ci+1] || {s: DUR}).s;
+  $("#chapNo").textContent = "第 " + (ci+1) + " 章 · " + fmt(c.s) + "–" + fmt(end);
+  $("#chapT").textContent = c.t;
+  $("#chapClaim").innerHTML = "<span class='k'>本章论点：</span>" + c.claim;
+  $("#chapPg").style.width = ((t - c.s) / (end - c.s) * 100) + "%";
+  $("#pinT").textContent = fmt(t) + " · 第 " + (ci+1) + " 章";
+  let cur = -1; paras.forEach((p, i) => { if (t >= p.s) cur = i; });
+  if (t > paras[paras.length-1].s + 120) cur = -1;
+  document.querySelectorAll(".para").forEach(el => {
+    const i = +el.dataset.i; el.classList.toggle("playing", i === cur); el.classList.toggle("future", cur >= 0 && i > cur);
+  });
+  $("#sub").textContent = cur >= 0 ? paras[cur].p.replace(/<[^>]+>/g, "").split(/[。？]/)[0] + "。" : "（演示转写只覆盖 28:10–44:00）";
+  if (scroll && cur >= 0) { const el = document.querySelector(".para[data-i='" + cur + "']"); const tx = $("#tx"); tx.scrollTo({ top: el.offsetTop - 44, behavior: "smooth" }); }
+  renderChs();
+}
+function seek(s) { t = Math.min(DUR, Math.max(0, s)); render(true); }
+
+function setPlay(on) {
+  playing = on; $("#player").classList.toggle("playing", on);
+  $("#playBtn").innerHTML = on ? '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>' : '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>';
+  clearInterval(timer);
+  if (on) timer = setInterval(() => { t += 1; render(true); if (t >= DUR) setPlay(false); }, 800);
+}
+$("#playBtn").onclick = () => setPlay(!playing);
+$("#screen").onclick = () => setPlay(!playing);
+$("#back5").onclick = () => seek(t - 5);
+$("#prevCh").onclick = () => { const ci = chIdx(t); seek(chapters[Math.max(0, t - chapters[ci].s > 3 ? ci : ci-1)].s); };
+$("#nextCh").onclick = () => { const ci = chIdx(t); if (chapters[ci+1]) seek(chapters[ci+1].s); };
+
+const bar = $("#bar");
+bar.onclick = e => { const r = bar.getBoundingClientRect(); seek((e.clientX - r.left) / r.width * DUR); };
+bar.onmousemove = e => { const r = bar.getBoundingClientRect(); const s = (e.clientX - r.left) / r.width * DUR; const tip = $("#tip");
+  tip.style.left = (e.clientX - r.left) + "px"; tip.textContent = fmt(s) + " · " + chapters[chIdx(s)].t; };
+
+document.addEventListener("click", e => {
+  const tc = e.target.closest("[data-t]");
+  if (tc && !e.target.closest(".bar")) { seek(+tc.dataset.t); return; }
+  const tab = e.target.closest("[data-tab]");
+  if (tab) { document.querySelectorAll("[data-tab]").forEach(b => b.setAttribute("aria-selected", b === tab)); document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === "pane-" + tab.dataset.tab)); return; }
+  const tg = e.target.closest("[data-tg]"); if (tg) { tg.classList.toggle("on"); return; }
+  const tu = e.target.closest("[data-toggle] .q .bubble"); if (tu) { tu.closest(".turn").classList.toggle("collapsed"); return; }
+});
+
+// 术语悬停卡
+const pop = $("#pop"); let popTimer;
+document.addEventListener("mouseover", e => {
+  const tm = e.target.closest(".term");
+  if (tm) { clearTimeout(popTimer); const d = terms[tm.dataset.k]; const r = tm.getBoundingClientRect();
+    pop.innerHTML = "<h4>" + d.h + "</h4><div class='lbl'><span class='tagl video'>视频里</span></div>" + d.v + "<div class='lbl' style='margin-top:8px'><span class='tagl bg'>背景</span></div>" + d.b + "<div class='src'>来自学习底稿 · 术语表</div>";
+    pop.style.left = Math.min(r.left, innerWidth - 316) + "px"; pop.style.top = (r.bottom + 6) + "px"; pop.classList.add("on"); }
+  else if (!e.target.closest(".pop")) { popTimer = setTimeout(() => pop.classList.remove("on"), 150); }
+});
+
+document.addEventListener("keydown", e => {
+  if (e.target.matches("textarea, input")) return;
+  if (e.code === "Space") { e.preventDefault(); setPlay(!playing); }
+  if (e.key === "ArrowLeft") seek(t - 5);
+  if (e.key === "ArrowRight") seek(t + 5);
+  if (e.key === "q" || e.key === "Q") { e.preventDefault(); setPlay(false); document.querySelector("[data-tab='ask']").click(); $(".askbox textarea").focus(); }
+});
+
+$("#themeBtn").onclick = () => { const r = document.documentElement; const dark = r.dataset.theme ? r.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches; r.dataset.theme = dark ? "light" : "dark"; };
+
+render(true);
+</script>
+</body>
+</html>
