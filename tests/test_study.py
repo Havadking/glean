@@ -250,3 +250,48 @@ def test_websearcher_caches_per_day(tmp_path, monkeypatch):
     assert s.search("ADC 授权")[0].title == "t"
     assert fetched == ["ADC 授权"] and s.calls == 2 and s.paid_calls == 1
     assert s.search("   ") == []
+
+
+class Flaky(Scripted):
+    """第一次第一遍调用回一段被截断的 JSON（模拟撞上输出上限），之后正常。"""
+
+    def __init__(self, bad_background=False):
+        super().__init__()
+        self.bad_background = bad_background
+        self.broke = False
+
+    def _complete(self, system, user):
+        if system == study.GROUNDED_SYSTEM and not self.broke:
+            self.broke = True
+            self.seen.append((system, user))
+            return '{"chapters": [{"start": "00:05", "title": "截断'
+        if system == study.BACKGROUND_SYSTEM and self.bad_background:
+            self.seen.append((system, user))
+            return '{"prerequisites": [ 坏掉的'
+        return super()._complete(system, user)
+
+
+def test_truncated_chunk_is_split_and_retried(talk):
+    p = Flaky()
+    sheet = study.generate_sheet(p, talk)
+    grounded = [u for s, u in p.seen if s == study.GROUNDED_SYSTEM]
+    assert len(grounded) == 3                       # 坏一次 + 前后两半
+    assert "（前半）" in grounded[1] and "（后半）" in grounded[2]
+    assert "[00:00]" in grounded[1] and "[00:00]" not in grounded[2]
+    assert sheet.chapters
+
+
+def test_background_failure_keeps_chapters(talk):
+    p = Flaky(bad_background=True)
+    p.broke = True                                   # 第一遍正常
+    sheet = study.generate_sheet(p, talk)
+    assert sheet.chapters and sheet.glossary
+    assert sheet.prerequisites == [] and all(t.background == "" for t in sheet.glossary)
+
+
+def test_three_hour_transcript_is_chunked():
+    # 约 51k token：实测把整篇一次塞进去，输出的 JSON 被 8k 上限截断
+    segs = [Segment(i * 6.0, i * 6.0 + 6.0, "这是一句三十个字左右的口语转写内容用来模拟长视频的。") for i in range(1900)]
+    t = Transcript("u", "asr", "zh", 11400.0, segs, title="长", video_id="x")
+    plan = study.plan_sheet(Scripted(SummarizerConfig(max_context_tokens=120_000, max_output_tokens=8000)), t)
+    assert plan["transcript_tokens"] > 45_000 and plan["chunks"] >= 4

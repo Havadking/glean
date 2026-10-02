@@ -784,9 +784,14 @@ input, select { font: inherit; color: var(--ink); }
 
 /* 横屏视频：视频在上、转写在下，右边 AI。竖屏录屏：视频 | 转写 | AI 三栏 */
 .sp-main { flex: 1; min-height: 0; display: grid; }
-.sp-main.land { grid-template-columns: minmax(0, 1fr) 440px; grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "media side" "read side"; }
+.sp-main.land, .sp-main.flat { grid-template-columns: minmax(0, 1fr) 440px; grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "media side" "read side"; }
 .sp-main.port { grid-template-columns: min(36vw, calc((100vh - 88px) * var(--ar) + 12px)) minmax(0, 1fr) 440px; grid-template-rows: minmax(0, 1fr); grid-template-areas: "media read side"; }
-.sp-media { grid-area: media; min-width: 0; padding: 12px 16px 0; display: flex; flex-direction: column; gap: 6px; }
+.sp-media { grid-area: media; min-width: 0; padding: 12px 16px 0; display: flex; gap: 14px; }
+.sp-mediacol { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sp-main.flat .sp-mediacol { width: 100%; }
+/* 横屏：播放器按视频比例定宽（高度封顶 56vh），盒子和画面一样大，没有黑边 */
+.sp-main.land .sp-mediacol { flex: none; width: min(calc(100% - 300px), calc(56vh * var(--ar))); }
+.sp-main.land .st-player video { width: 100%; height: auto; max-height: none; aspect-ratio: var(--ar); }
 .sp-main.port .sp-media { padding: 12px 0 12px 12px; }
 .sp-read { grid-area: read; min-height: 0; min-width: 0; display: flex; flex-direction: column; padding: 4px 16px 0; }
 .sp-main.port .sp-read { padding-top: 12px; }
@@ -794,6 +799,7 @@ input, select { font: inherit; color: var(--ink); }
 
 .st-player { flex: none; background: #0B0C10; border-radius: 10px; overflow: hidden; }
 .st-player video { display: block; width: 100%; max-height: 52vh; background: #000; }
+.sp-main.port .sp-mediacol { flex: 1; min-height: 0; }
 .sp-main.port .st-player { flex: 1; min-height: 0; display: flex; }
 .sp-main.port .st-player video { height: 100%; width: 100%; max-height: none; object-fit: contain; }
 .sp-main.port .st-strip { width: 100%; }
@@ -815,6 +821,23 @@ input, select { font: inherit; color: var(--ink); }
 .st-strip .head { position: absolute; top: 1px; width: 2px; height: 12px; background: var(--ink); border-radius: 1px; transform: translateX(-1px); }
 .st-strip .qdot { position: absolute; top: -3px; width: 6px; height: 6px; border-radius: 50%; background: var(--info); transform: translateX(-3px); }
 .st-strip .tip { position: absolute; bottom: 16px; transform: translateX(-50%); background: var(--ink); color: var(--bg); font-size: 12px; padding: 3px 8px; border-radius: 6px; white-space: nowrap; pointer-events: none; z-index: 2; }
+
+/* 横屏时视频右边的本章卡：标题、进度、论证线 */
+/* 高度跟视频那一栏走：内容绝对定位，卡片自己不撑高这一行 */
+.sp-chapcard { flex: 1 1 260px; min-width: 260px; position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.sp-chapcard > .in { position: absolute; inset: 10px 12px; display: flex; flex-direction: column; }
+.sp-chapcard .hd { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--faint); }
+.sp-chapcard .hd .sp { flex: 1; }
+.sp-chapcard .no { font-size: 11px; color: var(--accent-ink); background: var(--accent-bg); border-radius: 5px; padding: 2px 7px; font-weight: 500; }
+.sp-chapcard .tm { font-family: "JetBrains Mono", monospace; }
+.sp-chapcard .t { font-weight: 600; font-size: 15px; margin: 6px 0 8px; }
+.sp-chapcard .pgbar { height: 3px; background: var(--line-2); border-radius: 2px; overflow: hidden; flex: none; }
+.sp-chapcard .pgbar i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.sp-chapcard .argwrap { flex: 1; min-height: 0; overflow: auto; margin-top: 8px; }
+.sp-chapcard .arg .st { display: grid; grid-template-columns: 30px 1fr; gap: 6px; font-size: 12.5px; line-height: 1.65; color: var(--ink-2); padding: 5px 0; }
+.sp-chapcard .arg .st + .st { border-top: 1px dashed var(--accent-line); }
+.sp-chapcard .arg .k { font-size: 11px; color: var(--accent-ink); font-weight: 600; padding-top: 1px; }
+.sp-chapcard .arg ul { margin: 0; padding-left: 14px; }
 
 /* 本章：一行标题 + 一行论点，底边是本章进度 */
 .sp-chap { flex: none; position: relative; display: flex; gap: 10px; align-items: center; padding: 8px 4px 9px 0; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
@@ -962,7 +985,10 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 10.5px; border: 1px s
 
 @media (max-width: 1100px) {
   .sp-page { height: auto; min-height: 100vh; overflow: visible; }
-  .sp-main.land, .sp-main.port { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-template-areas: "media" "read" "side"; }
+  .sp-media { flex-wrap: wrap; }
+  .sp-main.land .sp-mediacol { width: min(100%, calc(56vh * var(--ar))); }
+  .sp-chapcard { height: 300px; }
+  .sp-main.land, .sp-main.port, .sp-main.flat { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-template-areas: "media" "read" "side"; }
   .sp-main.port .sp-media { padding: 12px 16px 0; align-items: center; }
   .sp-main.port .st-player { width: min(100%, calc(60vh * var(--ar))); flex: none; }
   .sp-main.port .st-player video { height: 60vh; }

@@ -58,7 +58,8 @@ class OpenAICompatibleSummarizer(BaseSummarizer):
         )
         return self._client
 
-    def _create(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None):
+    def _create(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
+                *, json_mode: bool = False):
         """发一次请求，带重试和记账。返回第一条 choice 的 message。"""
         client = self._get_client()
         last_error: Exception | None = None
@@ -68,6 +69,9 @@ class OpenAICompatibleSummarizer(BaseSummarizer):
         }
         if tools:
             kwargs["tools"] = tools
+        if json_mode:
+            # DeepSeek / OpenAI 的 JSON 模式：prompt 里必须出现 "json" 字样，study 的指令里有
+            kwargs["response_format"] = {"type": "json_object"}
 
         for attempt in range(1, _MAX_RETRIES + 1):
             try:
@@ -95,6 +99,8 @@ class OpenAICompatibleSummarizer(BaseSummarizer):
 
             if not response.choices:
                 raise SummarizerError("模型没有返回任何内容")
+            if getattr(response.choices[0], "finish_reason", None) == "length":
+                log.warning("输出撞到 max_tokens（%s）被截断", self.cfg.max_output_tokens)
             return response.choices[0].message
 
         raise SummarizerError(f"调用 {self.describe()} 失败: {last_error}") from last_error
@@ -104,6 +110,16 @@ class OpenAICompatibleSummarizer(BaseSummarizer):
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ])
+        content = (message.content or "").strip()
+        if not content:
+            raise SummarizerError("模型返回了空内容，可能触发了内容过滤或 max_tokens 太小")
+        return content
+
+    def complete_json(self, system: str, user: str) -> str:
+        message = self._create([
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ], json_mode=True)
         content = (message.content or "").strip()
         if not content:
             raise SummarizerError("模型返回了空内容，可能触发了内容过滤或 max_tokens 太小")

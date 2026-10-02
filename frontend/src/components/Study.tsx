@@ -42,7 +42,7 @@ export function Study({ video }: { video: Video }) {
   const [mediaErr, setMediaErr] = useState<string | null>(null)
   // 竖屏录屏（手机直播之类）：视频单独占一栏，不然上下全是黑边
   const [portrait, setPortrait] = useState(false)
-  const [aspect, setAspect] = useState(9 / 16)
+  const [aspect, setAspect] = useState(16 / 9)
   const [autoScroll, setAutoScroll] = useState(() => readPref('vsum.study.autoscroll', true))
   const [markTerms, setMarkTerms] = useState(() => readPref('vsum.study.terms', true))
   const mediaRef = useRef<HTMLMediaElement | null>(null)
@@ -147,6 +147,8 @@ export function Study({ video }: { video: Video }) {
   const asked = state?.questions ?? []
 
   const ch = curCh >= 0 ? chapters[curCh] : undefined
+  // port：竖屏录屏，视频单独一栏；land：横屏，视频按比例定宽，右侧放本章论证线；flat：没有画面（音频 / 待下载）
+  const layout = portrait ? 'port' : state?.media.video && !mediaErr ? 'land' : 'flat'
   const chPct = ch ? Math.min(100, Math.max(0, (time - ch.start) / Math.max(1, ch.end - ch.start) * 100)) : 0
 
   return (
@@ -161,16 +163,35 @@ export function Study({ video }: { video: Video }) {
         <span className="keys"><kbd>空格</kbd> 播放 <kbd>←</kbd><kbd>→</kbd> 5 秒 <kbd>Q</kbd> 在这里提问</span>
       </header>
 
-      <div className={`sp-main ${portrait ? 'port' : 'land'}`} style={{ '--ar': aspect } as React.CSSProperties}>
+      <div className={`sp-main ${layout}`} style={{ '--ar': aspect } as React.CSSProperties}>
         <section className="sp-media">
-          <Player video={video} state={state} mediaRef={mediaRef} onTimeUpdate={onTimeUpdate}
-            onMeta={(d, ar) => { setDuration(d); if (ar) { setAspect(ar); setPortrait(ar < 1) } }} mediaErr={mediaErr} setMediaErr={setMediaErr} reload={load} />
-          <ChapterStrip chapters={chapters} duration={duration || video.duration_sec} time={time}
-            asked={asked.map((q) => q.position).filter((p): p is number => p != null)} onSeek={(s) => seek(s)} />
+          <div className="sp-mediacol">
+            <Player video={video} state={state} mediaRef={mediaRef} onTimeUpdate={onTimeUpdate}
+              onMeta={(d, ar) => { setDuration(d); if (ar) { setAspect(ar); setPortrait(ar < 1) } }} mediaErr={mediaErr} setMediaErr={setMediaErr} reload={load} />
+            <ChapterStrip chapters={chapters} duration={duration || video.duration_sec} time={time}
+              asked={asked.map((q) => q.position).filter((p): p is number => p != null)} onSeek={(s) => seek(s)} />
+          </div>
+          {/* 横屏视频按比例定宽后，旁边剩下的宽度放本章论证线，不留空 */}
+          {layout === 'land' && ch && (
+            <div className="sp-chapcard"><div className="in">
+              <div className="hd">
+                <span className="no">第 {curCh + 1}/{chapters.length} 章</span>
+                <span className="tm">{fmtDuration(ch.start)}–{fmtDuration(ch.end)}</span>
+                <span className="sp" />
+                <button className="iconbtn" title="上一章" aria-label="上一章"
+                  onClick={() => seek(chapters[Math.max(0, time - ch.start > 3 ? curCh : curCh - 1)].start)}><ChevronLeft /></button>
+                <button className="iconbtn" title="下一章" aria-label="下一章" disabled={curCh >= chapters.length - 1}
+                  onClick={() => chapters[curCh + 1] && seek(chapters[curCh + 1].start)}><ChevronRight /></button>
+              </div>
+              <div className="t">{ch.title}</div>
+              <div className="pgbar"><i style={{ width: `${chPct}%` }} /></div>
+              <div className="argwrap"><Argument c={ch} onSeek={seek} /></div>
+            </div></div>
+          )}
         </section>
 
         <section className="sp-read">
-          {ch && (
+          {ch && layout !== 'land' && (
             <div className="sp-chap" title={ch.claim}>
               <span className="no">第 {curCh + 1}/{chapters.length} 章</span>
               <div className="body">

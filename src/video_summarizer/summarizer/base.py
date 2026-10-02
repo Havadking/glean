@@ -85,6 +85,10 @@ class BaseSummarizer(ABC):
         """一次裸调用。问答这类不走总结模板的功能用它。"""
         return self._complete(system, user)
 
+    def complete_json(self, system: str, user: str) -> str:
+        """要求输出 JSON 的裸调用。支持 JSON 模式的 provider 覆盖它（保证语法合法，但截断照样会坏）。"""
+        return self._complete(system, user)
+
     def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None) -> ChatReply:
         """多轮消息（OpenAI 格式）。默认实现把对话压成一条 user 走 _complete，不支持工具。
 

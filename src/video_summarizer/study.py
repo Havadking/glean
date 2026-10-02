@@ -34,6 +34,14 @@ log = logging.getLogger(__name__)
 # 底稿结构变了就加一，老底稿会被标成"可以重新生成"
 SHEET_VERSION = 1
 
+# 第一遍每块转写的上限。实测 3 小时视频（51k token）整篇一次过，输出的 JSON 写到一万七千字
+# 撞上 8k 输出上限被截断。按 15k（约 50 分钟口语）切，每块的输出稳稳在上限以内
+_GROUNDED_CHUNK_TOKENS = 15000
+# 解析失败时把块对半切了重来，最多切几层
+_MAX_SPLIT_DEPTH = 2
+# 第二遍最多带多少个术语（按出现次数挑），免得背景表本身又写爆
+_BACKGROUND_MAX_TERMS = 60
+
 # 估钱用：每次调用大致输出多少
 _GROUNDED_OUTPUT_TOKENS = 3000
 _BACKGROUND_OUTPUT_TOKENS = 2500
@@ -73,7 +81,8 @@ GROUNDED_INSTRUCTION = """\
 要求：
 - 章节按话题切，不按时长平均切；大约每 8–25 分钟一章。每章 evidence 2–4 条，每条都要有时间戳
 - 论点、证据、结论要体现「怎么推出来的」，不要只是复述内容
-- terms 收录看懂这段视频必须懂的专业术语、缩写、机构名、交易/商业模式名，8–25 个；人人都懂的词不要
+- terms 收录看懂这段视频必须懂的专业术语、缩写、机构名、交易/商业模式名，5–15 个；人人都懂的词不要
+- 每条文字都写短：claim / conclusion 一句话，evidence 每条不超过 40 字，video_says 不超过 60 字
 - 时间戳格式 mm:ss，超过一小时写 h:mm:ss
 """
 
@@ -277,10 +286,10 @@ def input_key(transcript_key: str, corrections: str, provider_desc: str) -> str:
 
 def _grounded_chunks(provider: BaseSummarizer, transcript: Transcript) -> list[list[Segment]]:
     budget = (provider.cfg.max_context_tokens - provider.cfg.max_output_tokens - _PROMPT_OVERHEAD)
+    size = min(_GROUNDED_CHUNK_TOKENS, budget)
     body = render_segments(transcript.segments, with_time=True)
-    if estimate_tokens(body) <= budget:
+    if estimate_tokens(body) <= size:
         return [transcript.segments]
-    size = min(provider.cfg.chunk_tokens * 2, budget)
     return chunk_segments(transcript.segments, size, with_time=True)
 
 
@@ -298,16 +307,33 @@ def plan_sheet(provider: BaseSummarizer, transcript: Transcript) -> dict[str, An
     }
 
 
-def _grounded_pass(provider: BaseSummarizer, transcript: Transcript, header: str,
-                   chunk: list[Segment], index: int, total: int) -> dict[str, Any]:
+def _grounded_pass(provider: BaseSummarizer, header: str, chunk: list[Segment], label: str | None) -> dict[str, Any]:
     span = f"[{format_timestamp(chunk[0].start)}]–[{format_timestamp(chunk[-1].end)}]"
-    part = (f"（这是全片的第 {index}/{total} 部分，时间范围 {span}。只整理这一部分；"
-            "章节可能从上一部分延续过来，照样从这部分的开头起一章。）\n" if total > 1 else "")
+    part = (f"（这是全片的{label}，时间范围 {span}。只整理这一部分；"
+            "章节可能从上一部分延续过来，照样从这部分的开头起一章。）\n" if label else "")
+    # 告诉模型切几章：不给的话长视频每块都切得很碎（3 小时实测切出 43 章）
+    minutes = max(1.0, (chunk[-1].end - chunk[0].start) / 60)
+    part += f"（这一段约 {minutes:.0f} 分钟，切成 {max(1, round(minutes / 12))} 章左右。）\n"
     user = "\n".join([
         header, "", part + GROUNDED_INSTRUCTION, "",
         "=== 转写开始 ===", render_segments(chunk, with_time=True), "=== 转写结束 ===",
     ])
-    return parse_json_object(provider.complete(GROUNDED_SYSTEM, user))
+    return parse_json_object(provider.complete_json(GROUNDED_SYSTEM, user))
+
+
+def _grounded_with_split(provider: BaseSummarizer, header: str, chunk: list[Segment], label: str | None,
+                         depth: int = 0) -> list[dict[str, Any]]:
+    """一块解析失败（多半是输出被截断）就对半切开各自重来，而不是整份底稿失败。"""
+    try:
+        return [_grounded_pass(provider, header, chunk, label)]
+    except SummarizerError as exc:
+        if depth >= _MAX_SPLIT_DEPTH or len(chunk) < 4:
+            raise SummarizerError(f"整理 {format_timestamp(chunk[0].start)} 起的这段转写失败：{exc}") from exc
+        log.warning("这块输出解析失败，对半切开重试：%s", exc)
+        mid = len(chunk) // 2
+        base = label or "一部分"
+        return (_grounded_with_split(provider, header, chunk[:mid], f"{base}（前半）", depth + 1)
+                + _grounded_with_split(provider, header, chunk[mid:], f"{base}（后半）", depth + 1))
 
 
 def _merge_grounded(parts: list[dict[str, Any]], duration: float) -> tuple[list[Chapter], list[Term]]:
@@ -388,10 +414,10 @@ def _background_pass(provider: BaseSummarizer, header: str, chapters: list[Chapt
     for i, c in enumerate(chapters, start=1):
         lines.append(f"{i}. {c.title}——{c.claim}")
     lines += ["", "术语表："]
-    for t in terms:
+    for t in sorted(terms, key=lambda x: -x.mentions)[:_BACKGROUND_MAX_TERMS]:
         lines.append(f"- {t.term}" + (f"（{t.en}）" if t.en else "") + (f"：{t.video_says}" if t.video_says else ""))
     lines += ["", BACKGROUND_INSTRUCTION]
-    return parse_json_object(provider.complete(BACKGROUND_SYSTEM, "\n".join(lines)))
+    return parse_json_object(provider.complete_json(BACKGROUND_SYSTEM, "\n".join(lines)))
 
 
 def generate_sheet(provider: BaseSummarizer, transcript: Transcript, *, uploader: str | None = None,
@@ -401,11 +427,12 @@ def generate_sheet(provider: BaseSummarizer, transcript: Transcript, *, uploader
         raise SummarizerError("转写是空的，没法生成学习底稿")
     header = _header(transcript, uploader)
     chunks = _grounded_chunks(provider, transcript)
-    parts = []
+    parts: list[dict[str, Any]] = []
     for i, chunk in enumerate(chunks, start=1):
         if progress:
             progress(f"整理章节和术语（{i}/{len(chunks)}）")
-        parts.append(_grounded_pass(provider, transcript, header, chunk, i, len(chunks)))
+        label = f"第 {i}/{len(chunks)} 部分" if len(chunks) > 1 else None
+        parts.extend(_grounded_with_split(provider, header, chunk, label))
     chapters, terms = _merge_grounded(parts, transcript.duration_sec)
     if not chapters:
         raise SummarizerError("模型没整理出章节，换个模型或者重试一次")
@@ -415,7 +442,12 @@ def generate_sheet(provider: BaseSummarizer, transcript: Transcript, *, uploader
 
     if progress:
         progress("补背景知识")
-    bg = _background_pass(provider, header, chapters, terms)
+    # 背景是锦上添花：这一遍坏了，章节和术语照样能用，不要整份作废
+    try:
+        bg = _background_pass(provider, header, chapters, terms)
+    except SummarizerError as exc:
+        log.warning("补背景知识失败，底稿先不带背景：%s", exc)
+        bg = {}
     backgrounds = bg.get("backgrounds") if isinstance(bg.get("backgrounds"), dict) else {}
     by_key = {_term_key(k): v for k, v in backgrounds.items()}
     for t in terms:
