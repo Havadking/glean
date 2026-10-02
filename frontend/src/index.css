@@ -913,7 +913,11 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 10.5px; border: 1px s
 
 .st-chs { display: grid; gap: 2px; }
 .st-chs .ch { border-radius: 8px; padding: 2px 0; }
-.st-chs .row { display: grid; grid-template-columns: 52px 1fr; gap: 8px; width: 100%; text-align: left; padding: 6px 8px; border-radius: 8px; }
+.st-chs .rowwrap { display: flex; align-items: center; gap: 2px; }
+.st-chs .row { flex: 1; min-width: 0; display: grid; grid-template-columns: 52px 1fr; gap: 8px; text-align: left; padding: 6px 8px; border-radius: 8px; }
+.st-chs .exp { flex: none; margin-right: 4px; opacity: 0; transition: transform .15s, opacity .15s; }
+.st-chs .ch:hover .exp, .st-chs .exp.on, .st-chs .exp:focus-visible { opacity: 1; }
+.st-chs .exp.on { transform: rotate(180deg); }
 .st-chs .row:hover { background: var(--surface-2); }
 .st-chs .tm { font-family: "JetBrains Mono", monospace; font-size: 11.5px; color: var(--faint); padding-top: 2px; font-variant-numeric: tabular-nums; }
 .st-chs .nm { font-size: 13.5px; color: var(--ink-2); }

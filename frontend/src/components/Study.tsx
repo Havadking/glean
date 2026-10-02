@@ -1,5 +1,5 @@
 import DOMPurify from 'dompurify'
-import { ArrowLeft, ChevronLeft, ChevronRight, Film, MapPin, RefreshCw, Send, Trash2 } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, Film, MapPin, RefreshCw, Send, Trash2 } from 'lucide-react'
 import { marked } from 'marked'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -236,7 +236,8 @@ export function Study({ video }: { video: Video }) {
         </div>
         <ErrorBox error={err} />
         {!state && !err && <div className="st-pane"><span className="spin" /> 读取中…</div>}
-        {state && tab === 'sheet' && <SheetPane id={id} state={state} time={time} onSeek={seek} reload={load} setState={setState} />}
+        {state && tab === 'sheet' && <SheetPane id={id} state={state} time={time} onSeek={seek} reload={load} setState={setState}
+          expandCurrent={layout !== 'land'} />}
         {state && tab === 'ask' && <AskPane state={state} onSeek={seek} reload={load} setState={setState} />}
         {state && (
           <AskBox id={id} state={state} time={time} chapter={curCh >= 0 ? curCh : null} chapterTitle={chapters[curCh]?.title}
@@ -380,10 +381,19 @@ function ChapterStrip({ chapters, duration, time, asked, onSeek }: {
 
 // ---------- 学习底稿 ----------
 
-function SheetPane({ id, state, time, onSeek, reload, setState }: {
+function SheetPane({ id, state, time, onSeek, reload, setState, expandCurrent }: {
   id: string; state: StudyState; time: number; onSeek: (s: number, play?: boolean) => void
   reload: () => Promise<void>; setState: React.Dispatch<React.SetStateAction<StudyState | null>>
+  // 横屏时视频旁边已经有本章卡，这里就别再自动展开当前章，免得同一段内容出现两遍
+  expandCurrent: boolean
 }) {
+  // 手动展开看的章节（不用跳过去播放就能读别的章的论证线）
+  const [opened, setOpened] = useState<Set<number>>(() => new Set())
+  const toggle = (i: number) => setOpened((s) => {
+    const n = new Set(s)
+    if (n.has(i)) n.delete(i); else n.add(i)
+    return n
+  })
   const [jobId, setJobId] = useState<string | null>(state.job?.id ?? null)
   const job = useJob(jobId)
   const [err, setErr] = useState<unknown>(null)
@@ -471,11 +481,15 @@ function SheetPane({ id, state, time, onSeek, reload, setState }: {
       <div className="st-chs">
         {sheet.chapters.map((c, i) => (
           <div key={i} className={`ch${i === curCh ? ' cur' : i < curCh ? ' done' : ''}`}>
-            <button className="row" onClick={() => onSeek(c.start)}>
-              <span className="tm">{fmtDuration(c.start)}</span>
-              <span className="nm">{i + 1}. {c.title}</span>
-            </button>
-            {i === curCh && <Argument c={c} onSeek={onSeek} />}
+            <div className="rowwrap">
+              <button className="row" onClick={() => onSeek(c.start)} title="跳到这一章">
+                <span className="tm">{fmtDuration(c.start)}</span>
+                <span className="nm">{i + 1}. {c.title}</span>
+              </button>
+              <button className={`iconbtn exp${opened.has(i) || (expandCurrent && i === curCh) ? ' on' : ''}`}
+                title="展开 / 收起这一章的论证线" aria-label="展开论证线" onClick={() => toggle(i)}><ChevronDown /></button>
+            </div>
+            {(opened.has(i) || (expandCurrent && i === curCh)) && <Argument c={c} onSeek={onSeek} />}
           </div>
         ))}
       </div>
