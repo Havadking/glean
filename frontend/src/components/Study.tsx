@@ -1,5 +1,5 @@
 import DOMPurify from 'dompurify'
-import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, Film, MapPin, RefreshCw, Send, Trash2 } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Film, ScrollText, MapPin, RefreshCw, Send, Trash2 } from 'lucide-react'
 import { marked } from 'marked'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -45,6 +45,9 @@ export function Study({ video }: { video: Video }) {
   const [aspect, setAspect] = useState(16 / 9)
   const [autoScroll, setAutoScroll] = useState(() => readPref('vsum.study.autoscroll', true))
   const [markTerms, setMarkTerms] = useState(() => readPref('vsum.study.terms', true))
+  // 转写默认收起：大部分时间该看的是视频、本章论证线和提问，细读文字时再展开
+  const [txOpen, setTxOpen] = useState(() => readPref('vsum.study.tx', false))
+  const toggleTx = useCallback(() => setTxOpen((v) => { writePref('vsum.study.tx', !v); return !v }), [])
   const mediaRef = useRef<HTMLMediaElement | null>(null)
   const askRef = useRef<HTMLTextAreaElement>(null)
   const txRef = useRef<HTMLDivElement>(null)
@@ -91,11 +94,14 @@ export function Study({ video }: { video: Video }) {
       } else if (e.key === 'q' || e.key === 'Q') {
         e.preventDefault()
         focusAsk()
+      } else if (e.key === 't' || e.key === 'T') {
+        e.preventDefault()
+        toggleTx()
       }
     }
     window.addEventListener('keydown', on)
     return () => window.removeEventListener('keydown', on)
-  }, [focusAsk])
+  }, [focusAsk, toggleTx])
 
   const onTimeUpdate = () => {
     const m = mediaRef.current
@@ -115,7 +121,7 @@ export function Study({ video }: { video: Video }) {
     // .st-tx 是 position: relative，offsetTop 已经是相对它的；留出吸顶的表头
     const top = el.offsetTop - 60
     if (Math.abs(box.scrollTop - top) > 40) box.scrollTo({ top, behavior: 'smooth' })
-  }, [playingStart, autoScroll])
+  }, [playingStart, autoScroll, txOpen])
 
   // 术语在转写里标出来
   const termRe = useMemo(() => {
@@ -150,6 +156,24 @@ export function Study({ video }: { video: Video }) {
   // port：竖屏录屏，视频单独一栏；land：横屏，视频按比例定宽，右侧放本章论证线；flat：没有画面（音频 / 待下载）
   const layout = portrait ? 'port' : state?.media.video && !mediaErr ? 'land' : 'flat'
   const chPct = ch ? Math.min(100, Math.max(0, (time - ch.start) / Math.max(1, ch.end - ch.start) * 100)) : 0
+  // 没有画面时转写就是主角，不收
+  const focus = !txOpen && layout !== 'flat'
+
+  // 收起时留一行「现在这句」：段落里按播放进度估一句，点一下展开转写
+  const para = playingStart != null ? video.paragraphs.find((p) => p.start === playingStart) : undefined
+  let sentence = ''
+  if (para) {
+    const parts = para.text.split(/(?<=[。！？!?])/).filter((x) => x.trim())
+    const k = Math.min(parts.length - 1, Math.max(0, Math.floor((time - para.start) / Math.max(1, para.end - para.start) * parts.length)))
+    sentence = parts[k] ?? para.text
+  }
+  const peek = (
+    <button className="sp-peek" onClick={toggleTx} title="展开转写（T）">
+      <span className="tc">{fmtDuration(para?.start ?? time)}</span>
+      <span className="txt">{sentence || '（这里没有转写）'}</span>
+      <span className="act"><ChevronUp size={14} /> 展开转写</span>
+    </button>
+  )
 
   return (
     <div className="sp-page">
@@ -160,37 +184,34 @@ export function Study({ video }: { video: Video }) {
           <span>{video.uploader ?? ''}{video.uploader ? ' · ' : ''}{fmtDuration(duration || video.duration_sec)}</span>
         </div>
         <span className="sp" />
-        <span className="keys"><kbd>空格</kbd> 播放 <kbd>←</kbd><kbd>→</kbd> 5 秒 <kbd>Q</kbd> 在这里提问</span>
+        <span className="keys"><kbd>空格</kbd> 播放 <kbd>←</kbd><kbd>→</kbd> 5 秒 <kbd>Q</kbd> 提问 <kbd>T</kbd> 转写</span>
+        {layout !== 'flat' && (
+          <button className={`btn sm${txOpen ? ' primary' : ''}`} onClick={toggleTx} title={txOpen ? '收起转写，专注看视频（T）' : '展开转写，细读原文（T）'}>
+            <ScrollText /> {txOpen ? '收起转写' : '展开转写'}
+          </button>
+        )}
       </header>
 
-      <div className={`sp-main ${layout}`} style={{ '--ar': aspect } as React.CSSProperties}>
+      <div className={`sp-main ${layout}${focus ? ' focus' : ''}`} style={{ '--ar': aspect } as React.CSSProperties}>
         <section className="sp-media">
           <div className="sp-mediacol">
             <Player video={video} state={state} mediaRef={mediaRef} onTimeUpdate={onTimeUpdate}
               onMeta={(d, ar) => { setDuration(d); if (ar) { setAspect(ar); setPortrait(ar < 1) } }} mediaErr={mediaErr} setMediaErr={setMediaErr} reload={load} />
             <ChapterStrip chapters={chapters} duration={duration || video.duration_sec} time={time}
               asked={asked.map((q) => q.position).filter((p): p is number => p != null)} onSeek={(s) => seek(s)} />
+            {focus && layout === 'land' && peek}
           </div>
-          {/* 横屏视频按比例定宽后，旁边剩下的宽度放本章论证线，不留空 */}
-          {layout === 'land' && ch && (
-            <div className="sp-chapcard"><div className="in">
-              <div className="hd">
-                <span className="no">第 {curCh + 1}/{chapters.length} 章</span>
-                <span className="tm">{fmtDuration(ch.start)}–{fmtDuration(ch.end)}</span>
-                <span className="sp" />
-                <button className="iconbtn" title="上一章" aria-label="上一章"
-                  onClick={() => seek(chapters[Math.max(0, time - ch.start > 3 ? curCh : curCh - 1)].start)}><ChevronLeft /></button>
-                <button className="iconbtn" title="下一章" aria-label="下一章" disabled={curCh >= chapters.length - 1}
-                  onClick={() => chapters[curCh + 1] && seek(chapters[curCh + 1].start)}><ChevronRight /></button>
-              </div>
-              <div className="t">{ch.title}</div>
-              <div className="pgbar"><i style={{ width: `${chPct}%` }} /></div>
-              <div className="argwrap"><Argument c={ch} onSeek={seek} /></div>
-            </div></div>
-          )}
+          {/* 横屏：转写展开时卡片在视频右边，收起时在视频下面 */}
+          {layout === 'land' && ch && <ChapterCard chapters={chapters} idx={curCh} pct={chPct} time={time} onSeek={seek} />}
         </section>
 
         <section className="sp-read">
+          {focus ? (
+            layout === 'port' && <>
+              {peek}
+              {ch && <ChapterCard chapters={chapters} idx={curCh} pct={chPct} time={time} onSeek={seek} upcoming />}
+            </>
+          ) : <>
           {ch && layout !== 'land' && (
             <div className="sp-chap" title={ch.claim}>
               <span className="no">第 {curCh + 1}/{chapters.length} 章</span>
@@ -211,6 +232,7 @@ export function Study({ video }: { video: Video }) {
             <span className="sp" />
             {termRe && <label><input type="checkbox" checked={markTerms} onChange={(e) => { setMarkTerms(e.target.checked); writePref('vsum.study.terms', e.target.checked) }} /> 标出术语</label>}
             <label><input type="checkbox" checked={autoScroll} onChange={(e) => { setAutoScroll(e.target.checked); writePref('vsum.study.autoscroll', e.target.checked) }} /> 自动滚动</label>
+            {layout !== 'flat' && <button className="lnk" onClick={toggleTx} title="收起转写，专注看视频（T）"><ChevronDown size={13} /> 收起</button>}
           </div>
           {video.paragraphs.length === 0 && <div className="empty"><b>这条视频没有转写文本</b></div>}
           {video.paragraphs.map((p, i) => {
@@ -227,6 +249,7 @@ export function Study({ video }: { video: Video }) {
             )
           })}
           </div>
+          </>}
         </section>
 
       <aside className="st-right">
@@ -237,7 +260,7 @@ export function Study({ video }: { video: Video }) {
         <ErrorBox error={err} />
         {!state && !err && <div className="st-pane"><span className="spin" /> 读取中…</div>}
         {state && tab === 'sheet' && <SheetPane id={id} state={state} time={time} onSeek={seek} reload={load} setState={setState}
-          expandCurrent={layout !== 'land'} />}
+          expandCurrent={!(layout === 'land' || (focus && layout === 'port'))} />}
         {state && tab === 'ask' && <AskPane state={state} onSeek={seek} reload={load} setState={setState} />}
         {state && (
           <AskBox id={id} state={state} time={time} chapter={curCh >= 0 ? curCh : null} chapterTitle={chapters[curCh]?.title}
@@ -509,6 +532,42 @@ function SheetPane({ id, state, time, onSeek, reload, setState, expandCurrent }:
       </>}
       <p className="st-foot">「视频里」只依据转写；「背景」是模型自己的知识，没联网核实过。</p>
     </div>
+  )
+}
+
+function ChapterCard({ chapters, idx, pct, time, onSeek, upcoming }: {
+  chapters: StudyChapter[]; idx: number; pct: number; time: number; onSeek: (s: number) => void; upcoming?: boolean
+}) {
+  const ch = chapters[idx]
+  const next = upcoming ? chapters.slice(idx + 1, idx + 4) : []
+  return (
+    <div className={`sp-chapcard${upcoming ? ' big' : ''}`}><div className="in">
+      <div className="hd">
+        <span className="no">第 {idx + 1}/{chapters.length} 章</span>
+        <span className="tm">{fmtDuration(ch.start)}–{fmtDuration(ch.end)}</span>
+        <span className="sp" />
+        <button className="iconbtn" title="上一章" aria-label="上一章"
+          onClick={() => onSeek(chapters[Math.max(0, time - ch.start > 3 ? idx : idx - 1)].start)}><ChevronLeft /></button>
+        <button className="iconbtn" title="下一章" aria-label="下一章" disabled={idx >= chapters.length - 1}
+          onClick={() => chapters[idx + 1] && onSeek(chapters[idx + 1].start)}><ChevronRight /></button>
+      </div>
+      <div className="t">{ch.title}</div>
+      <div className="pgbar"><i style={{ width: `${pct}%` }} /></div>
+      <div className="argwrap">
+        <Argument c={ch} onSeek={onSeek} />
+        {next.length > 0 && (
+          <div className="next">
+            <div className="lbl">接下来</div>
+            {next.map((c, j) => (
+              <button key={j} className="nx" onClick={() => onSeek(c.start)}>
+                <span className="tm">{fmtDuration(c.start)}</span>
+                <span><b>{c.title}</b>{c.claim && <span className="cl">{c.claim}</span>}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div></div>
   )
 }
 
