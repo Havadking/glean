@@ -85,6 +85,24 @@ class ObsidianConfig:
 
 
 @dataclass
+class WebSearchConfig:
+    """伴读提问时的联网检索（DESIGN.md v0.9 第 4 条）。key 没配就整体关掉，界面上不出现联网开关。"""
+
+    provider: str = "tavily"          # 目前只有 tavily
+    api_key_env: str = "TAVILY_API_KEY"
+    max_results: int = 5              # 每次检索给模型看几条
+    max_calls: int = 3                # 每次提问最多检索几次
+
+    @property
+    def api_key(self) -> str | None:
+        return os.environ.get(self.api_key_env) or None
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.api_key)
+
+
+@dataclass
 class ASRConfig:
     provider: str = "funasr"
     model: str = "fun-asr-nano"
@@ -164,6 +182,7 @@ class Config:
     summarizer: SummarizerConfig = field(default_factory=SummarizerConfig)
     web: WebConfig = field(default_factory=WebConfig)
     obsidian: ObsidianConfig = field(default_factory=ObsidianConfig)
+    websearch: WebSearchConfig = field(default_factory=WebSearchConfig)
     output_dir: Path = Path("./output")
     cache_db: Path = Path("./cache.sqlite")
     source_path: Path | None = None
@@ -252,6 +271,7 @@ def load_config(path: Path | None = None) -> Config:
         summarizer=_build(SummarizerConfig, _section(raw, "summarizer"), "summarizer"),
         web=web,
         obsidian=obsidian,
+        websearch=_build(WebSearchConfig, _section(raw, "websearch"), "websearch"),
         output_dir=output_dir if output_dir.is_absolute() else base_dir / output_dir,
         cache_db=cache_db if cache_db.is_absolute() else base_dir / cache_db,
         source_path=config_path,

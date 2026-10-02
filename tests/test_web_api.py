@@ -26,6 +26,14 @@ class FakeSummarizer(BaseSummarizer):
     def _complete(self, system: str, user: str) -> str:
         FakeSummarizer.calls.append(user)
         self._record_usage(1000, 500)      # 假装每次调用花了这么多
+        if "帮人精读专业视频" in system:
+            return ('{"chapters": [{"start": "00:00", "title": "开头", "claim": "论点", '
+                    '"evidence": [{"text": "证据", "t": "00:04"}], "conclusion": "结论"}], '
+                    '"terms": [{"term": "第二句", "en": "", "video_says": "第二句话", "t": "00:04"}]}')
+        if "行业老师" in system:
+            return '{"prerequisites": [{"term": "基础概念", "explain": "解释", "chapter": 1}], "backgrounds": {"第二句": "背景"}}'
+        if "学习伙伴" in system:
+            return "### 视频里说\n- 在开头 [00:04]\n### 背景补充\n- 补一句"
         if "视频内容问答助手" in system or "创作者" in system:
             return self._complete_for_qa(user)
         if "打主题标签" in system:
@@ -952,3 +960,61 @@ def test_obsidian_export_and_config(client, workspace, tmp_path, monkeypatch):
     assert "缓存里的总结" in text and "evil.example" not in text and "转写全文" not in text
     assert client.get("/api/videos/BVAAA").json()["obsidian"]["path"] == "Inbox/V/A 视频.md"
     assert client.post("/api/videos/BVAAA/obsidian", json={}).json()["action"] == "updated"
+
+
+# ---------- 伴读 ----------
+
+
+def test_study_sheet_generate_known_and_ask(client):
+    r0 = client.get("/api/videos/BVAAA/study").json()
+    assert r0["sheet"] is None and r0["questions"] == []
+    assert r0["estimate"]["calls"] == 2 and r0["estimate"]["cost"] is not None
+    assert r0["media"] == {"video": False, "audio": False, "remuxable": False, "source_ext": None,
+                           "downloadable": False}
+    assert r0["websearch"]["enabled"] is False
+
+    job = client.post("/api/videos/BVAAA/study", json={}).json()["job"]
+    assert _wait_job(client, job["id"])["status"] == "done"
+    r1 = client.get("/api/videos/BVAAA/study").json()
+    sheet = r1["sheet"]
+    assert [c["title"] for c in sheet["chapters"]] == ["开头"]
+    assert sheet["glossary"][0]["background"] == "背景" and sheet["glossary"][0]["mentions"] == 1
+    assert r1["sheet_meta"]["stale"] is False and r1["sheet_meta"]["provider"] == "fake/model"
+    # 已有就不再进队列
+    assert client.post("/api/videos/BVAAA/study", json={}).json()["cached"] is True
+
+    k = client.post("/api/videos/BVAAA/study/known", json={"term": "基础概念", "known": True}).json()
+    assert k["prerequisites"][0]["known"] is True
+    assert client.post("/api/videos/BVAAA/study/known", json={"term": "没有", "known": True}).status_code == 404
+
+    a = client.post("/api/videos/BVAAA/study/ask", json={"question": "这里说啥", "position": 5}).json()
+    assert a["citations"] == [4] and a["position"] == 5 and a["chapter"] == 0
+    assert a["context_mode"] == "full" and a["used"]["calls"] == 1
+    assert "当前位置：[00:05]" in FakeSummarizer.calls[-1]
+
+    # 伴读的提问和速读的问视频分开放
+    qs = client.get("/api/videos/BVAAA/study").json()["questions"]
+    assert [q["question"] for q in qs] == ["这里说啥"] and qs[0]["position"] == 5
+    assert client.get("/api/videos/BVAAA/questions").json()["questions"] == []
+
+    # 重新生成保留「已懂」
+    job = client.post("/api/videos/BVAAA/study", json={"force": True}).json()["job"]
+    assert _wait_job(client, job["id"])["status"] == "done"
+    assert client.get("/api/videos/BVAAA/study").json()["sheet"]["prerequisites"][0]["known"] is True
+
+
+def test_study_media_serves_local_video(client, workspace, tmp_path, monkeypatch):
+    assert client.get("/api/videos/BVAAA/media").status_code == 404
+    clip = tmp_path / "clip.flv"
+    clip.write_bytes(bytes(64))
+    monkeypatch.setattr(api_mod.library_mod.LibraryEntry, "is_local", property(lambda self: True))
+    monkeypatch.setattr(api_mod.local_mod, "locate", lambda cfg, vid, src=None: clip)
+    m = client.get("/api/videos/BVAAA/study").json()["media"]
+    assert m["video"] is False and m["remuxable"] is True and m["source_ext"] == ".flv"
+
+    mp4 = tmp_path / "clip.mp4"
+    mp4.write_bytes(bytes(64))
+    monkeypatch.setattr(api_mod.local_mod, "locate", lambda cfg, vid, src=None: mp4)
+    assert client.get("/api/videos/BVAAA/study").json()["media"]["video"] is True
+    r = client.get("/api/videos/BVAAA/media", headers={"Range": "bytes=0-9"})
+    assert r.status_code == 206 and len(r.content) == 10 and r.headers["content-type"] == "video/mp4"

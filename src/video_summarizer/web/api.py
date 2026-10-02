@@ -49,6 +49,8 @@ from .. import listing as listing_mod
 from .. import local as local_mod
 from .. import qa as qa_mod
 from .. import search as search_mod
+from .. import study as study_mod
+from ..websearch import WebSearcher
 from ..subtitle.fetcher import select_subtitle_language
 from ..summarizer import get_provider as get_summarizer
 from ..summarizer.base import CostEstimate
@@ -82,6 +84,12 @@ ASR_CHOICES = [
     {"value": "paraformer-zh", "label": "Paraformer-zh", "note": "分说话人，仅中文"},
     {"value": "whisper", "label": "Whisper large-v3", "note": "兜底，多语种"},
 ]
+
+# 浏览器 <video> 能直接放的容器。flv / ts 这类录播格式要先无损转封装成 mp4
+PLAYABLE_VIDEO_EXTS = {".mp4", ".m4v", ".webm", ".mov", ".mkv"}
+REMUXABLE_VIDEO_EXTS = {".flv", ".ts", ".m2ts", ".avi", ".wmv"}
+# 转封装出来的文件名，放在产物目录里
+REMUX_NAME = "video.mp4"
 
 # 没有转写之前估 token 用：中文口语约 3 token/秒
 TOKENS_PER_SEC = 3.2
@@ -287,6 +295,11 @@ def _summaries_dict(cfg: Config, entry: library_mod.LibraryEntry) -> dict[str, d
         out["mindmap"]["nodes"] = tree.size
         out["mindmap"]["depth"] = tree.depth
     return out
+
+
+def asdict_safe(obj) -> dict[str, Any]:
+    from dataclasses import asdict
+    return asdict(obj)
 
 
 def _now_iso() -> str:
@@ -1666,6 +1679,252 @@ def create_app(cfg: Config):
     def delete_question(question_id: int):
         c = state.fresh_config()
         return {"deleted": Cache(c.cache_db).delete_question(question_id)}
+
+    # ----- 伴读（v0.9） -----
+
+    def _video_source(c: Config, entry: library_mod.LibraryEntry) -> Path | None:
+        """这条视频的原始视频文件：本地导入的原文件，或者「存视频」下下来的那份。"""
+        if entry.is_local:
+            src = local_mod.locate(c, entry.video_id, entry.source_url)
+            if src is not None:
+                return src
+        d = Cache(c.cache_db).find_download(entry.video_id)
+        if d and d.get("file_path") and Path(d["file_path"]).is_file():
+            return Path(d["file_path"])
+        return None
+
+    def _playable_video(c: Config, entry: library_mod.LibraryEntry) -> Path | None:
+        if entry.work_dir and (entry.work_dir / REMUX_NAME).is_file():
+            return entry.work_dir / REMUX_NAME
+        src = _video_source(c, entry)
+        if src is not None and src.suffix.lower() in PLAYABLE_VIDEO_EXTS:
+            return src
+        return None
+
+    def _media_dict(c: Config, entry: library_mod.LibraryEntry) -> dict[str, Any]:
+        playable = _playable_video(c, entry)
+        src = _video_source(c, entry)
+        downloads_on = bool(c.download.video_dir)
+        return {
+            "video": playable is not None,
+            "audio": library_mod.audio_path(entry) is not None,
+            # 有原文件但浏览器放不了（flv 之类），可以转封装
+            "remuxable": playable is None and src is not None and src.suffix.lower() in REMUXABLE_VIDEO_EXTS,
+            "source_ext": src.suffix.lower() if src else None,
+            # 链接视频没存过：可以走「存视频」下一份
+            "downloadable": playable is None and src is None and not entry.is_local and bool(entry.source_url) and downloads_on,
+        }
+
+    @app.get("/api/videos/{video_id}/media")
+    def video_media(video_id: str):
+        """伴读的视频流。FileResponse 支持 Range，拖进度条不用整段下。"""
+        c = state.fresh_config()
+        entry = library_mod.find_entry(c, video_id)
+        path = _playable_video(c, entry) if entry else None
+        if path is None:
+            raise HTTPException(404, "这条视频没有浏览器能放的视频文件")
+        ext = path.suffix.lower()
+        # mkv 按 webm 报类型：Chromium 认 Matroska 容器里的 H.264，但不认 video/x-matroska 这个类型名
+        media_type = {".webm": "video/webm", ".mkv": "video/webm", ".mov": "video/quicktime"}.get(ext, "video/mp4")
+        return FileResponse(path, media_type=media_type, headers={"Cache-Control": "private, max-age=86400"})
+
+    @app.post("/api/videos/{video_id}/media/remux")
+    def remux_media(video_id: str):
+        """flv / ts 录播无损转封装成 mp4（-c copy，不重新编码，几 GB 也就几十秒）。进任务队列。"""
+        c = state.fresh_config()
+        entry = library_mod.find_entry(c, video_id)
+        if entry is None:
+            raise HTTPException(404, "没有这个视频")
+        if _playable_video(c, entry) is not None:
+            return {"job": None, "cached": True}
+        src = _video_source(c, entry)
+        if src is None:
+            raise HTTPException(404, "找不到原视频文件")
+        if shutil.which("ffmpeg") is None:
+            raise HTTPException(400, "没装 ffmpeg，转不了格式")
+        dup = state.jobs.find_active("remux", video_id=video_id)
+        if dup is not None:
+            return {"job": dup.to_dict(), "cached": False}
+        work_dir = entry.work_dir or (c.output_dir / f"{entry.title[:60]}-{entry.video_id}")
+
+        def work(rep: Reporter) -> dict[str, Any]:
+            rep.stage("remux", f"转封装 {src.name} → {REMUX_NAME}")
+            work_dir.mkdir(parents=True, exist_ok=True)
+            tmp = work_dir / (REMUX_NAME + ".part")
+            cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-map", "0:v:0", "-map", "0:a:0?",
+                   "-c", "copy", "-movflags", "+faststart", "-f", "mp4", str(tmp)]
+            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")  # noqa: S603
+            if proc.returncode != 0 or not tmp.is_file():
+                tmp.unlink(missing_ok=True)
+                raise RuntimeError(f"转封装失败（多半是编码不是 H.264/H.265，浏览器本来就放不了）：{proc.stderr[-300:]}")
+            tmp.replace(work_dir / REMUX_NAME)
+            return {"video_id": video_id, "bytes": (work_dir / REMUX_NAME).stat().st_size}
+
+        job = state.jobs.submit("remux", f"转成 mp4 · {entry.title}", {"video_id": video_id}, work)
+        return {"job": job.to_dict(), "cached": False}
+
+    def _study_input_key(c: Config, entry: library_mod.LibraryEntry, transcript, provider_desc: str) -> str:
+        return study_mod.input_key(entry.cache_key or entry.video_id, correction_mod.fingerprint(transcript),
+                                   provider_desc)
+
+    def _load_sheet(c: Config, video_id: str) -> tuple[study_mod.StudySheet | None, Any]:
+        row = Cache(c.cache_db).get_study_sheet(video_id)
+        if row is None:
+            return None, None
+        try:
+            return study_mod.StudySheet.from_dict(row.content), row
+        except (TypeError, ValueError) as exc:
+            log.warning("学习底稿读不了，当没有：%s", exc)
+            return None, row
+
+    def _study_question_dict(q) -> dict[str, Any]:
+        extra = q.extra or {}
+        return {"id": q.id, "question": q.question, "answer": q.answer, "provider": q.provider,
+                "citations": q.citations, "created_at": q.created_at, "position": q.position_sec,
+                "chapter": extra.get("chapter"), "sources": extra.get("sources") or [],
+                "searches": extra.get("searches") or [], "spoiler_guard": bool(extra.get("spoiler_guard")),
+                "context_mode": extra.get("context_mode"), "used": extra.get("used")}
+
+    def _study_entry(c: Config, video_id: str):
+        entry = library_mod.find_entry(c, video_id)
+        transcript = library_mod.load_transcript(c, entry) if entry else None
+        if entry is None or transcript is None:
+            raise HTTPException(404, "没有这个视频的转写")
+        if c.summarizer.clean_transcript:
+            transcript = cleaning.clean_transcript(transcript)
+        return entry, transcript
+
+    @app.get("/api/videos/{video_id}/study")
+    def get_study(video_id: str):
+        c = state.fresh_config()
+        entry, transcript = _study_entry(c, video_id)
+        sheet, row = _load_sheet(c, video_id)
+        estimate: dict[str, Any]
+        ask_estimate: dict[str, Any] | None = None
+        try:
+            provider = get_summarizer(c.summarizer)
+            p = study_mod.plan_sheet(provider, transcript)
+            estimate = {**p, "cost": _money(c, p["input_tokens"], p["output_tokens"]),
+                        "currency": c.summarizer.currency, "provider": provider.describe()}
+            a = study_mod.plan_ask(provider, transcript, sheet, entry.uploader)
+            ask_estimate = {**a, "cost": _money(c, a["input_tokens"], 800), "currency": c.summarizer.currency}
+            stale = bool(row and row.input_key != _study_input_key(c, entry, transcript, provider.describe()))
+            tools_ok = provider.supports_tools
+        except VideoSummarizerError as exc:
+            estimate = {"error": str(exc)}
+            stale, tools_ok = False, False
+        dup = state.jobs.find_active("study", video_id=video_id)
+        return {
+            "video_id": video_id,
+            "sheet": sheet.to_dict() if sheet else None,
+            "sheet_meta": {"provider": row.provider, "created_at": row.created_at, "stale": stale,
+                           "outdated": sheet is not None and sheet.version != study_mod.SHEET_VERSION} if row else None,
+            "job": dup.to_dict() if dup else None,
+            "estimate": estimate,
+            "ask_estimate": ask_estimate,
+            "media": _media_dict(c, entry),
+            "websearch": {"enabled": c.websearch.enabled and tools_ok, "configured": c.websearch.enabled,
+                          "provider": c.websearch.provider, "key_env": c.websearch.api_key_env},
+            "questions": [_study_question_dict(q) for q in Cache(c.cache_db).questions_for_video(video_id, mode="study")],
+        }
+
+    class StudyBody(BaseModel):
+        force: bool = False
+
+    @app.post("/api/videos/{video_id}/study")
+    def create_study(video_id: str, body: StudyBody | None = None):
+        """生成学习底稿。进任务队列（长视频要几十秒）。已有且不要求重做就不进队列。"""
+        c = state.fresh_config()
+        entry, transcript = _study_entry(c, video_id)
+        dup = state.jobs.find_active("study", video_id=video_id)
+        if dup is not None:
+            return {"job": dup.to_dict(), "duplicate": True}
+        sheet, _row = _load_sheet(c, video_id)
+        if sheet is not None and not (body and body.force):
+            return {"job": None, "duplicate": False, "cached": True}
+        provider = get_summarizer(c.summarizer)
+        key = _study_input_key(c, entry, transcript, provider.describe())
+        old_known = {p.term for p in sheet.prerequisites if p.known} if sheet else set()
+
+        def work(rep: Reporter) -> dict[str, Any]:
+            rep.stage("study", f"调用 {provider.describe()} 生成学习底稿")
+            new = study_mod.generate_sheet(provider, transcript, uploader=entry.uploader,
+                                           progress=lambda msg: rep.stage("study", msg))
+            for p in new.prerequisites:      # 重新生成时，之前标过「已懂」的接着算懂
+                p.known = p.term in old_known
+            Cache(c.cache_db).put_study_sheet(video_id, input_key=key, provider=provider.describe(),
+                                              content=new.to_dict())
+            if entry.work_dir:
+                try:
+                    (entry.work_dir / "study.json").write_text(
+                        json.dumps(new.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+                except OSError as exc:
+                    log.warning("study.json 写不进产物目录：%s", exc)
+            used = _record_usage(c, provider, video_id=video_id, kind="study", detail=None)
+            return {"video_id": video_id, "chapters": len(new.chapters), "terms": len(new.glossary), "used": used}
+
+        job = state.jobs.submit("study", f"学习底稿 · {entry.title}", {"video_id": video_id}, work)
+        return {"job": job.to_dict(), "duplicate": False, "cached": False}
+
+    class KnownBody(BaseModel):
+        term: str
+        known: bool
+
+    @app.post("/api/videos/{video_id}/study/known")
+    def set_known(video_id: str, body: KnownBody):
+        c = state.fresh_config()
+        sheet, row = _load_sheet(c, video_id)
+        if sheet is None or row is None:
+            raise HTTPException(404, "还没有学习底稿")
+        hit = False
+        for p in sheet.prerequisites:
+            if p.term == body.term:
+                p.known, hit = body.known, True
+        if not hit:
+            raise HTTPException(404, "底稿里没有这个概念")
+        Cache(c.cache_db).put_study_sheet(video_id, input_key=row.input_key, provider=row.provider,
+                                          content=sheet.to_dict(), keep_created=True)
+        return {"prerequisites": [asdict_safe(p) for p in sheet.prerequisites]}
+
+    class StudyAskBody(BaseModel):
+        question: str
+        position: float = 0.0
+        spoiler_guard: bool = False
+        web: bool = True
+
+    @app.post("/api/videos/{video_id}/study/ask")
+    def study_ask(video_id: str, body: StudyAskBody):
+        """同步调用，带检索时十几秒到半分钟。历史从库里取最近几轮，前缀保持稳定好吃缓存。"""
+        question = body.question.strip()
+        if not question:
+            raise HTTPException(400, "先写个问题")
+        c = state.fresh_config()
+        entry, transcript = _study_entry(c, video_id)
+        sheet, _row = _load_sheet(c, video_id)
+        cache = Cache(c.cache_db)
+        provider = get_summarizer(c.summarizer)
+        past = cache.questions_for_video(video_id, mode="study")
+        history = [(qa_mod.Turn(q.question, q.answer), q.position_sec) for q in past[-study_mod.MAX_HISTORY_TURNS:]]
+        searcher = WebSearcher(c.websearch, cache) if body.web and c.websearch.enabled else None
+        provider.take_cached()
+        answer = study_mod.ask(provider, transcript, sheet, question=question, position=body.position,
+                               history=history, spoiler_guard=body.spoiler_guard, searcher=searcher,
+                               uploader=entry.uploader)
+        cached = provider.take_cached()
+        used = _record_usage(c, provider, video_id=video_id, kind="study_qa", detail=question[:200])
+        used["cached_tokens"] = cached
+        if searcher is not None and searcher.calls:
+            cache.add_usage(video_id, "websearch", question[:200], c.websearch.provider, 0, 0, searcher.paid_calls, None)
+            used["searches"] = searcher.calls
+            used["paid_searches"] = searcher.paid_calls
+        extra = {"chapter": answer.chapter, "sources": answer.sources, "searches": answer.searches,
+                 "spoiler_guard": answer.spoiler_guard, "context_mode": answer.context_mode, "used": used}
+        qid = cache.add_question(video_id, answer.question, answer.answer, answer.provider, answer.citations,
+                                 mode="study", position_sec=answer.position, extra=extra)
+        return {"id": qid, "question": answer.question, "answer": answer.answer, "provider": answer.provider,
+                "citations": answer.citations, "created_at": _now_iso(), "position": answer.position,
+                "chapter": answer.chapter, "sources": answer.sources, "searches": answer.searches,
+                "spoiler_guard": answer.spoiler_guard, "context_mode": answer.context_mode, "used": used}
 
     # ----- 问 UP 主（跨视频） -----
 

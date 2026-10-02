@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..config import SummarizerConfig
@@ -37,10 +37,29 @@ class CostEstimate:
         return self.strategy == "map-reduce"
 
 
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass
+class ChatReply:
+    """chat() 的一轮回复。tool_calls 非空时 content 可能是空的。"""
+
+    content: str
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    # 原样追加回 messages 的那条 assistant 消息（带 tool_calls 时必须带上，否则下一轮接口报错）
+    message: dict[str, Any] = field(default_factory=dict)
+
+
 class BaseSummarizer(ABC):
     """所有总结 provider 的基类。"""
 
     name: str = "base"
+    # 能不能走工具调用（function calling）。不能的 provider 调 chat() 时工具被忽略
+    supports_tools: bool = False
 
     def __init__(self, cfg: SummarizerConfig) -> None:
         self.cfg = cfg
@@ -48,6 +67,8 @@ class BaseSummarizer(ABC):
         self.usage_input = 0
         self.usage_output = 0
         self.usage_calls = 0
+        # 输入里命中服务端前缀缓存的部分（DeepSeek / OpenAI 会报）。只用来展示，不参与记账
+        self.usage_cached = 0
 
     # ---------- 子类只需实现这个 ----------
 
@@ -64,7 +85,25 @@ class BaseSummarizer(ABC):
         """一次裸调用。问答这类不走总结模板的功能用它。"""
         return self._complete(system, user)
 
-    def _record_usage(self, input_tokens: Any, output_tokens: Any) -> None:
+    def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None) -> ChatReply:
+        """多轮消息（OpenAI 格式）。默认实现把对话压成一条 user 走 _complete，不支持工具。
+
+        支持工具的 provider 覆盖它；工具定义用 OpenAI 的 {"type": "function", "function": {...}}。
+        """
+        system = "\n\n".join(m["content"] for m in messages if m.get("role") == "system")
+        parts = []
+        for m in messages:
+            role = m.get("role")
+            if role == "user":
+                parts.append(m.get("content") or "")
+            elif role == "assistant" and m.get("content"):
+                parts.append(f"（你之前的回答）\n{m['content']}")
+            elif role == "tool":
+                parts.append(f"（检索结果）\n{m.get('content') or ''}")
+        text = self._complete(system, "\n\n".join(parts))
+        return ChatReply(content=text, message={"role": "assistant", "content": text})
+
+    def _record_usage(self, input_tokens: Any, output_tokens: Any, cached_tokens: Any = 0) -> None:
         """provider 拿到响应后调一下。读不到用量的（"?"）不计。"""
         try:
             self.usage_input += int(input_tokens or 0)
@@ -72,6 +111,15 @@ class BaseSummarizer(ABC):
         except (TypeError, ValueError):
             return
         self.usage_calls += 1
+        try:
+            self.usage_cached += int(cached_tokens or 0)
+        except (TypeError, ValueError):
+            pass
+
+    def take_cached(self) -> int:
+        """取走并清零累计的缓存命中 token。"""
+        n, self.usage_cached = self.usage_cached, 0
+        return n
 
     def take_usage(self) -> tuple[int, int, int]:
         """取走并清零累计用量：(输入, 输出, 调用次数)。"""

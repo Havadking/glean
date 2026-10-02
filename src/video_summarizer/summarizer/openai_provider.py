@@ -6,12 +6,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+from typing import Any
 
 from ..config import SummarizerConfig
 from ..errors import ConfigError, SummarizerError
-from .base import BaseSummarizer
+from .base import BaseSummarizer, ChatReply, ToolCall
 
 log = logging.getLogger(__name__)
 
@@ -21,6 +23,7 @@ _BACKOFF_SEC = 4
 
 class OpenAICompatibleSummarizer(BaseSummarizer):
     name = "openai"
+    supports_tools = True
 
     def __init__(self, cfg: SummarizerConfig) -> None:
         super().__init__(cfg)
@@ -55,21 +58,20 @@ class OpenAICompatibleSummarizer(BaseSummarizer):
         )
         return self._client
 
-    def _complete(self, system: str, user: str) -> str:
+    def _create(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None):
+        """发一次请求，带重试和记账。返回第一条 choice 的 message。"""
         client = self._get_client()
         last_error: Exception | None = None
+        kwargs: dict[str, Any] = {
+            "model": self.cfg.model, "messages": messages,
+            "temperature": self.cfg.temperature, "max_tokens": self.cfg.max_output_tokens,
+        }
+        if tools:
+            kwargs["tools"] = tools
 
         for attempt in range(1, _MAX_RETRIES + 1):
             try:
-                response = client.chat.completions.create(
-                    model=self.cfg.model,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    temperature=self.cfg.temperature,
-                    max_tokens=self.cfg.max_output_tokens,
-                )
+                response = client.chat.completions.create(**kwargs)
             except Exception as exc:  # noqa: BLE001 - SDK 异常类型较多，统一兜住
                 last_error = exc
                 if attempt == _MAX_RETRIES or not _is_retryable(exc):
@@ -82,21 +84,63 @@ class OpenAICompatibleSummarizer(BaseSummarizer):
 
             usage = getattr(response, "usage", None)
             if usage is not None:
+                cached = _cached_tokens(usage)
                 log.info(
-                    "本次调用 token：输入 %s / 输出 %s",
-                    getattr(usage, "prompt_tokens", "?"),
+                    "本次调用 token：输入 %s（缓存命中 %s）/ 输出 %s",
+                    getattr(usage, "prompt_tokens", "?"), cached,
                     getattr(usage, "completion_tokens", "?"),
                 )
-                self._record_usage(getattr(usage, "prompt_tokens", 0), getattr(usage, "completion_tokens", 0))
+                self._record_usage(getattr(usage, "prompt_tokens", 0),
+                                   getattr(usage, "completion_tokens", 0), cached)
 
             if not response.choices:
                 raise SummarizerError("模型没有返回任何内容")
-            content = (response.choices[0].message.content or "").strip()
-            if not content:
-                raise SummarizerError("模型返回了空内容，可能触发了内容过滤或 max_tokens 太小")
-            return content
+            return response.choices[0].message
 
         raise SummarizerError(f"调用 {self.describe()} 失败: {last_error}") from last_error
+
+    def _complete(self, system: str, user: str) -> str:
+        message = self._create([
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ])
+        content = (message.content or "").strip()
+        if not content:
+            raise SummarizerError("模型返回了空内容，可能触发了内容过滤或 max_tokens 太小")
+        return content
+
+    def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None) -> ChatReply:
+        message = self._create(messages, tools)
+        content = (message.content or "").strip()
+        calls: list[ToolCall] = []
+        raw_calls: list[dict[str, Any]] = []
+        for tc in getattr(message, "tool_calls", None) or []:
+            fn = tc.function
+            try:
+                args = json.loads(fn.arguments or "{}")
+            except ValueError:
+                args = {}
+            calls.append(ToolCall(id=tc.id, name=fn.name, arguments=args if isinstance(args, dict) else {}))
+            raw_calls.append({"id": tc.id, "type": "function",
+                              "function": {"name": fn.name, "arguments": fn.arguments or "{}"}})
+        if not content and not calls:
+            raise SummarizerError("模型返回了空内容，可能触发了内容过滤或 max_tokens 太小")
+        msg: dict[str, Any] = {"role": "assistant", "content": content}
+        if raw_calls:
+            msg["tool_calls"] = raw_calls
+        return ChatReply(content=content, tool_calls=calls, message=msg)
+
+
+def _cached_tokens(usage: Any) -> int:
+    """DeepSeek 报 prompt_cache_hit_tokens，OpenAI 报 prompt_tokens_details.cached_tokens。"""
+    hit = getattr(usage, "prompt_cache_hit_tokens", None)
+    if hit is None:
+        details = getattr(usage, "prompt_tokens_details", None)
+        hit = getattr(details, "cached_tokens", None) if details is not None else None
+    try:
+        return int(hit or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _is_retryable(exc: Exception) -> bool:

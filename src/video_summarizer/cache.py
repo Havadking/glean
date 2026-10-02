@@ -31,7 +31,8 @@ log = logging.getLogger(__name__)
 # v7：加 downloads 表，「存视频」的记录（给随拾看的那份 mp4 落在哪、下到哪一步）
 # v8：加 obsidian_exports 表，记每条视频存到 Obsidian 库里的哪个文件
 # v9：加 local_sources（本地视频文件在哪）和 video_meta（手动改过的主播 / 日期）
-SCHEMA_VERSION = 9
+# v10：伴读。study_sheets（学习底稿）、web_searches（联网检索缓存）；questions 加 mode / position_sec / extra
+SCHEMA_VERSION = 10
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS transcripts (
@@ -196,12 +197,35 @@ CREATE TABLE IF NOT EXISTS video_meta (
     upload_date TEXT,
     updated_at  TEXT NOT NULL
 );
+
+-- 伴读的学习底稿，一条视频一份。input_key 是生成时的输入指纹（转写 + 纠错表 + 模型），
+-- 对不上说明转写改过，界面提示可以重新生成，但旧的照样能看
+CREATE TABLE IF NOT EXISTS study_sheets (
+    video_id    TEXT PRIMARY KEY,
+    input_key   TEXT NOT NULL,
+    provider    TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+-- 联网检索结果。同一天同一个查询不重复花钱
+CREATE TABLE IF NOT EXISTS web_searches (
+    provider    TEXT NOT NULL,
+    query       TEXT NOT NULL,
+    day         TEXT NOT NULL,
+    payload     TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (provider, query, day)
+);
 """
 
 
 # v2 加的列。老库用 ALTER TABLE 补上，列名 -> 类型
 _MIGRATE_COLUMNS = {
     "transcripts": {"uploader": "TEXT", "upload_date": "TEXT", "thumbnail": "TEXT"},
+    # mode：NULL / qa = 问视频（速读），study = 伴读提问；extra 是伴读回答的检索来源等 JSON
+    "questions": {"mode": "TEXT", "position_sec": "REAL", "extra": "TEXT"},
 }
 
 
@@ -309,6 +333,18 @@ class QuestionEntry:
     provider: str
     citations: list[float]
     created_at: str
+    position_sec: float | None = None
+    extra: dict[str, Any] | None = None
+
+
+@dataclass
+class StudySheetEntry:
+    video_id: str
+    input_key: str
+    provider: str
+    content: dict[str, Any]
+    created_at: str
+    updated_at: str
 
 
 @dataclass
@@ -593,6 +629,7 @@ class Cache:
 
     def add_question(
         self, video_id: str, question: str, answer: str, provider: str, citations: list[float],
+        *, mode: str = "qa", position_sec: float | None = None, extra: dict[str, Any] | None = None,
     ) -> int | None:
         conn = self._connect()
         if conn is None:
@@ -600,9 +637,10 @@ class Cache:
         try:
             with closing(conn):
                 cur = conn.execute(
-                    "INSERT INTO questions (video_id, question, answer, provider, citations, created_at)"
-                    " VALUES (?,?,?,?,?,?)",
-                    (video_id, question, answer, provider, json.dumps(citations), _now()),
+                    "INSERT INTO questions (video_id, question, answer, provider, citations, created_at,"
+                    " mode, position_sec, extra) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (video_id, question, answer, provider, json.dumps(citations), _now(),
+                     mode, position_sec, json.dumps(extra, ensure_ascii=False) if extra else None),
                 )
                 conn.commit()
                 return cur.lastrowid
@@ -610,15 +648,18 @@ class Cache:
             log.warning("写问答记录失败：%s", exc)
             return None
 
-    def questions_for_video(self, video_id: str, limit: int = 100) -> list[QuestionEntry]:
+    def questions_for_video(self, video_id: str, limit: int = 100, *, mode: str = "qa") -> list[QuestionEntry]:
+        """mode=qa 是速读的问视频（含没有 mode 的老记录），study 是伴读提问，两边互不混。"""
         conn = self._connect()
         if conn is None:
             return []
+        where = "(mode IS NULL OR mode = 'qa')" if mode == "qa" else "mode = ?"
+        args: tuple[Any, ...] = (video_id, limit) if mode == "qa" else (video_id, mode, limit)
         try:
             with closing(conn):
                 rows = conn.execute(
-                    "SELECT id, video_id, question, answer, provider, citations, created_at"
-                    " FROM questions WHERE video_id = ? ORDER BY id LIMIT ?", (video_id, limit),
+                    "SELECT id, video_id, question, answer, provider, citations, created_at, position_sec, extra"
+                    f" FROM questions WHERE video_id = ? AND {where} ORDER BY id LIMIT ?", args,
                 ).fetchall()
         except sqlite3.Error:
             return []
@@ -628,8 +669,12 @@ class Cache:
                 cites = json.loads(r["citations"])
             except ValueError:
                 cites = []
+            try:
+                extra = json.loads(r["extra"]) if r["extra"] else None
+            except ValueError:
+                extra = None
             out.append(QuestionEntry(r["id"], r["video_id"], r["question"], r["answer"],
-                                     r["provider"], cites, r["created_at"]))
+                                     r["provider"], cites, r["created_at"], r["position_sec"], extra))
         return out
 
     def delete_question(self, question_id: int) -> bool:
@@ -643,6 +688,89 @@ class Cache:
                 return cur.rowcount > 0
         except sqlite3.Error:
             return False
+
+    # ---------- 伴读：学习底稿 ----------
+
+    def get_study_sheet(self, video_id: str) -> StudySheetEntry | None:
+        conn = self._connect()
+        if conn is None:
+            return None
+        try:
+            with closing(conn):
+                r = conn.execute(
+                    "SELECT video_id, input_key, provider, content, created_at, updated_at"
+                    " FROM study_sheets WHERE video_id = ?", (video_id,),
+                ).fetchone()
+        except sqlite3.Error:
+            return None
+        if r is None:
+            return None
+        try:
+            content = json.loads(r["content"])
+        except ValueError:
+            return None
+        return StudySheetEntry(r["video_id"], r["input_key"], r["provider"], content,
+                               r["created_at"], r["updated_at"])
+
+    def put_study_sheet(self, video_id: str, *, input_key: str, provider: str, content: dict[str, Any],
+                        keep_created: bool = False) -> None:
+        """keep_created=True 是改「已懂」这类小修改，不动生成时间。"""
+        conn = self._connect()
+        if conn is None:
+            return
+        now = _now()
+        try:
+            with closing(conn):
+                if keep_created:
+                    conn.execute(
+                        "UPDATE study_sheets SET content = ?, updated_at = ? WHERE video_id = ?",
+                        (json.dumps(content, ensure_ascii=False), now, video_id),
+                    )
+                else:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO study_sheets"
+                        " (video_id, input_key, provider, content, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+                        (video_id, input_key, provider, json.dumps(content, ensure_ascii=False), now, now),
+                    )
+                conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("写学习底稿失败：%s", exc)
+
+    # ---------- 联网检索缓存 ----------
+
+    def get_web_search(self, provider: str, query: str, day: str) -> list[dict[str, Any]] | None:
+        conn = self._connect()
+        if conn is None:
+            return None
+        try:
+            with closing(conn):
+                r = conn.execute(
+                    "SELECT payload FROM web_searches WHERE provider = ? AND query = ? AND day = ?",
+                    (provider, query, day),
+                ).fetchone()
+        except sqlite3.Error:
+            return None
+        if r is None:
+            return None
+        try:
+            return json.loads(r["payload"])
+        except ValueError:
+            return None
+
+    def put_web_search(self, provider: str, query: str, day: str, results: list[dict[str, Any]]) -> None:
+        conn = self._connect()
+        if conn is None:
+            return
+        try:
+            with closing(conn):
+                conn.execute(
+                    "INSERT OR REPLACE INTO web_searches (provider, query, day, payload, created_at)"
+                    " VALUES (?,?,?,?,?)",
+                    (provider, query, day, json.dumps(results, ensure_ascii=False), _now()),
+                )
+                conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("写检索缓存失败：%s", exc)
 
     # ---------- 标签 ----------
 
@@ -1408,6 +1536,7 @@ class Cache:
                     conn.execute("DELETE FROM video_remarks WHERE video_id = ?", (video_id,))
                     conn.execute("DELETE FROM video_meta WHERE video_id = ?", (video_id,))
                     conn.execute("DELETE FROM local_sources WHERE video_id = ?", (video_id,))
+                    conn.execute("DELETE FROM study_sheets WHERE video_id = ?", (video_id,))
                 else:
                     t = conn.execute("DELETE FROM transcripts")
                     s = conn.execute("DELETE FROM summaries")
@@ -1417,6 +1546,7 @@ class Cache:
                     conn.execute("DELETE FROM video_remarks")
                     conn.execute("DELETE FROM video_meta")
                     conn.execute("DELETE FROM local_sources")
+                    conn.execute("DELETE FROM study_sheets")
                 conn.commit()
                 counts = (t.rowcount, s.rowcount)
                 conn.execute("VACUUM")

@@ -260,10 +260,43 @@ export interface Review {
   estimate: { input_tokens: number; cost: number | null; currency: string; provider: string }
 }
 
+// ---------- 伴读（v0.9） ----------
+export interface StudyEvidence { text: string; t: number | null }
+export interface StudyChapter { start: number; end: number; title: string; claim: string; evidence: StudyEvidence[]; conclusion: string }
+export interface StudyTerm { term: string; en: string; video_says: string; t: number | null; background: string; mentions: number; positions: number[] }
+export interface StudyPrereq { term: string; explain: string; chapter: number | null; known: boolean }
+export interface StudySheet { chapters: StudyChapter[]; glossary: StudyTerm[]; prerequisites: StudyPrereq[]; version: number }
+export interface StudySource { n: number; title: string; url: string }
+export interface StudyUsed {
+  input_tokens: number; output_tokens: number; calls: number; cost: number | null; currency: string
+  cached_tokens?: number; searches?: number; paid_searches?: number
+}
+export interface StudyQuestion {
+  id: number | null; question: string; answer: string; provider: string; citations: number[]; created_at: string
+  position: number | null; chapter: number | null; sources: StudySource[]; searches: string[]
+  spoiler_guard: boolean; context_mode: string | null; used?: StudyUsed | null
+}
+export interface StudyMedia { video: boolean; audio: boolean; remuxable: boolean; source_ext: string | null; downloadable: boolean }
+export interface StudyEstimate {
+  transcript_tokens: number; chunks: number; calls: number; input_tokens: number; output_tokens: number
+  cost: number | null; currency: string; provider: string
+}
+export interface StudyState {
+  video_id: string
+  sheet: StudySheet | null
+  sheet_meta: { provider: string; created_at: string; stale: boolean; outdated: boolean } | null
+  job: Job | null
+  estimate: StudyEstimate | { error: string }
+  ask_estimate: { prefix_tokens: number; input_tokens: number; context_mode: string; cost: number | null; currency: string } | null
+  media: StudyMedia
+  websearch: { enabled: boolean; configured: boolean; provider: string; key_env: string }
+  questions: StudyQuestion[]
+}
+
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
 export interface Job {
   id: string
-  kind: 'process' | 'summarize' | 'audio' | 'tags'
+  kind: 'process' | 'summarize' | 'audio' | 'tags' | 'study' | 'remux'
   title: string
   params: Record<string, unknown>
   status: JobStatus
@@ -375,6 +408,16 @@ export const api = {
     call<{ deleted: number; groups: string[] }>(`/uploaders/groups/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   askUploader: (name: string, question: string, history: { question: string; answer: string }[]) =>
     post<Question>(`/uploaders/${encodeURIComponent(name)}/ask`, { question, history }),
+  study: (id: string) => call<StudyState>(`/videos/${encodeURIComponent(id)}/study`),
+  generateStudy: (id: string, force = false) =>
+    post<{ job: Job | null; duplicate: boolean; cached?: boolean }>(`/videos/${encodeURIComponent(id)}/study`, { force }),
+  setKnown: (id: string, term: string, known: boolean) =>
+    post<{ prerequisites: StudyPrereq[] }>(`/videos/${encodeURIComponent(id)}/study/known`, { term, known }),
+  studyAsk: (id: string, body: { question: string; position: number; spoiler_guard: boolean; web: boolean }) =>
+    post<StudyQuestion>(`/videos/${encodeURIComponent(id)}/study/ask`, body),
+  mediaUrl: (id: string) => `/api/videos/${encodeURIComponent(id)}/media`,
+  remux: (id: string) => post<{ job: Job | null; cached: boolean }>(`/videos/${encodeURIComponent(id)}/media/remux`, {}),
+  saveVideo: (url: string) => post<{ job: { id: string }; duplicate: boolean }>('/downloads', { url }),
   deleteQuestion: (id: number) => call<{ deleted: boolean }>(`/questions/${id}`, { method: 'DELETE' }),
   tags: () => call<{ tags: TagCount[]; untagged: number }>('/tags'),
   addTag: (id: string, tag: string) => post<{ tags: Tag[] }>(`/videos/${encodeURIComponent(id)}/tags`, { tag }),
