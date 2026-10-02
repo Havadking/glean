@@ -145,6 +145,26 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 10px; border: 1px sol
 .iconbtn svg { width: 16px; height: 16px; }
 .pane { flex: 1; min-height: 0; overflow: auto; padding: 12px 14px 16px; display: none; }
 .pane.on { display: block; }
+/* 侧栏里的本章：竖排论点 / 证据 / 结论 + 接下来 */
+.pc .no { display: inline-block; font-size: 11px; color: var(--accent-ink); background: var(--accent-bg); border-radius: 5px; padding: 2px 7px; font-weight: 500; }
+.pc .tm { font: 11.5px "JetBrains Mono", monospace; color: var(--faint); margin-left: 6px; }
+.pc h3 { margin: 8px 0 6px; font-size: 16px; line-height: 1.45; }
+.pc .pg { height: 3px; background: var(--line-2); border-radius: 2px; overflow: hidden; }
+.pc .pg i { display: block; height: 100%; background: var(--accent); }
+.pc .nav { display: flex; gap: 6px; margin: 8px 0 4px; }
+.pc .nav button { flex: 1; font-size: 12px; color: var(--mute); border: 1px solid var(--line); border-radius: 6px; padding: 3px 0; }
+.pc .st { padding: 9px 0; border-top: 1px dashed var(--accent-line); }
+.pc .st:first-of-type { border-top: 0; }
+.pc .k { display: block; font-size: 11px; font-weight: 600; color: var(--accent-ink); letter-spacing: .06em; margin-bottom: 3px; }
+.pc p { margin: 0; font-size: 13.5px; line-height: 1.7; color: var(--ink-2); }
+.pc ul { margin: 0; padding-left: 16px; font-size: 13.5px; line-height: 1.7; color: var(--ink-2); }
+.pc li + li { margin-top: 4px; }
+.pc .nexts { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.pc .nexts .lbl { font-size: 11px; letter-spacing: .08em; color: var(--faint); margin-bottom: 4px; }
+.pc .nx { display: grid; grid-template-columns: 50px 1fr; gap: 6px; padding: 5px 2px; font-size: 13px; color: var(--ink-2); }
+.pc .nx .t2 { font: 11px "JetBrains Mono", monospace; color: var(--faint); padding-top: 2px; }
+.pc .nx b { font-weight: 500; color: var(--ink); }
+.pc .nx span.cl { display: block; font-size: 12px; color: var(--mute); }
 .cinema .side { display: none; }
 .cinema.drawer .side { display: flex; position: fixed; top: 36px; right: var(--rail); bottom: 0; width: 380px; z-index: 20;
   box-shadow: -12px 0 40px rgba(0,0,0,.28); border-left: 1px solid var(--line); animation: slidein .18s ease-out; }
@@ -272,6 +292,7 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 10px; border: 1px sol
 
   <aside class="side" id="side">
     <div class="tabs">
+      <button class="t" data-tab="chap" id="tabChap">本章</button>
       <button class="t on" data-tab="ask">问<span class="n">2</span></button>
       <button class="t" data-tab="sheet">底稿</button>
       <button class="t" data-tab="tx">转写</button>
@@ -304,6 +325,7 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 10px; border: 1px sol
       </div>
     </div>
 
+    <div class="pane" id="pane-chap"></div>
     <div class="pane" id="pane-sheet"></div>
     <div class="pane" id="pane-tx"></div>
 
@@ -321,6 +343,7 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 10px; border: 1px sol
   </aside>
 
   <nav class="rail" id="rail">
+    <button data-open="chap" id="railChap" title="本章论证"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg></button>
     <button data-open="ask" title="问（Q）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span class="dot">2</span></button>
     <button data-open="sheet" title="底稿"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19.5V5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-1.5zM8 7h6M8 11h6"/></svg></button>
     <button data-open="tx" title="转写（T）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 10h16M4 14h10M4 18h7"/></svg></button>
@@ -333,21 +356,19 @@ kbd { font-family: "JetBrains Mono", monospace; font-size: 10px; border: 1px sol
   <h4>视觉稿控制（不属于设计）<span class="sp"></span><button id="mockMin">收起</button></h4>
   <div class="body">
     <div class="grp" id="gOrient"><button class="on" data-v="land">横屏视频</button><button data-v="port">竖屏录屏</button></div>
-    <div class="grp" id="gMode"><button class="on" data-v="side">A 标准：侧栏常驻</button><button data-v="cinema">B 影院：侧栏按需浮出</button></div>
-    <div class="grp" id="gTab"><button class="on" data-v="ask">侧栏：问</button><button data-v="sheet">底稿</button><button data-v="tx">转写</button></div>
+    <div class="grp" id="gMode"><button class="on" data-v="auto">侧栏：自动</button><button data-v="cinema">手动收起（F）</button></div>
+    <div class="grp" id="gTab"><button data-v="chap">本章</button><button class="on" data-v="ask">问</button><button data-v="sheet">底稿</button><button data-v="tx">转写</button></div>
     <div class="cmp">
-      <div class="now"><span>当前看到的视频</span><b id="cNow">—</b></div>
-      <div><span>A 标准（侧栏常驻）</span><b id="cA">—</b></div>
-      <div><span>B 影院（侧栏浮出）</span><b id="cB">—</b></div>
-      <div><span>现在的专注模式</span><b id="cFocus">—</b></div>
-      <div><span>一开始（转写常驻）</span><b id="cOld">—</b></div>
+      <div class="now"><span>当前视频</span><b id="cNow">—</b></div>
+      <div><span>按高度撑满的上限</span><b id="cMax">—</b></div>
+      <div><span>现在实现的专注模式</span><b id="cFocus">—</b></div>
+      <div style="display:block;margin-top:6px;color:#F79BBA" id="cWhy"></div>
     </div>
     <ul>
-      <li>侧栏只有一个：问 / 底稿 / 转写三个标签，提问框常驻底部</li>
-      <li>A：视频下面的宽矮空间给本章卡，横排论点 | 证据 | 结论</li>
-      <li>B：侧栏收成右边一条图标；按 Q 或点图标从右边浮出、盖在视频上，Esc 收回，视频大小不变；本章卡压成一行，点「展开论证」浮出</li>
-      <li>16:10 屏幕上只要侧栏常驻，视频宽度就被卡在 ~1050；要更大只能让侧栏浮出</li>
-      <li>竖屏录屏按高度撑满，A/B 差别不大</li>
+      <li>视频先按高度撑满；右边剩下的宽度 ≥ 300 就放常驻侧栏（最宽 440）</li>
+      <li>差一点：视频让出不到 10% 换侧栏常驻；差得多（16:10 屏）才收成图标、按需浮出</li>
+      <li>视频撑满高度后下面只剩一行本章，完整论证在侧栏「本章」标签（默认打开）</li>
+      <li>拖窗口大小看规则怎么切换；竖屏布局不变</li>
     </ul>
   </div>
 </div>
@@ -365,6 +386,8 @@ const fmt = s => { s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.f
   return (h ? h + ":" + String(m).padStart(2, "0") : String(m).padStart(2, "0")) + ":" + String(x).padStart(2, "0"); };
 const $ = s => document.querySelector(s);
 let orient = "land";
+let forced = false;          // 手动收起（F）
+const MIN_PANEL = 300, MAX_PANEL = 440, MAX_GIVE = 0.10;
 
 function chapHTML() {
   return `
@@ -402,6 +425,27 @@ function tlHTML(w) {
   return h;
 }
 
+function pchapHTML() {
+  return `<div class="pc">
+    <span class="no">第 9/21 章</span><span class="tm">45:12 – 59:31 · 已看 33%</span>
+    <h3>CHO细胞与CXO产业</h3>
+    <div class="pg"><i style="width:33%"></i></div>
+    <div class="nav"><button>‹ 上一章</button><button>下一章 ›</button></div>
+    <div class="st"><span class="k">论点</span><p>中国仓鼠卵巢细胞（CHO）成为全球生物制药的核心细胞，但中国因缺乏完整的 CXO 配套而长期受制；CXO 是医药产业的公共基础设施。</p></div>
+    <div class="st"><span class="k">证据</span><ul>
+      <li>1957 年美国培育出 CHO 细胞系，能无限生长、糖基化接近人类 <button class="tcl">47:36</button></li>
+      <li>2019 年全球十大畅销药里六种由 CHO 生产，2024 年重组蛋白药 70% 由 CHO 生产 <button class="tcl">49:52</button></li>
+      <li>CXO 覆盖研发、生产到商业化的外包服务，分 CRO、CMO、CSO <button class="tcl">54:52</button></li>
+      <li>中国能提取培育 CHO，但做不到建立细胞株和大规模培养 <button class="tcl">58:23</button></li>
+    </ul></div>
+    <div class="st"><span class="k">结论</span><p>CXO 是围绕药企展开的庞大系统，一个国家的 CXO 就是这个国家的药业基石。</p></div>
+    <div class="nexts"><div class="lbl">接下来</div>
+      <div class="nx"><span class="t2">59:31</span><span><b>中国医药业与CXO萌芽</b><span class="cl">国内药企长期以仿制为主，CXO 跟着外包订单起步</span></span></div>
+      <div class="nx"><span class="t2">1:07:05</span><span><b>GLP与CXO制度化</b><span class="cl">质量规范让外包从「能做」变成「被认可」</span></span></div>
+    </div>
+  </div>`;
+}
+
 function sheetHTML() {
   const pre = [["新药研发的基本流程", 1], ["专利与仿制药", 1], ["临床试验分期与终点指标", 0], ["癌基因与抑癌基因", 0], ["化疗、靶向与免疫治疗", 0], ["单克隆抗体", 0]];
   return `<div class="sec">看之前 · 前置知识<span class="r">已懂 2/10</span></div>` +
@@ -425,52 +469,52 @@ function txHTML() {
 }
 
 function fit() {
-  const stage = $("#stage"), vw = $("#vwrap"), tl = $("#tl"), chap = $("#chap");
-  const cs = getComputedStyle(stage);
-  const W = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-  const H = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-  let w, h;
-  const cinema = $("#page").classList.contains("cinema");
+  const page = $("#page"), vw = $("#vwrap"), tl = $("#tl"), chap = $("#chap");
+  const W0 = innerWidth, H = innerHeight - 36 - 24;     // 顶栏 36，舞台上下 padding 24
+  let w, h, why = "";
   if (orient === "land") {
-    const ar = 16 / 9, tlH = 26 + 8, minCard = cinema ? 40 : 150, gap = 8;
-    w = Math.min(W, (H - tlH - minCard - gap) * ar);
-    h = w / ar;
+    const ar = 16 / 9, tlH = 34, thinH = 48, gap = 8;
+    const wByH = Math.floor((H - tlH - thinH - gap) * ar);   // 视频按高度撑满时的宽度
+    const free = W0 - 28 - wByH;                              // 这时右边还剩多少
+    let P = 0;
+    if (!forced) {
+      if (free >= MIN_PANEL) { P = Math.min(free, MAX_PANEL); why = `右边本来就空着 ${free}px，放常驻侧栏（${P}px），视频不受影响`; }
+      else if (MIN_PANEL - free <= wByH * MAX_GIVE) { P = MIN_PANEL; why = `视频让出 ${MIN_PANEL - free}px（${Math.round((MIN_PANEL - free) / wByH * 100)}%）换常驻侧栏`; }
+      else why = `常驻侧栏要让视频缩小 ${Math.round((MIN_PANEL - free) / wByH * 100)}%，太多了：收成图标，按 Q / 点图标浮出`;
+    } else why = "手动收起（F）：侧栏按需浮出";
+    page.classList.toggle("cinema", P === 0);
+    if (P) { page.classList.remove("drawer"); page.style.setProperty("--panel", P + "px"); }
+    const W = W0 - 28 - (P || 44);
+    w = Math.min(W, wByH); h = w / ar;
     const rest = H - h - tlH - gap;
-    chap.classList.toggle("thin", cinema || rest < 120);
+    chap.classList.toggle("thin", rest < 150);
     chap.style.width = w + "px";
+    $("#cMax").textContent = `${wByH}×${Math.floor(wByH / ar)}`;
+    // 本章卡压成一行时，侧栏的「本章」标签就是完整论证的地方
+    const thin = chap.classList.contains("thin");
+    $("#tabChap").style.display = thin ? "" : "none";
+    $("#railChap").style.display = thin ? "" : "none";
+    // 现在实现的专注模式，同屏对照
+    const fw = Math.min(W0 - 440 - 32, (innerHeight - 360) * ar);
+    $("#cFocus").textContent = `${Math.round(fw)}×${Math.round(fw / ar)}`;
   } else {
     const ar = 720 / 1584, tlH = 26 + 6;
+    page.classList.toggle("cinema", forced);
+    if (!forced) { page.classList.remove("drawer"); page.style.setProperty("--panel", "360px"); }
     h = H - tlH; w = h * ar;
     chap.classList.remove("thin");
     chap.style.width = "";
+    $("#tabChap").style.display = "none";
+    $("#railChap").style.display = "none";
+    $("#cMax").textContent = `${Math.floor(w)}×${Math.floor(h)}`;
+    $("#cFocus").textContent = $("#cMax").textContent;
+    why = "竖屏：视频按高度撑满一栏，中间竖排本章，侧栏常驻";
   }
   w = Math.floor(w); h = Math.floor(h);
   vw.style.width = w + "px"; vw.style.height = h + "px"; tl.style.width = w + "px";
   $("#size").textContent = `视频 ${w}×${h}`;
   $("#cNow").textContent = `${w}×${h}`;
-  // 同一屏幕下 A / B 两种模式的视频尺寸
-  const vh = innerHeight, vw0 = innerWidth;
-  if (orient === "land") {
-    const H0 = vh - 36 - 24, aW = Math.min(vw0 - 360 - 28, (H0 - 34 - 150 - 8) * 16 / 9), bW = Math.min(vw0 - 44 - 28, (H0 - 34 - 40 - 8) * 16 / 9);
-    $("#cA").textContent = `${Math.floor(aW)}×${Math.floor(aW * 9 / 16)}`;
-    $("#cB").textContent = `${Math.floor(bW)}×${Math.floor(bW * 9 / 16)}`;
-  } else {
-    const ph = vh - 36 - 24 - 32, pw = Math.floor(ph * 720 / 1584);
-    $("#cA").textContent = $("#cB").textContent = `${pw}×${Math.floor(ph)}`;
-  }
-  // 对照：同一屏幕下现在实现的两种布局（按当前代码的公式估算）
-  const panel = 440;
-  if (orient === "land") {
-    const col = innerWidth - panel - 32;
-    const fw = Math.min(col, (vh - 360) * 16 / 9);
-    $("#cFocus").textContent = `${Math.round(fw)}×${Math.round(fw * 9 / 16)}`;
-    const ow = Math.min(col - 300, vh * 0.56 * 16 / 9);
-    $("#cOld").textContent = `${Math.round(ow)}×${Math.round(ow * 9 / 16)}`;
-  } else {
-    const ph = vh - 88, pw = Math.min(innerWidth * .36, ph * 720 / 1584);
-    $("#cFocus").textContent = `${Math.round(pw)}×${Math.round(pw * 1584 / 720)}`;
-    $("#cOld").textContent = $("#cFocus").textContent;
-  }
+  $("#cWhy").textContent = why;
 }
 
 function render() {
@@ -480,12 +524,13 @@ function render() {
   document.body.classList.toggle("port", orient === "port");
   $("#chap").innerHTML = chapHTML();
   $("#tl").innerHTML = tlHTML();
+  $("#pane-chap").innerHTML = pchapHTML();
   $("#pane-sheet").innerHTML = sheetHTML();
   $("#pane-tx").innerHTML = txHTML();
   const wb = $("#wideBtn"); if (wb) wb.onclick = () => { document.body.classList.toggle("wide"); setTimeout(fit, 0); };
-  requestAnimationFrame(fit);
+  fit();
+  setTab(orient === "land" && $("#chap").classList.contains("thin") ? "chap" : "ask");
 }
-document.body.classList.toggle("port", false);
 
 function setTab(t) {
   document.querySelectorAll(".tabs .t").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
@@ -500,10 +545,10 @@ function setDrawer(tab) {
   document.querySelectorAll(".rail [data-open]").forEach(b => b.classList.toggle("on", b.dataset.open === tab));
 }
 function setCinema(on) {
-  $("#page").classList.toggle("cinema", on);
+  forced = on;
   if (!on) $("#page").classList.remove("drawer");
-  document.querySelectorAll("#gMode button").forEach(b => b.classList.toggle("on", b.dataset.v === (on ? "cinema" : "side")));
-  requestAnimationFrame(fit);
+  document.querySelectorAll("#gMode button").forEach(b => b.classList.toggle("on", b.dataset.v === (on ? "cinema" : "auto")));
+  fit();
 }
 document.querySelectorAll(".tabs .t").forEach(b => b.onclick = () => setTab(b.dataset.tab));
 $("#toCinema").onclick = () => setCinema(true);
@@ -513,7 +558,10 @@ document.querySelectorAll(".rail [data-open]").forEach(b => b.onclick = () => {
   setDrawer(open ? null : b.dataset.open);
 });
 $("#closeDrawer").onclick = () => setDrawer(null);
-$("#chap").addEventListener("click", e => { if (e.target.closest(".more")) { setDrawer("sheet"); } });
+$("#chap").addEventListener("click", e => {
+  if (!e.target.closest(".more")) return;
+  if ($("#page").classList.contains("cinema")) setDrawer("chap"); else setTab("chap");
+});
 document.querySelectorAll("#gOrient button").forEach(b => b.onclick = () => {
   orient = b.dataset.v; document.querySelectorAll("#gOrient button").forEach(x => x.classList.toggle("on", x === b)); render(); });
 document.querySelectorAll("#gMode button").forEach(b => b.onclick = () => setCinema(b.dataset.v === "cinema"));
@@ -522,7 +570,7 @@ document.querySelectorAll("#gTab button").forEach(b => b.onclick = () => {
 $("#mockMin").onclick = () => { $("#mock").classList.toggle("min"); $("#mockMin").textContent = $("#mock").classList.contains("min") ? "展开" : "收起"; };
 document.addEventListener("keydown", e => {
   if (e.target.matches("input")) return;
-  if (e.key === "f" || e.key === "F") setCinema(!$("#page").classList.contains("cinema"));
+  if (e.key === "f" || e.key === "F") setCinema(!forced);
   const cin = $("#page").classList.contains("cinema");
   if (e.key === "q" || e.key === "Q") { e.preventDefault(); if (cin) setDrawer("ask"); else setTab("ask"); $(".ask input").focus(); }
   if (e.key === "t" || e.key === "T") { if (cin) setDrawer("tx"); else setTab("tx"); }
