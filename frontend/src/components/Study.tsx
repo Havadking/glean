@@ -1,5 +1,8 @@
 import DOMPurify from 'dompurify'
-import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Film, ScrollText, MapPin, RefreshCw, Send, Trash2 } from 'lucide-react'
+import {
+  ArrowLeft, BookOpen, ChevronDown, ChevronLeft, ChevronRight, Film, ListTree, MapPin, MessageCircle, PanelRightClose,
+  PanelRightOpen, RefreshCw, ScrollText, Send, Trash2, X,
+} from 'lucide-react'
 import { marked } from 'marked'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -14,7 +17,8 @@ import { ErrorBox, Pill } from './ui'
 
 /**
  * 伴读页（DESIGN.md v0.9）：独立的全屏页面 /study/:id，不套侧栏和详情页的头。
- * 布局跟着视频走：竖屏录屏三栏（视频 | 转写 | AI），横屏视频在上、转写在下，右边是学习底稿 / 定位提问。
+ * 视频是主角：横屏视频按高度撑满，侧栏（本章 / 问 / 底稿 / 转写，提问框常驻底部）用剩下的宽度，
+ * 不够才收成图标按需浮出；竖屏录屏三栏「视频 | 本章 | 侧栏」。规则见 computeGeo。
  */
 
 const QUICK = ['这里在说什么？', '他为什么这么说？', '这和前面讲的矛盾吗？', '能举个例子吗？']
@@ -32,35 +36,133 @@ function writePref(key: string, v: boolean) {
   try { localStorage.setItem(key, v ? '1' : '0') } catch { /* ignore */ }
 }
 
+type Tab = 'chap' | 'ask' | 'sheet' | 'tx'
+type Kind = 'land' | 'port' | 'flat'
+
+// 布局尺寸（和 index.css 里 .sp2 那一段对应）
+const TOP_H = 40
+const PAD_X = 16
+const PAD_Y = 12
+const STRIP_H = 34       // 章节时间轴（带当前章标签）
+const LINE_H = 54        // 一行本章
+const GAP = 10
+const RAIL_W = 52
+const MIN_PANEL = 360
+const MAX_PANEL = 480
+const WIDE_PANEL = 640   // 转写「加宽阅读」
+const MAX_GIVE = 0.1     // 为了让侧栏常驻，视频最多让出多少宽度
+const FULL_CARD_MIN = 170
+
+interface Geo {
+  kind: Kind
+  panel: number          // 0 = 侧栏收成图标，按需浮出
+  w: number              // 视频盒子尺寸（flat 时不用）
+  h: number
+  card: 'line' | 'full'
+  midTwo: boolean        // 竖屏：中间那栏够宽，分成「本章 | 章节目录」两块
+}
+
+/**
+ * 布局规则（视觉稿 docs/mockup/v0.9-study-v2.html）：
+ * 视频先按高度撑满；右边剩下的宽度够就放常驻侧栏；差一点就让视频让出不超过 10%；
+ * 差得多才把侧栏收成一列图标、按需浮出。竖屏录屏视频按高度撑满一栏，中间竖排本章。
+ */
+function computeGeo(vw: number, vh: number, kind: Kind, ar: number, forced: boolean, wide: boolean): Geo {
+  const H = vh - TOP_H - PAD_Y * 2
+  if (kind === 'port') {
+    const h = Math.max(200, H - STRIP_H - GAP)
+    const w = Math.floor(h * ar)
+    const avail = vw - PAD_X * 2 - w - GAP
+    // 宽屏上中间那栏会很宽：侧栏跟着放宽一些（最多 560），剩下的给本章
+    let panel = forced ? 0 : wide ? WIDE_PANEL : Math.min(560, Math.max(400, Math.round(avail * 0.32)))
+    // 中间那栏（本章）至少留 320
+    if (panel && avail - GAP - panel < 320) panel = 0
+    const mid = avail - (panel ? panel + GAP : RAIL_W)
+    return { kind, panel, w, h: Math.floor(h), card: 'full', midTwo: mid >= 1000 }
+  }
+  if (kind === 'flat') {
+    return { kind, panel: forced ? 0 : wide ? WIDE_PANEL : 420, w: 0, h: 0, card: 'full', midTwo: false }
+  }
+  const wByH = Math.floor((H - STRIP_H - LINE_H - GAP * 2) * ar)
+  const free = vw - PAD_X * 2 - wByH
+  let panel = 0
+  if (!forced) {
+    if (wide) panel = WIDE_PANEL
+    else {
+      const want = Math.min(MAX_PANEL, Math.max(MIN_PANEL, free))
+      if (want - free <= wByH * MAX_GIVE) panel = want
+      else if (MIN_PANEL - free <= wByH * MAX_GIVE) panel = MIN_PANEL
+    }
+  }
+  const W = vw - PAD_X * 2 - (panel ? panel + GAP : RAIL_W)
+  const w = Math.max(320, Math.min(W, wByH))
+  const h = Math.floor(w / ar)
+  const rest = H - h - STRIP_H - GAP
+  return { kind, panel, w: Math.floor(w), h, card: rest >= FULL_CARD_MIN ? 'full' : 'line', midTwo: false }
+}
+
+function useViewport() {
+  const [vp, setVp] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }))
+  useEffect(() => {
+    const on = () => setVp((v) => (v.w === window.innerWidth && v.h === window.innerHeight ? v : { w: window.innerWidth, h: window.innerHeight }))
+    window.addEventListener('resize', on)
+    // 有些情况下（浏览器缩放、开发者工具的设备模拟）resize 事件不可靠，根元素尺寸变化再兜一层
+    const ro = new ResizeObserver(on)
+    ro.observe(document.documentElement)
+    return () => { window.removeEventListener('resize', on); ro.disconnect() }
+  }, [])
+  return vp
+}
+
+function readNum(key: string): number | null {
+  try { const v = localStorage.getItem(key); return v == null ? null : Number(v) } catch { return null }
+}
+
 export function Study({ video }: { video: Video }) {
   const id = video.video_id
   const [state, setState] = useState<StudyState | null>(null)
   const [err, setErr] = useState<unknown>(null)
-  const [tab, setTab] = useState<'sheet' | 'ask'>('sheet')
+  const [tab, setTabRaw] = useState<Tab>('chap')
   const [time, setTime] = useState(0)
   const [duration, setDuration] = useState(video.duration_sec || 0)
   const [mediaErr, setMediaErr] = useState<string | null>(null)
-  // 竖屏录屏（手机直播之类）：视频单独占一栏，不然上下全是黑边
-  const [portrait, setPortrait] = useState(false)
   const [aspect, setAspect] = useState(16 / 9)
-  const [autoScroll, setAutoScroll] = useState(() => readPref('vsum.study.autoscroll', true))
-  const [markTerms, setMarkTerms] = useState(() => readPref('vsum.study.terms', true))
-  // 转写默认收起：大部分时间该看的是视频、本章论证线和提问，细读文字时再展开
-  const [txOpen, setTxOpen] = useState(() => readPref('vsum.study.tx', false))
-  const toggleTx = useCallback(() => setTxOpen((v) => { writePref('vsum.study.tx', !v); return !v }), [])
+  const [forced, setForced] = useState(() => readPref('vsum.study.cinema', false))
+  const [drawer, setDrawer] = useState(false)
+  const [wide, setWide] = useState(false)
+  const [paused, setPaused] = useState(true)
+  const [toast, setToast] = useState<{ text: string; action?: { label: string; run: () => void } } | null>(null)
+  const [chipUntil, setChipUntil] = useState(0)
   const mediaRef = useRef<HTMLMediaElement | null>(null)
   const askRef = useRef<HTMLTextAreaElement>(null)
-  const txRef = useRef<HTMLDivElement>(null)
+  const vp = useViewport()
 
   const load = useCallback(async () => {
     try { setState(await api.study(id)); setErr(null) } catch (e) { setErr(e) }
   }, [id])
   useEffect(() => { setState(null); setTime(0); setMediaErr(null); void load() }, [load])
 
-  // 没有底稿时默认看底稿页（去生成），有了以后也先给底稿：先看前置知识再开始
   const sheet = state?.sheet ?? null
   const chapters = useMemo(() => sheet?.chapters ?? [], [sheet])
   const curCh = chapterAt(chapters, time)
+  const ch = curCh >= 0 ? chapters[curCh] : undefined
+  const chPct = ch ? Math.min(100, Math.max(0, (time - ch.start) / Math.max(1, ch.end - ch.start) * 100)) : 0
+
+  const kind: Kind = state?.media.video && !mediaErr ? (aspect < 1 ? 'port' : 'land') : 'flat'
+  const geo = computeGeo(vp.w, vp.h, kind, aspect, forced, wide && tab === 'tx')
+  const docked = geo.panel > 0
+  // 「本章」标签只在本章被压成一行时出现；别的布局里本章已经整块摆在画面上
+  const hasChapTab = kind === 'land' && geo.card === 'line' && !!ch
+  // 没有画面时转写直接铺在舞台上，侧栏就不再放一份
+  const tabs: Tab[] = kind === 'flat' ? ['ask', 'sheet'] : hasChapTab ? ['chap', 'ask', 'sheet', 'tx'] : ['ask', 'sheet', 'tx']
+  const cur: Tab = tabs.includes(tab) ? tab : 'ask'
+
+  const setTab = useCallback((t: Tab) => { setTabRaw(t); if (t !== 'tx') setWide(false) }, [])
+  // 打开侧栏的某个标签：常驻时切标签，收起时浮出
+  const openTab = useCallback((t: Tab) => {
+    setTab(t)
+    if (!docked) setDrawer(true)
+  }, [docked, setTab])
 
   const seek = useCallback((sec: number, play = true) => {
     const m = mediaRef.current
@@ -70,18 +172,36 @@ export function Study({ video }: { video: Video }) {
     if (play) void m.play().catch(() => { /* 自动播放被拦就算了 */ })
   }, [])
 
+  // 浮出的侧栏是这次渲染才挂上去的，等它挂好再把光标放进提问框
+  const [focusReq, setFocusReq] = useState(0)
+  useEffect(() => {
+    if (!focusReq || !askRef.current) return
+    askRef.current.focus()
+    setFocusReq(0)
+  }, [focusReq, drawer])
   const focusAsk = useCallback(() => {
     mediaRef.current?.pause()
-    setTab('ask')
-    requestAnimationFrame(() => askRef.current?.focus())
-  }, [])
+    openTab('ask')
+    setFocusReq((n) => n + 1)
+  }, [openTab])
 
-  // 快捷键：空格 播放/暂停，←/→ 5 秒，Q 在当前位置提问
+  const toggleForced = useCallback(() => {
+    writePref('vsum.study.cinema', !forced)
+    setForced(!forced)
+    setDrawer(false)
+  }, [forced])
+
+  // 快捷键：空格 播放/暂停，←/→ 5 秒，Q 提问，T 转写，F 收起/展开侧栏，Esc 收回浮出的侧栏
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
-      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)
+      if (e.key === 'Escape') {
+        if (typing) (t as HTMLElement).blur()
+        setDrawer(false)
+        return
+      }
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return
       const m = mediaRef.current
       // 焦点在播放器上时，空格和方向键交给浏览器自己处理，别切两次
       const onPlayer = t?.tagName === 'VIDEO' || t?.tagName === 'AUDIO'
@@ -96,32 +216,54 @@ export function Study({ video }: { video: Video }) {
         focusAsk()
       } else if (e.key === 't' || e.key === 'T') {
         e.preventDefault()
-        toggleTx()
+        openTab('tx')
+      } else if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault()
+        toggleForced()
       }
     }
     window.addEventListener('keydown', on)
     return () => window.removeEventListener('keydown', on)
-  }, [focusAsk, toggleTx])
+  }, [focusAsk, openTab, toggleForced])
 
+  // 记住看到哪了：长视频关了再开接着看
+  const posKey = `vsum.study.pos.${id}`
   const onTimeUpdate = () => {
     const m = mediaRef.current
     if (!m) return
     const sec = Math.floor(m.currentTime)
-    setTime((cur) => (cur === sec ? cur : sec))
+    setTime((c) => {
+      if (c !== sec && sec % 5 === 0) { try { localStorage.setItem(posKey, String(sec)) } catch { /* ignore */ } }
+      return c === sec ? c : sec
+    })
+  }
+  const onMeta = (d: number, ar: number | null) => {
+    setDuration(d)
+    if (ar) setAspect(ar)
+    const saved = readNum(posKey)
+    const m = mediaRef.current
+    if (m && saved && saved > 30 && saved < d - 30) {
+      m.currentTime = saved
+      setTime(saved)
+      setToast({ text: `接着上次看到的 ${fmtDuration(saved)}`, action: { label: '从头开始', run: () => { seek(0, false); setToast(null) } } })
+      window.setTimeout(() => setToast((t) => (t?.text.startsWith('接着') ? null : t)), 6000)
+    }
   }
 
-  // 转写：当前段落、自动滚动
-  const starts = useMemo(() => video.paragraphs.map((p) => p.start), [video.paragraphs])
-  const playingStart = video.paragraphs.length ? paragraphAt(starts, time) : null
+  // 进入新的一章：视频左上角的章节标签亮几秒
+  const lastCh = useRef(-1)
   useEffect(() => {
-    if (!autoScroll || playingStart == null || !txRef.current) return
-    const el = txRef.current.querySelector<HTMLElement>(`[data-ps="${Math.floor(playingStart)}"]`)
-    if (!el) return
-    const box = txRef.current
-    // .st-tx 是 position: relative，offsetTop 已经是相对它的；留出吸顶的表头
-    const top = el.offsetTop - 60
-    if (Math.abs(box.scrollTop - top) > 40) box.scrollTo({ top, behavior: 'smooth' })
-  }, [playingStart, autoScroll, txOpen])
+    if (curCh < 0) return
+    if (lastCh.current !== -1 && lastCh.current !== curCh) setChipUntil(Date.now() + 4000)
+    lastCh.current = curCh
+  }, [curCh])
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (!chipUntil) return
+    const t = window.setTimeout(() => tick((x) => x + 1), Math.max(0, chipUntil - Date.now()) + 50)
+    return () => window.clearTimeout(t)
+  }, [chipUntil])
+  const chipOn = !!ch && (paused || Date.now() < chipUntil)
 
   // 术语在转写里标出来
   const termRe = useMemo(() => {
@@ -138,136 +280,123 @@ export function Study({ video }: { video: Video }) {
     if (!term) return
     window.clearTimeout(popTimer.current)
     const r = e.currentTarget.getBoundingClientRect()
-    setPop({ term, x: Math.min(r.left, window.innerWidth - 330), y: r.bottom + 6 })
+    setPop({ term, x: Math.max(8, Math.min(r.left, window.innerWidth - 340)), y: Math.min(r.bottom + 6, window.innerHeight - 220) })
   }
   const hidePop = () => { popTimer.current = window.setTimeout(() => setPop(null), 180) }
 
-  const renderText = (text: string) => {
-    if (!markTerms || !termRe) return text
-    return text.split(termRe).map((part, i) =>
-      i % 2 === 1
-        ? <span key={i} className="st-term" onMouseEnter={(e) => showPop(e, part)} onMouseLeave={hidePop}>{part}</span>
-        : <Fragment key={i}>{part}</Fragment>)
-  }
+  const renderTerms = termRe ? (text: string) => text.split(termRe).map((part, i) =>
+    i % 2 === 1
+      ? <span key={i} className="st-term" onMouseEnter={(e) => showPop(e, part)} onMouseLeave={hidePop}>{part}</span>
+      : <Fragment key={i}>{part}</Fragment>) : null
 
   const asked = state?.questions ?? []
+  const askedPos = asked.map((q) => q.position).filter((p): p is number => p != null)
 
-  const ch = curCh >= 0 ? chapters[curCh] : undefined
-  // port：竖屏录屏，视频单独一栏；land：横屏，视频按比例定宽，右侧放本章论证线；flat：没有画面（音频 / 待下载）
-  const layout = portrait ? 'port' : state?.media.video && !mediaErr ? 'land' : 'flat'
-  const chPct = ch ? Math.min(100, Math.max(0, (time - ch.start) / Math.max(1, ch.end - ch.start) * 100)) : 0
-  // 没有画面时转写就是主角，不收
-  const focus = !txOpen && layout !== 'flat'
+  const strip = (
+    <ChapterStrip chapters={chapters} duration={duration || video.duration_sec} time={time} asked={askedPos} onSeek={(s) => seek(s)} />
+  )
+  const player = (
+    <div className="sp2-video" style={kind === 'flat' ? undefined : { width: geo.w, height: geo.h }}>
+      <Player video={video} state={state} mediaRef={mediaRef} onTimeUpdate={onTimeUpdate} onMeta={onMeta}
+        onPlayState={setPaused} mediaErr={mediaErr} setMediaErr={setMediaErr} reload={load} />
+      {kind !== 'flat' && ch && (
+        <div className={`sp2-chip${chipOn ? ' on' : ''}`}>
+          <span className="n">{curCh + 1}/{chapters.length}</span><b>{ch.title}</b>
+        </div>
+      )}
+      {toast && (
+        <div className="sp2-toast">
+          {toast.text}
+          {toast.action && <button onClick={toast.action.run}>{toast.action.label}</button>}
+          <button className="x" onClick={() => setToast(null)} aria-label="关闭">×</button>
+        </div>
+      )}
+    </div>
+  )
 
-  // 收起时留一行「现在这句」：段落里按播放进度估一句，点一下展开转写
-  const para = playingStart != null ? video.paragraphs.find((p) => p.start === playingStart) : undefined
-  let sentence = ''
-  if (para) {
-    const parts = para.text.split(/(?<=[。！？!?])/).filter((x) => x.trim())
-    const k = Math.min(parts.length - 1, Math.max(0, Math.floor((time - para.start) / Math.max(1, para.end - para.start) * parts.length)))
-    sentence = parts[k] ?? para.text
-  }
-  const peek = (
-    <button className="sp-peek" onClick={toggleTx} title="展开转写（T）">
-      <span className="tc">{fmtDuration(para?.start ?? time)}</span>
-      <span className="txt">{sentence || '（这里没有转写）'}</span>
-      <span className="act"><ChevronUp size={14} /> 展开转写</span>
-    </button>
+  const panel = state && (
+    <>
+      <div className="st-tabs" role="tablist">
+        {hasChapTab && <button role="tab" aria-selected={cur === 'chap'} onClick={() => setTab('chap')}>本章</button>}
+        <button role="tab" aria-selected={cur === 'ask'} onClick={() => setTab('ask')}>问 {asked.length > 0 && <span className="n">{asked.length}</span>}</button>
+        <button role="tab" aria-selected={cur === 'sheet'} onClick={() => setTab('sheet')}>底稿</button>
+        {kind !== 'flat' && <button role="tab" aria-selected={cur === 'tx'} onClick={() => setTab('tx')}>转写</button>}
+        <span className="sp" />
+        {docked
+          ? kind !== 'flat' && <button className="iconbtn" onClick={toggleForced} title="收起侧栏，视频更大（F）" aria-label="收起侧栏"><PanelRightClose /></button>
+          : <button className="iconbtn" onClick={() => setDrawer(false)} title="收回（Esc）" aria-label="收回"><X /></button>}
+      </div>
+      {cur === 'chap' && ch && (
+        <div className="st-pane"><ChapterBody chapters={chapters} idx={curCh} pct={chPct} time={time} onSeek={seek} /></div>
+      )}
+      {cur === 'sheet' && <SheetPane id={id} state={state} time={time} onSeek={seek} reload={load} setState={setState} expandCurrent={false} />}
+      {cur === 'ask' && <AskPane state={state} onSeek={seek} reload={load} setState={setState} />}
+      {cur === 'tx' && kind !== 'flat' && (
+        <TranscriptPane video={video} chapters={chapters} time={time} onSeek={seek} renderTerms={renderTerms}
+          wide={wide} onWide={() => setWide((v) => !v)} />
+      )}
+      <AskBox id={id} state={state} time={time} chapter={curCh >= 0 ? curCh : null} chapterTitle={ch?.title}
+        inputRef={askRef} onAsked={(q) => { setState((s) => s ? { ...s, questions: [...s.questions, q] } : s); setTab('ask') }}
+        onAsking={() => setTab('ask')} />
+    </>
   )
 
   return (
-    <div className="sp-page">
-      <header className="sp-top">
+    <div className={`sp2 ${kind}${docked ? '' : ' undocked'}`} style={{ '--panel': `${geo.panel}px` } as React.CSSProperties}>
+      <header className="sp2-top">
         <Link className="iconbtn" to={`/video/${encodeURIComponent(id)}`} title="回到视频详情（速读）" aria-label="返回"><ArrowLeft /></Link>
         <div className="tt">
           <b title={video.title}>{displayTitle(video)}</b>
           <span>{video.uploader ?? ''}{video.uploader ? ' · ' : ''}{fmtDuration(duration || video.duration_sec)}</span>
         </div>
         <span className="sp" />
-        <span className="keys"><kbd>空格</kbd> 播放 <kbd>←</kbd><kbd>→</kbd> 5 秒 <kbd>Q</kbd> 提问 <kbd>T</kbd> 转写</span>
-        {layout !== 'flat' && (
-          <button className={`btn sm${txOpen ? ' primary' : ''}`} onClick={toggleTx} title={txOpen ? '收起转写，专注看视频（T）' : '展开转写，细读原文（T）'}>
-            <ScrollText /> {txOpen ? '收起转写' : '展开转写'}
-          </button>
-        )}
+        <span className="keys"><kbd>空格</kbd>播放<kbd>←</kbd><kbd>→</kbd>5 秒<kbd>Q</kbd>提问<kbd>T</kbd>转写{kind !== 'flat' && <><kbd>F</kbd>{docked ? '收起侧栏' : '展开侧栏'}</>}</span>
       </header>
 
-      <div className={`sp-main ${layout}${focus ? ' focus' : ''}`} style={{ '--ar': aspect } as React.CSSProperties}>
-        <section className="sp-media">
-          <div className="sp-mediacol">
-            <Player video={video} state={state} mediaRef={mediaRef} onTimeUpdate={onTimeUpdate}
-              onMeta={(d, ar) => { setDuration(d); if (ar) { setAspect(ar); setPortrait(ar < 1) } }} mediaErr={mediaErr} setMediaErr={setMediaErr} reload={load} />
-            <ChapterStrip chapters={chapters} duration={duration || video.duration_sec} time={time}
-              asked={asked.map((q) => q.position).filter((p): p is number => p != null)} onSeek={(s) => seek(s)} />
-            {focus && layout === 'land' && peek}
-          </div>
-          {/* 横屏：转写展开时卡片在视频右边，收起时在视频下面 */}
-          {layout === 'land' && ch && <ChapterCard chapters={chapters} idx={curCh} pct={chPct} time={time} onSeek={seek} />}
-        </section>
-
-        <section className="sp-read">
-          {focus ? (
-            layout === 'port' && <>
-              {peek}
-              {ch && <ChapterCard chapters={chapters} idx={curCh} pct={chPct} time={time} onSeek={seek} upcoming />}
-            </>
-          ) : <>
-          {ch && layout !== 'land' && (
-            <div className="sp-chap" title={ch.claim}>
-              <span className="no">第 {curCh + 1}/{chapters.length} 章</span>
-              <div className="body">
-                <div className="t">{ch.title}<span className="tm">{fmtDuration(ch.start)}–{fmtDuration(ch.end)}</span></div>
-                {ch.claim && <div className="claim">{ch.claim}</div>}
+      <div className="sp2-body">
+        <main className="sp2-stage">
+          {kind === 'port' ? <>
+            <div className="sp2-vcol" style={{ width: geo.w }}>{player}{strip}</div>
+            <div className={`sp2-mid${geo.midTwo ? ' two' : ''}`}>{ch
+              ? <>
+                  <div className="sp2-midcard"><ChapterBody chapters={chapters} idx={curCh} pct={chPct} time={time} onSeek={seek} noNext={geo.midTwo} /></div>
+                  {geo.midTwo && <div className="sp2-midcard"><ChapterIndex chapters={chapters} idx={curCh} onSeek={seek} /></div>}
+                </>
+              : <NoSheetHint state={state} onOpen={() => openTab('sheet')} />}</div>
+          </> : <>
+            <div className="sp2-vcol" style={kind === 'land' ? { width: geo.w } : undefined}>{player}{strip}</div>
+            {ch
+              ? geo.card === 'line'
+                ? <ChapterLine chapters={chapters} idx={curCh} pct={chPct} time={time} onSeek={seek} width={geo.w}
+                    onExpand={() => openTab('chap')} expanded={cur === 'chap' && (docked || drawer)} />
+                : <HChapterCard chapters={chapters} idx={curCh} pct={chPct} time={time} onSeek={seek}
+                    width={kind === 'land' ? geo.w : undefined} />
+              : <NoSheetHint state={state} onOpen={() => openTab('sheet')} />}
+            {kind === 'flat' && (
+              <div className="sp2-flattx">
+                <TranscriptPane video={video} chapters={chapters} time={time} onSeek={seek} renderTerms={renderTerms}
+                  wide={false} onWide={null} />
               </div>
-              <button className="iconbtn" title="上一章" aria-label="上一章"
-                onClick={() => seek(chapters[Math.max(0, time - ch.start > 3 ? curCh : curCh - 1)].start)}><ChevronLeft /></button>
-              <button className="iconbtn" title="下一章" aria-label="下一章" disabled={curCh >= chapters.length - 1}
-                onClick={() => chapters[curCh + 1] && seek(chapters[curCh + 1].start)}><ChevronRight /></button>
-              <i className="pg" style={{ width: `${chPct}%` }} />
-            </div>
-          )}
-          <div className="st-tx" ref={txRef}>
-          <div className="hd">
-            转写 · 跟随播放
-            <span className="sp" />
-            {termRe && <label><input type="checkbox" checked={markTerms} onChange={(e) => { setMarkTerms(e.target.checked); writePref('vsum.study.terms', e.target.checked) }} /> 标出术语</label>}
-            <label><input type="checkbox" checked={autoScroll} onChange={(e) => { setAutoScroll(e.target.checked); writePref('vsum.study.autoscroll', e.target.checked) }} /> 自动滚动</label>
-            {layout !== 'flat' && <button className="lnk" onClick={toggleTx} title="收起转写，专注看视频（T）"><ChevronDown size={13} /> 收起</button>}
-          </div>
-          {video.paragraphs.length === 0 && <div className="empty"><b>这条视频没有转写文本</b></div>}
-          {video.paragraphs.map((p, i) => {
-            const chIdx = chapters.findIndex((c) => c.start >= p.start && c.start < p.end + 0.01 && (i === 0 || c.start > video.paragraphs[i - 1].start))
-            const playing = playingStart === p.start
-            return (
-              <Fragment key={i}>
-                {chIdx >= 0 && <div className="st-chapline"><b>第 {chIdx + 1} 章</b>{chapters[chIdx].title}</div>}
-                <div className={`st-para${playing ? ' playing' : ''}`} data-ps={Math.floor(p.start)}>
-                  <button className="tc" onClick={() => seek(p.start)} title="从这里开始看">{fmtDuration(p.start)}</button>
-                  <p>{renderText(p.text)}</p>
-                </div>
-              </Fragment>
-            )
-          })}
-          </div>
+            )}
           </>}
-        </section>
+        </main>
 
-      <aside className="st-right">
-        <div className="st-tabs" role="tablist">
-          <button role="tab" aria-selected={tab === 'sheet'} onClick={() => setTab('sheet')}>学习底稿</button>
-          <button role="tab" aria-selected={tab === 'ask'} onClick={() => setTab('ask')}>问 {asked.length > 0 && <span className="n">{asked.length}</span>}</button>
-        </div>
-        <ErrorBox error={err} />
-        {!state && !err && <div className="st-pane"><span className="spin" /> 读取中…</div>}
-        {state && tab === 'sheet' && <SheetPane id={id} state={state} time={time} onSeek={seek} reload={load} setState={setState}
-          expandCurrent={!(layout === 'land' || (focus && layout === 'port'))} />}
-        {state && tab === 'ask' && <AskPane state={state} onSeek={seek} reload={load} setState={setState} />}
-        {state && (
-          <AskBox id={id} state={state} time={time} chapter={curCh >= 0 ? curCh : null} chapterTitle={chapters[curCh]?.title}
-            inputRef={askRef} onAsked={(q) => { setState((s) => s ? { ...s, questions: [...s.questions, q] } : s); setTab('ask') }}
-            onAsking={() => setTab('ask')} />
-        )}
-      </aside>
+        {docked
+          ? <aside className="st-right sp2-side">{panel}<ErrorBox error={err} />{!state && !err && <div className="st-pane"><span className="spin" /> 读取中…</div>}</aside>
+          : <>
+              <nav className="sp2-rail">
+                {hasChapTab && <button className={drawer && cur === 'chap' ? 'on' : ''} onClick={() => drawer && cur === 'chap' ? setDrawer(false) : openTab('chap')} title="本章论证"><ListTree /></button>}
+                <button className={drawer && cur === 'ask' ? 'on' : ''} onClick={() => drawer && cur === 'ask' ? setDrawer(false) : focusAsk()} title="问（Q）">
+                  <MessageCircle />{asked.length > 0 && <span className="dot">{asked.length}</span>}
+                </button>
+                <button className={drawer && cur === 'sheet' ? 'on' : ''} onClick={() => drawer && cur === 'sheet' ? setDrawer(false) : openTab('sheet')} title="底稿"><BookOpen /></button>
+                <button className={drawer && cur === 'tx' ? 'on' : ''} onClick={() => drawer && cur === 'tx' ? setDrawer(false) : openTab('tx')} title="转写（T）"><ScrollText /></button>
+                <hr />
+                <button onClick={toggleForced} title={forced ? '展开侧栏（F）' : '屏幕太窄，侧栏按需浮出'} disabled={!forced}><PanelRightOpen /></button>
+              </nav>
+              {drawer && <aside className="st-right sp2-side floating">{panel}</aside>}
+            </>}
+      </div>
 
       {pop && (
         <div className="st-pop" style={{ left: pop.x, top: pop.y }}
@@ -279,16 +408,174 @@ export function Study({ video }: { video: Video }) {
           <div className="src">来自学习底稿 · 出现 {pop.term.mentions} 次</div>
         </div>
       )}
+    </div>
+  )
+}
+
+function NoSheetHint({ state, onOpen }: { state: StudyState | null; onOpen: () => void }) {
+  if (!state) return <div className="sp2-nosheet"><span className="spin" /> 读取中…</div>
+  return (
+    <button className="sp2-nosheet" onClick={onOpen}>
+      <b>还没有学习底稿</b>
+      <span>生成后这里会显示当前章节的论点、证据和结论，提问也会更准。点这里去生成 ›</span>
+    </button>
+  )
+}
+
+/** 一行本章：章号、标题、论点（截断），底边是本章进度。点「展开论证」看侧栏的完整论证 */
+function ChapterLine({ chapters, idx, pct, time, onSeek, width, onExpand, expanded }: {
+  chapters: StudyChapter[]; idx: number; pct: number; time: number; onSeek: (s: number) => void
+  width: number; onExpand: () => void; expanded: boolean
+}) {
+  const ch = chapters[idx]
+  return (
+    <div className="sp2-line" style={{ width }}>
+      <span className="no">第 {idx + 1}/{chapters.length} 章</span>
+      <b className="t">{ch.title}</b>
+      <span className="claim" title={ch.claim}>{ch.claim}</span>
+      <button className="iconbtn" title="上一章" aria-label="上一章"
+        onClick={() => onSeek(chapters[Math.max(0, time - ch.start > 3 ? idx : idx - 1)].start)}><ChevronLeft /></button>
+      <button className="iconbtn" title="下一章" aria-label="下一章" disabled={idx >= chapters.length - 1}
+        onClick={() => chapters[idx + 1] && onSeek(chapters[idx + 1].start)}><ChevronRight /></button>
+      {!expanded && <button className="more" onClick={onExpand}>展开论证 ›</button>}
+      <i className="pg" style={{ width: `${pct}%` }} />
+    </div>
+  )
+}
+
+/** 横排本章卡：视频下面宽而矮的空间，左边章名，右边论点 | 证据 | 结论 */
+function HChapterCard({ chapters, idx, pct, time, onSeek, width }: {
+  chapters: StudyChapter[]; idx: number; pct: number; time: number; onSeek: (s: number) => void; width?: number
+}) {
+  const ch = chapters[idx]
+  const next = chapters[idx + 1]
+  return (
+    <div className="sp2-hcard" style={width ? { width } : undefined}>
+      <div className="head">
+        <span className="no">第 {idx + 1}/{chapters.length} 章</span>
+        <h3>{ch.title}</h3>
+        <span className="tm">{fmtDuration(ch.start)} – {fmtDuration(ch.end)}</span>
+        <div className="pg"><i style={{ width: `${pct}%` }} /></div>
+        <div className="nav">
+          <button onClick={() => onSeek(chapters[Math.max(0, time - ch.start > 3 ? idx : idx - 1)].start)}>‹ 上一章</button>
+          <button disabled={!next} onClick={() => next && onSeek(next.start)}>下一章 ›</button>
+        </div>
       </div>
+      <div><span className="k">论点</span><p>{ch.claim}</p></div>
+      <div><span className="k">证据</span><ul>{ch.evidence.map((e, j) => (
+        <li key={j}>{e.text}{e.t != null && <> <button className="tcl" onClick={() => onSeek(e.t!)}>{fmtDuration(e.t)}</button></>}</li>
+      ))}</ul></div>
+      <div><span className="k">结论</span><p>{ch.conclusion}</p>
+        {next && <button className="next" onClick={() => onSeek(next.start)}>下一章 · <span className="mono">{fmtDuration(next.start)}</span> <b>{next.title}</b></button>}
+      </div>
+    </div>
+  )
+}
+
+/** 侧栏「本章」标签：竖排论证 + 接下来几章 */
+function ChapterBody({ chapters, idx, pct, time, onSeek, noNext }: {
+  chapters: StudyChapter[]; idx: number; pct: number; time: number; onSeek: (s: number) => void; noNext?: boolean
+}) {
+  const ch = chapters[idx]
+  return (
+    <div className="sp2-cbody">
+      <div className="hd">
+        <span className="no">第 {idx + 1}/{chapters.length} 章</span>
+        <span className="tm">{fmtDuration(ch.start)} – {fmtDuration(ch.end)} · 已看 {Math.round(pct)}%</span>
+      </div>
+      <h3>{ch.title}</h3>
+      <div className="pg"><i style={{ width: `${pct}%` }} /></div>
+      <div className="nav">
+        <button onClick={() => onSeek(chapters[Math.max(0, time - ch.start > 3 ? idx : idx - 1)].start)}>‹ 上一章</button>
+        <button disabled={idx >= chapters.length - 1} onClick={() => chapters[idx + 1] && onSeek(chapters[idx + 1].start)}>下一章 ›</button>
+      </div>
+      <Argument c={ch} onSeek={onSeek} />
+      {!noNext && idx + 1 < chapters.length && (
+        <div className="next">
+          <div className="lbl">接下来</div>
+          {chapters.slice(idx + 1, idx + 4).map((c, j) => (
+            <button key={j} className="nx" onClick={() => onSeek(c.start)}>
+              <span className="tm">{fmtDuration(c.start)}</span>
+              <span><b>{c.title}</b>{c.claim && <span className="cl">{c.claim}</span>}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 全片章节目录：当前章高亮并带论点，点哪章跳哪章。竖屏宽屏时放在中间那栏右半边 */
+function ChapterIndex({ chapters, idx, onSeek }: { chapters: StudyChapter[]; idx: number; onSeek: (s: number) => void }) {
+  const boxRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const box = boxRef.current
+    const el = box?.querySelector<HTMLElement>('.ci.cur')
+    if (box && el) box.scrollTo({ top: el.offsetTop - box.clientHeight / 3, behavior: 'smooth' })
+  }, [idx])
+  return (
+    <div className="sp2-index" ref={boxRef}>
+      <div className="lbl">全片 {chapters.length} 章</div>
+      {chapters.map((c, i) => (
+        <button key={i} className={`ci${i === idx ? ' cur' : i < idx ? ' done' : ''}`} onClick={() => onSeek(c.start)}>
+          <span className="tm">{fmtDuration(c.start)}</span>
+          <span><b>{i + 1}. {c.title}</b>{(i === idx || i === idx + 1) && c.claim && <span className="cl">{c.claim}</span>}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** 侧栏「转写」标签：跟随播放、术语标虚线；细读时可以加宽 */
+function TranscriptPane({ video, chapters, time, onSeek, renderTerms, wide, onWide }: {
+  video: Video; chapters: StudyChapter[]; time: number; onSeek: (s: number) => void
+  renderTerms: ((text: string) => React.ReactNode) | null; wide: boolean; onWide: (() => void) | null
+}) {
+  const [autoScroll, setAutoScroll] = useState(() => readPref('vsum.study.autoscroll', true))
+  const [markTerms, setMarkTerms] = useState(() => readPref('vsum.study.terms', true))
+  const boxRef = useRef<HTMLDivElement>(null)
+  const starts = useMemo(() => video.paragraphs.map((p) => p.start), [video.paragraphs])
+  const playingStart = video.paragraphs.length ? paragraphAt(starts, time) : null
+  useEffect(() => {
+    if (!autoScroll || playingStart == null || !boxRef.current) return
+    const box = boxRef.current
+    const el = box.querySelector<HTMLElement>(`[data-ps="${Math.floor(playingStart)}"]`)
+    if (!el) return
+    const top = el.offsetTop - 70
+    if (Math.abs(box.scrollTop - top) > 40) box.scrollTo({ top, behavior: 'smooth' })
+  }, [playingStart, autoScroll, wide])
+
+  return (
+    <div className="st-pane sp2-tx" ref={boxRef}>
+      <div className="hd">
+        {renderTerms && <label><input type="checkbox" checked={markTerms} onChange={(e) => { setMarkTerms(e.target.checked); writePref('vsum.study.terms', e.target.checked) }} /> 标出术语</label>}
+        <label><input type="checkbox" checked={autoScroll} onChange={(e) => { setAutoScroll(e.target.checked); writePref('vsum.study.autoscroll', e.target.checked) }} /> 跟随播放</label>
+        <span className="sp" />
+        {onWide && <button className="lnk" onClick={onWide} title={wide ? '恢复侧栏宽度' : '侧栏加宽，细读原文（视频会让出位置）'}>{wide ? '恢复宽度' : '加宽阅读 ⇔'}</button>}
+      </div>
+      {video.paragraphs.length === 0 && <div className="st-empty">这条视频没有转写文本。</div>}
+      {video.paragraphs.map((p, i) => {
+        const chIdx = chapters.findIndex((c) => c.start >= p.start && c.start < p.end + 0.01 && (i === 0 || c.start > video.paragraphs[i - 1].start))
+        return (
+          <Fragment key={i}>
+            {chIdx >= 0 && <div className="st-chapline"><b>第 {chIdx + 1} 章</b>{chapters[chIdx].title}</div>}
+            <div className={`st-para${playingStart === p.start ? ' playing' : ''}`} data-ps={Math.floor(p.start)}>
+              <button className="tc" onClick={() => onSeek(p.start)} title="从这里开始看">{fmtDuration(p.start)}</button>
+              <p>{markTerms && renderTerms ? renderTerms(p.text) : p.text}</p>
+            </div>
+          </Fragment>
+        )
+      })}
     </div>
   )
 }
 
 // ---------- 播放器 ----------
 
-function Player({ video, state, mediaRef, onTimeUpdate, onMeta, mediaErr, setMediaErr, reload }: {
+function Player({ video, state, mediaRef, onTimeUpdate, onMeta, onPlayState, mediaErr, setMediaErr, reload }: {
   video: Video; state: StudyState | null; mediaRef: React.MutableRefObject<HTMLMediaElement | null>
   onTimeUpdate: () => void; onMeta: (duration: number, aspect: number | null) => void
+  onPlayState: (paused: boolean) => void
   mediaErr: string | null; setMediaErr: (s: string | null) => void; reload: () => Promise<void>
 }) {
   const media = state?.media
@@ -327,6 +614,7 @@ function Player({ video, state, mediaRef, onTimeUpdate, onMeta, mediaErr, setMed
   const common = {
     ref: (el: HTMLMediaElement | null) => { mediaRef.current = el },
     onTimeUpdate, onSeeked: onTimeUpdate,
+    onPlay: () => onPlayState(false), onPause: () => onPlayState(true), onEnded: () => onPlayState(true),
     onLoadedMetadata: (e: React.SyntheticEvent<HTMLMediaElement>) => {
       setMediaErr(null)
       const el = e.currentTarget as HTMLVideoElement
@@ -395,6 +683,11 @@ function ChapterStrip({ chapters, duration, time, asked, onSeek }: {
         <div key={i} className={`seg${i === cur ? ' cur' : i < cur ? ' done' : ''}`}
           style={{ left: `${c.start / duration * 100}%`, width: `${Math.max(0.3, (c.end - c.start) / duration * 100)}%` }} />
       ))}
+      {cur >= 0 && chapters[cur] && (
+        <span className="lbl" style={{ left: `${Math.min(88, Math.max(12, (chapters[cur].start + chapters[cur].end) / 2 / duration * 100))}%` }}>
+          {cur + 1} · {chapters[cur].title}
+        </span>
+      )}
       <div className="head" style={{ left: `${Math.min(100, time / duration * 100)}%` }} />
       {asked.map((p, i) => <div key={i} className="qdot" style={{ left: `${p / duration * 100}%` }} title={`你在 ${fmtDuration(p)} 问过`} />)}
       {hover && <div className="tip" style={{ left: hover.x }}>{hover.text}</div>}
@@ -532,42 +825,6 @@ function SheetPane({ id, state, time, onSeek, reload, setState, expandCurrent }:
       </>}
       <p className="st-foot">「视频里」只依据转写；「背景」是模型自己的知识，没联网核实过。</p>
     </div>
-  )
-}
-
-function ChapterCard({ chapters, idx, pct, time, onSeek, upcoming }: {
-  chapters: StudyChapter[]; idx: number; pct: number; time: number; onSeek: (s: number) => void; upcoming?: boolean
-}) {
-  const ch = chapters[idx]
-  const next = upcoming ? chapters.slice(idx + 1, idx + 4) : []
-  return (
-    <div className={`sp-chapcard${upcoming ? ' big' : ''}`}><div className="in">
-      <div className="hd">
-        <span className="no">第 {idx + 1}/{chapters.length} 章</span>
-        <span className="tm">{fmtDuration(ch.start)}–{fmtDuration(ch.end)}</span>
-        <span className="sp" />
-        <button className="iconbtn" title="上一章" aria-label="上一章"
-          onClick={() => onSeek(chapters[Math.max(0, time - ch.start > 3 ? idx : idx - 1)].start)}><ChevronLeft /></button>
-        <button className="iconbtn" title="下一章" aria-label="下一章" disabled={idx >= chapters.length - 1}
-          onClick={() => chapters[idx + 1] && onSeek(chapters[idx + 1].start)}><ChevronRight /></button>
-      </div>
-      <div className="t">{ch.title}</div>
-      <div className="pgbar"><i style={{ width: `${pct}%` }} /></div>
-      <div className="argwrap">
-        <Argument c={ch} onSeek={onSeek} />
-        {next.length > 0 && (
-          <div className="next">
-            <div className="lbl">接下来</div>
-            {next.map((c, j) => (
-              <button key={j} className="nx" onClick={() => onSeek(c.start)}>
-                <span className="tm">{fmtDuration(c.start)}</span>
-                <span><b>{c.title}</b>{c.claim && <span className="cl">{c.claim}</span>}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div></div>
   )
 }
 
