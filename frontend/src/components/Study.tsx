@@ -572,6 +572,18 @@ function TranscriptPane({ video, chapters, time, onSeek, renderTerms, wide, onWi
 
 // ---------- 播放器 ----------
 
+/** 把上次的音量、静音、倍速套到播放器上（键和 AudioBar 一致） */
+function restoreMediaPrefs(el: HTMLMediaElement) {
+  try {
+    const v = localStorage.getItem('vsum.volume')
+    const n = Number(v)
+    if (v != null && n >= 0 && n <= 1) el.volume = n
+    el.muted = localStorage.getItem('vsum.muted') === '1'
+    const r = Number(localStorage.getItem('vsum.rate'))
+    if (r >= 0.25 && r <= 4) el.playbackRate = r
+  } catch { /* ignore */ }
+}
+
 function Player({ video, state, mediaRef, onTimeUpdate, onMeta, onPlayState, mediaErr, setMediaErr, reload }: {
   video: Video; state: StudyState | null; mediaRef: React.MutableRefObject<HTMLMediaElement | null>
   onTimeUpdate: () => void; onMeta: (duration: number, aspect: number | null) => void
@@ -618,7 +630,18 @@ function Player({ video, state, mediaRef, onTimeUpdate, onMeta, onPlayState, med
     onLoadedMetadata: (e: React.SyntheticEvent<HTMLMediaElement>) => {
       setMediaErr(null)
       const el = e.currentTarget as HTMLVideoElement
+      restoreMediaPrefs(el)
       onMeta(el.duration || 0, el.videoHeight ? el.videoWidth / el.videoHeight : null)
+    },
+    // 音量、静音、倍速：和详情页的播放栏共用一份设置，哪边调了另一边也跟着
+    onVolumeChange: (e: React.SyntheticEvent<HTMLMediaElement>) => {
+      try {
+        localStorage.setItem('vsum.volume', String(e.currentTarget.volume))
+        localStorage.setItem('vsum.muted', e.currentTarget.muted ? '1' : '0')
+      } catch { /* ignore */ }
+    },
+    onRateChange: (e: React.SyntheticEvent<HTMLMediaElement>) => {
+      try { localStorage.setItem('vsum.rate', String(e.currentTarget.playbackRate)) } catch { /* ignore */ }
     },
     preload: 'metadata' as const,
     controls: true,
