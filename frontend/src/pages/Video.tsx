@@ -93,9 +93,12 @@ export function Video() {
       const v = await api.video(id, clean, raw)
       setVideo(v)
       setError(null)
-      setType((t) => t || Object.keys(v.summaries)[0] || meta?.default_summary_type || 'overall')
+      // 默认类型可能是 'none'（设置里选了不自动总结），那不是一个能打开的标签
+      const known = (k?: string) => !!k && k !== 'none' && (k === 'ask' || !meta || meta.summary_types.some((t) => t.key === k))
+      const def = known(meta?.default_summary_type) ? meta!.default_summary_type : 'overall'
+      setType((t) => (known(t) ? t : '') || Object.keys(v.summaries)[0] || def)
     } catch (e) { setError(e) }
-  }, [id, clean, raw, meta?.default_summary_type])
+  }, [id, clean, raw, meta?.default_summary_type, meta?.summary_types])
   const toggleClean = () => {
     const next = !clean
     setClean(next)
